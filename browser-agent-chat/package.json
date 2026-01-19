@@ -1,0 +1,16 @@
+{
+  "name": "browser-agent-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A web-based chat platform where users communicate with an AI browser agent powered by Magnitude",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build --workspaces --if-present"
+  }
+}
