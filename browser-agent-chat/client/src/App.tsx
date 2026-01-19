@@ -1,8 +1,12 @@
+import { useState } from 'react';
 import { useWebSocket } from './hooks/useWebSocket';
 import { ChatPanel } from './components/ChatPanel';
 import { BrowserView } from './components/BrowserView';
+import { LandingPage } from './components/LandingPage';
 
 function App() {
+  const [showApp, setShowApp] = useState(false);
+
   const {
     connected,
     status,
@@ -13,6 +17,10 @@ function App() {
     sendTask,
     stopAgent
   } = useWebSocket();
+
+  if (!showApp) {
+    return <LandingPage onLaunchApp={() => setShowApp(true)} />;
+  }
 
   return (
     <div className="app">
