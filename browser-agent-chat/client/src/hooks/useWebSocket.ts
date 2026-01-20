@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage } from '../types';
 
-const WS_URL = 'ws://localhost:3001';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null);

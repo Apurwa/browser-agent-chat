@@ -55,10 +55,22 @@ browser-agent-chat/
 
 ## Environment Setup
 
-Create `browser-agent-chat/server/.env`:
+**Local development** - Create `browser-agent-chat/server/.env`:
 ```
 ANTHROPIC_API_KEY=your-key-here
 ```
+
+**Production** (Render):
+- Server: `ANTHROPIC_API_KEY`, `CORS_ORIGIN`
+- Client: `VITE_WS_URL` (use `wss://` for secure WebSocket)
+
+## Deployment
+
+Uses Render with `render.yaml` blueprint:
+- **Server:** Docker-based web service (needs Playwright/Chromium)
+- **Client:** Static site
+
+See README.md for detailed deployment instructions.
 
 ## Magnitude API Reference
 
