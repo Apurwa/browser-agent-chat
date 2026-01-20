@@ -3,8 +3,8 @@ services:
   - type: web
     name: browser-agent-server
     runtime: docker
-    dockerfilePath: ./server/Dockerfile
-    dockerContext: ./server
+    dockerfilePath: ./browser-agent-chat/server/Dockerfile
+    dockerContext: ./browser-agent-chat/server
     plan: starter  # Need at least starter for browser automation
     envVars:
       - key: ANTHROPIC_API_KEY
@@ -18,8 +18,8 @@ services:
   - type: web
     name: browser-agent-client
     runtime: static
-    buildCommand: cd client && npm install && npm run build
-    staticPublishPath: ./client/dist
+    buildCommand: cd browser-agent-chat/client && npm install && npm run build
+    staticPublishPath: ./browser-agent-chat/client/dist
     envVars:
       - key: VITE_WS_URL
         value: wss://browser-agent-server.onrender.com
