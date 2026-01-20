@@ -12,7 +12,10 @@ import { isSupabaseEnabled } from './supabase.js';
 const PORT = process.env.PORT || 3001;
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true
+}));
 app.use(express.json());
 
 // Health check endpoint

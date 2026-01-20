@@ -84,3 +84,41 @@ npm run dev:client
 - **Backend:** Node.js + Express + ws (WebSocket)
 - **Browser Automation:** magnitude-core
 - **Database:** Supabase
+
+## Deploy to Render
+
+### Option 1: One-click deploy (Blueprint)
+
+1. Fork this repository
+2. Go to [Render Dashboard](https://dashboard.render.com)
+3. Click **New** → **Blueprint**
+4. Connect your forked repo and select `browser-agent-chat/render.yaml`
+5. Add your `ANTHROPIC_API_KEY` in the environment variables
+6. Deploy!
+
+### Option 2: Manual setup
+
+**Server (Web Service):**
+1. Create a new **Web Service** on Render
+2. Connect your repo, set root directory to `browser-agent-chat/server`
+3. Choose **Docker** as runtime
+4. Set environment variables:
+   - `ANTHROPIC_API_KEY`: your key
+   - `CORS_ORIGIN`: your client URL (e.g., `https://your-client.onrender.com`)
+5. Use at least the **Starter** plan (browser needs memory)
+
+**Client (Static Site):**
+1. Create a new **Static Site** on Render
+2. Connect your repo, set root directory to `browser-agent-chat/client`
+3. Build command: `npm install && npm run build`
+4. Publish directory: `dist`
+5. Set environment variable:
+   - `VITE_WS_URL`: `wss://your-server.onrender.com`
+
+### Environment Variables
+
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | Server | Your Anthropic API key |
+| `CORS_ORIGIN` | Server | Client URL for CORS |
+| `VITE_WS_URL` | Client | WebSocket URL to server (use `wss://` for production) |

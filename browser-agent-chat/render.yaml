@@ -1,0 +1,25 @@
+services:
+  # Backend API + WebSocket server
+  - type: web
+    name: browser-agent-server
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: starter  # Need at least starter for browser automation
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false  # You'll set this manually in Render dashboard
+      - key: CORS_ORIGIN
+        value: https://browser-agent-client.onrender.com
+      - key: NODE_ENV
+        value: production
+
+  # Frontend React app
+  - type: web
+    name: browser-agent-client
+    runtime: static
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: ./client/dist
+    envVars:
+      - key: VITE_WS_URL
+        value: wss://browser-agent-server.onrender.com
