@@ -23,17 +23,31 @@ npm run build                # Build both workspaces
 browser-agent-chat/
 ├── client/                 # React 19 + TypeScript + Vite
 │   └── src/
-│       ├── App.tsx         # Main app with chat + browser view layout
+│       ├── App.tsx         # Main app with avatar + chat + browser layout
 │       ├── components/
 │       │   ├── ChatPanel.tsx    # Chat input and message history
 │       │   ├── BrowserView.tsx  # Live screenshot stream display
-│       │   └── LandingPage.tsx  # Initial URL input page
-│       └── hooks/
-│           └── useWebSocket.ts  # WebSocket connection hook
+│       │   ├── LandingPage.tsx  # Initial URL input page
+│       │   ├── Avatar/          # HeyGen streaming avatar
+│       │   │   ├── AvatarContainer.tsx
+│       │   │   ├── AvatarVideo.tsx
+│       │   │   └── Avatar.css
+│       │   └── VoiceInput/      # Voice input via Web Speech API
+│       │       ├── VoiceInputButton.tsx
+│       │       └── VoiceInput.css
+│       ├── contexts/
+│       │   └── AssistantContext.tsx  # Global assistant state
+│       ├── hooks/
+│       │   ├── useWebSocket.ts       # WebSocket connection
+│       │   ├── useStreamingAvatar.ts # HeyGen SDK wrapper
+│       │   └── useVoiceInput.ts      # Web Speech API wrapper
+│       └── types/
+│           └── assistant.ts    # Voice assistant types
 ├── server/                 # Node.js + Express + WebSocket
 │   └── src/
 │       ├── index.ts        # Express + WS server setup
 │       ├── agent.ts        # Magnitude agent wrapper
+│       ├── heygen.ts       # HeyGen token generation
 │       ├── types.ts        # Shared types
 │       ├── db.ts           # Database utilities
 │       └── supabase.ts     # Supabase client
@@ -41,9 +55,10 @@ browser-agent-chat/
 ```
 
 **Tech Stack:**
-- **Client:** React 19, TypeScript, Vite
+- **Client:** React 19, TypeScript, Vite, HeyGen Streaming Avatar, LiveKit
 - **Server:** Express, ws (WebSocket), magnitude-core, Supabase
 - **Browser Automation:** Magnitude (Playwright + vision LLMs)
+- **Voice Assistant:** HeyGen Avatar (TTS) + Web Speech API (voice input)
 
 ## Communication Flow
 
@@ -58,11 +73,12 @@ browser-agent-chat/
 **Local development** - Create `browser-agent-chat/server/.env`:
 ```
 ANTHROPIC_API_KEY=your-key-here
+HEYGEN_API_KEY=your-heygen-key-here  # Optional: for voice assistant
 ```
 
 **Production** (Render):
-- Server: `ANTHROPIC_API_KEY`, `CORS_ORIGIN`
-- Client: `VITE_WS_URL` (use `wss://` for secure WebSocket)
+- Server: `ANTHROPIC_API_KEY`, `HEYGEN_API_KEY`, `CORS_ORIGIN`
+- Client: `VITE_WS_URL` (use `wss://`), `VITE_API_URL` (for REST endpoints)
 
 ## Deployment
 

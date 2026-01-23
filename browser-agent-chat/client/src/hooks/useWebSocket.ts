@@ -3,7 +3,26 @@ import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage } from '../
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 
-export function useWebSocket() {
+export type AgentEventType = 'thought' | 'action' | 'taskComplete' | 'error' | 'status';
+
+export interface AgentEvent {
+  type: AgentEventType;
+  content: string;
+  success?: boolean;
+  status?: AgentStatus;
+}
+
+interface UseWebSocketOptions {
+  onAgentEvent?: (event: AgentEvent) => void;
+}
+
+export function useWebSocket(options: UseWebSocketOptions = {}) {
+  const onAgentEventRef = useRef(options.onAgentEvent);
+
+  // Keep ref updated
+  useEffect(() => {
+    onAgentEventRef.current = options.onAgentEvent;
+  }, [options.onAgentEvent]);
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<AgentStatus>('disconnected');
@@ -40,15 +59,20 @@ export function useWebSocket() {
           switch (message.type) {
             case 'thought':
               addMessage('agent', message.content);
+              onAgentEventRef.current?.({ type: 'thought', content: message.content });
               break;
-            case 'action':
-              addMessage('agent', `Action: ${message.action}${message.target ? ` on "${message.target}"` : ''}`);
+            case 'action': {
+              const actionText = `${message.action}${message.target ? ` on "${message.target}"` : ''}`;
+              addMessage('agent', `Action: ${actionText}`);
+              onAgentEventRef.current?.({ type: 'action', content: actionText });
               break;
+            }
             case 'screenshot':
               setScreenshot(`data:image/png;base64,${message.data}`);
               break;
             case 'status':
               setStatus(message.status);
+              onAgentEventRef.current?.({ type: 'status', content: message.status, status: message.status });
               // Reset session state when disconnected
               if (message.status === 'disconnected') {
                 setCurrentUrl(null);
@@ -60,9 +84,11 @@ export function useWebSocket() {
               break;
             case 'error':
               addMessage('system', `Error: ${message.message}`);
+              onAgentEventRef.current?.({ type: 'error', content: message.message });
               break;
             case 'taskComplete':
               addMessage('system', message.success ? 'Task completed' : 'Task failed');
+              onAgentEventRef.current?.({ type: 'taskComplete', content: message.success ? 'completed' : 'failed', success: message.success });
               break;
           }
         } catch (err) {

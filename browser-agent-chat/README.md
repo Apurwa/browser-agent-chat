@@ -89,22 +89,60 @@ browser-agent-chat/
 │   │   ├── App.css         # Styles
 │   │   ├── components/
 │   │   │   ├── ChatPanel.tsx
-│   │   │   └── BrowserView.tsx
-│   │   └── hooks/
-│   │       └── useWebSocket.ts
+│   │   │   ├── BrowserView.tsx
+│   │   │   ├── Avatar/     # HeyGen avatar components
+│   │   │   │   ├── AvatarContainer.tsx
+│   │   │   │   ├── AvatarVideo.tsx
+│   │   │   │   └── Avatar.css
+│   │   │   └── VoiceInput/ # Voice input components
+│   │   │       ├── VoiceInputButton.tsx
+│   │   │       └── VoiceInput.css
+│   │   ├── contexts/
+│   │   │   └── AssistantContext.tsx
+│   │   ├── hooks/
+│   │   │   ├── useWebSocket.ts
+│   │   │   ├── useStreamingAvatar.ts
+│   │   │   └── useVoiceInput.ts
+│   │   └── types/
+│   │       └── assistant.ts
 │   └── package.json
 ├── server/                 # Node.js backend
 │   ├── src/
 │   │   ├── index.ts        # Express + WebSocket server
 │   │   ├── agent.ts        # Magnitude agent wrapper
+│   │   ├── heygen.ts       # HeyGen token generation
 │   │   └── types.ts        # Shared types
 │   └── package.json
 └── package.json            # Workspace root
 ```
+
+## Voice-Assisted Avatar (Optional)
+
+The app supports an AI avatar powered by HeyGen that can:
+- Greet users with a friendly voice message
+- Provide visual feedback while the agent works
+- Accept voice commands via the microphone button
+
+### Setup
+
+1. Get a HeyGen API key from https://app.heygen.com
+2. Add it to your `server/.env`:
+
+```bash
+HEYGEN_API_KEY=your-heygen-api-key
+```
+
+3. The avatar will appear in the left panel when you launch the app
+
+### Voice Input
+
+Click the microphone button next to the chat input to speak your task. The app uses the Web Speech API (Chrome/Edge recommended).
 
 ## Tech Stack
 
 - **Frontend:** React 19 + TypeScript + Vite
 - **Backend:** Node.js + Express + ws (WebSocket)
 - **Browser Automation:** magnitude-core
+- **Voice Avatar:** HeyGen Streaming Avatar + LiveKit
+- **Voice Input:** Web Speech API
 - **Styling:** CSS
