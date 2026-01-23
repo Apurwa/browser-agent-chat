@@ -20,21 +20,43 @@ body {
 
 .app-container {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: 400px 1fr;
   gap: 1rem;
   padding: 1rem;
   height: 100%;
   overflow: hidden;
 }
 
+/* Left Panel - Avatar + Chat */
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  overflow: hidden;
+  height: 100%;
+}
+
+.avatar-section {
+  flex: 0 0 auto;
+  max-height: 320px;
+}
+
+.chat-section {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
 /* Chat Panel */
 .chat-panel {
-  width: 400px;
   display: flex;
   flex-direction: column;
   background: #16213e;
   border-radius: 12px;
   overflow: hidden;
+  height: 100%;
 }
 
 .chat-header {

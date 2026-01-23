@@ -8,6 +8,7 @@ import { createAgent, executeTask, type AgentSession } from './agent.js';
 import type { ClientMessage, ServerMessage } from './types.js';
 import { createSession, endSession, getSessionHistory, listSessions } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
+import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -20,7 +21,26 @@ app.use(express.json());
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', supabaseEnabled: isSupabaseEnabled() });
+  res.json({
+    status: 'ok',
+    supabaseEnabled: isSupabaseEnabled(),
+    heygenEnabled: isHeyGenEnabled()
+  });
+});
+
+// HeyGen token endpoint
+app.post('/api/heygen/token', async (req, res) => {
+  try {
+    if (!isHeyGenEnabled()) {
+      res.status(503).json({ error: 'HeyGen is not configured' });
+      return;
+    }
+    const tokenData = await createHeyGenToken();
+    res.json(tokenData);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to generate HeyGen token';
+    res.status(500).json({ error: message });
+  }
 });
 
 // REST endpoints for session history
