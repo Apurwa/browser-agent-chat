@@ -96,8 +96,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 1rem;
   color: #888;
+  text-align: center;
+  padding: 1rem;
+  position: absolute;
+  inset: 0;
+}
+
+.avatar-loading p {
+  margin: 0;
+  text-align: center;
 }
 
 .avatar-loading-spinner {
@@ -120,12 +130,22 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 1rem;
   color: #666;
+  text-align: center;
+  padding: 1rem;
+  position: absolute;
+  inset: 0;
 }
 
 .avatar-placeholder-icon {
   opacity: 0.5;
+}
+
+.avatar-placeholder p {
+  margin: 0;
+  text-align: center;
 }
 
 /* Error State */
@@ -133,8 +153,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 1rem;
   color: #ef4444;
+  text-align: center;
+  padding: 1rem;
+  position: absolute;
+  inset: 0;
+}
+
+.avatar-error p {
+  margin: 0;
+  text-align: center;
 }
 
 .avatar-error-icon {
