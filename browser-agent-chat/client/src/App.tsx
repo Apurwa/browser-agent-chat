@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useWebSocket, type AgentEvent } from './hooks/useWebSocket';
 import { AssistantProvider, useAssistant } from './contexts/AssistantContext';
 import { ChatPanel } from './components/ChatPanel';
@@ -6,10 +6,13 @@ import { BrowserView } from './components/BrowserView';
 import { LandingPage } from './components/LandingPage';
 import { AvatarContainer } from './components/Avatar/AvatarContainer';
 
+const DEFAULT_URL = 'https://google.com';
+
 function AppContent() {
   const [showApp, setShowApp] = useState(false);
   const { speakText, isAvatarReady, isSpeaking } = useAssistant();
   const lastSpokenRef = useRef<string>('');
+  const hasStartedAgentRef = useRef(false);
 
   const handleAgentEvent = useCallback(async (event: AgentEvent) => {
     if (!isAvatarReady) return;
@@ -21,42 +24,35 @@ function AppContent() {
 
     switch (event.type) {
       case 'thought':
-        // Narrate thoughts (keep them brief)
-        if (event.content.length < 100) {
+        // Share the agent's reasoning/plan - this is the "thinking out loud" part
+        // Keep thoughts that are meaningful (not too short, not too long)
+        if (event.content.length > 5 && event.content.length < 200) {
           narration = event.content;
         }
         break;
 
       case 'action':
-        // Narrate actions in a friendly way
+        // Skip most actions - they're too granular
+        // Only mention significant navigation events
         const action = event.content.toLowerCase();
-        if (action.includes('click')) {
-          narration = `Clicking ${action.replace('click', '').trim()}`;
-        } else if (action.includes('type') || action.includes('fill')) {
-          narration = `Typing the information`;
-        } else if (action.includes('scroll')) {
-          narration = `Scrolling the page`;
-        } else if (action.includes('navigate') || action.includes('go to')) {
-          narration = `Navigating to the page`;
-        } else {
-          narration = `Performing: ${event.content}`;
+        if (action.includes('navigate') || action.includes('go to') || action.includes('open')) {
+          // Don't narrate, the thought already explained the plan
         }
+        // Skip clicks, typing, scrolling - too robotic
         break;
 
       case 'taskComplete':
         narration = event.success
-          ? "Done! I've completed the task."
-          : "I ran into an issue and couldn't complete the task.";
+          ? "All done!"
+          : "Hmm, I ran into a problem. Let me know if you'd like me to try again.";
         break;
 
       case 'error':
-        narration = `Oops, there was an error: ${event.content}`;
+        narration = "Something went wrong. Would you like me to try a different approach?";
         break;
 
       case 'status':
-        if (event.status === 'idle') {
-          // Agent became ready - don't narrate this
-        }
+        // Don't narrate status changes
         break;
     }
 
@@ -74,9 +70,23 @@ function AppContent() {
     currentUrl,
     messages,
     startAgent,
-    sendTask,
-    stopAgent
+    sendTask
   } = useWebSocket({ onAgentEvent: handleAgentEvent });
+
+  // Start browser agent when avatar becomes ready
+  const handleAvatarReady = useCallback(() => {
+    if (!hasStartedAgentRef.current) {
+      hasStartedAgentRef.current = true;
+      startAgent(DEFAULT_URL);
+    }
+  }, [startAgent]);
+
+  // Reset agent started flag when avatar disconnects
+  useEffect(() => {
+    if (!isAvatarReady) {
+      hasStartedAgentRef.current = false;
+    }
+  }, [isAvatarReady]);
 
   if (!showApp) {
     return <LandingPage onLaunchApp={() => setShowApp(true)} />;
@@ -87,15 +97,13 @@ function AppContent() {
       <div className="app-container">
         <div className="left-panel">
           <div className="avatar-section">
-            <AvatarContainer />
+            <AvatarContainer onAvatarReady={handleAvatarReady} />
           </div>
           <div className="chat-section">
             <ChatPanel
               messages={messages}
               status={status}
               onSendTask={sendTask}
-              onStartAgent={startAgent}
-              onStopAgent={stopAgent}
               currentUrl={currentUrl}
             />
           </div>

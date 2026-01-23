@@ -110,8 +110,26 @@ body {
   50% { opacity: 0.5; }
 }
 
-.url-form,
-.session-controls {
+.session-info {
+  padding: 0.5rem 0.75rem;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a2e;
+}
+
+.session-info .current-url {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #1a1a2e;
+  border-radius: 6px;
+  background: #16213e;
+  color: #888;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.url-form {
   display: flex;
   gap: 0.5rem;
   padding: 0.75rem;
@@ -119,8 +137,7 @@ body {
   border-bottom: 1px solid #1a1a2e;
 }
 
-.url-form input,
-.session-controls .current-url {
+.url-form input {
   flex: 1;
   padding: 0.5rem 0.75rem;
   border: 1px solid #1a1a2e;
@@ -130,14 +147,7 @@ body {
   font-size: 0.875rem;
 }
 
-.session-controls .current-url {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .url-form button,
-.session-controls button,
 .input-form button {
   padding: 0.5rem 1rem;
   border: none;
@@ -150,13 +160,11 @@ body {
 }
 
 .url-form button:hover:not(:disabled),
-.session-controls button:hover:not(:disabled),
 .input-form button:hover:not(:disabled) {
   background: #d63050;
 }
 
 .url-form button:disabled,
-.session-controls button:disabled,
 .input-form button:disabled {
   background: #444;
   cursor: not-allowed;

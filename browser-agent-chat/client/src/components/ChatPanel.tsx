@@ -7,8 +7,6 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   status: AgentStatus;
   onSendTask: (task: string) => void;
-  onStartAgent: (url: string) => void;
-  onStopAgent: () => void;
   currentUrl: string | null;
 }
 
@@ -16,12 +14,9 @@ export function ChatPanel({
   messages,
   status,
   onSendTask,
-  onStartAgent,
-  onStopAgent,
   currentUrl
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
-  const [urlInput, setUrlInput] = useState('https://magnitodo.com');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { speakText, isAvatarReady } = useAssistant();
 
@@ -37,15 +32,8 @@ export function ChatPanel({
     setInput('');
   };
 
-  const handleStart = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlInput.trim()) return;
-    onStartAgent(urlInput.trim());
-  };
-
   const isAgentReady = status === 'idle';
   const isAgentWorking = status === 'working';
-  const hasActiveSession = currentUrl !== null;
 
   const pendingTaskRef = useRef<string | null>(null);
 
@@ -63,28 +51,28 @@ export function ChatPanel({
 
     // If browser agent is ready, send task to it
     if (isAgentReady) {
-      // Have avatar acknowledge the task
-      if (isAvatarReady) {
-        await speakText(`Got it! I'll ${transcript.toLowerCase().startsWith('create') || transcript.toLowerCase().startsWith('add') ? 'do that for you' : 'help you with that'}.`);
-      }
+      // Don't speak here - let the agent's thoughts narrate the plan
       onSendTask(transcript.trim());
-    } else if (!hasActiveSession) {
-      // No agent running - start it automatically
+    } else if (isAgentWorking) {
+      // Agent is working - this is worth mentioning
       if (isAvatarReady) {
-        await speakText("Let me start the browser for you.");
+        await speakText("Give me a moment, I'm still working on the previous task.");
       }
-      // Store the task to execute after agent starts
+    } else {
+      // Agent not ready yet - queue the task, don't speak to avoid blocking thoughts
       pendingTaskRef.current = transcript.trim();
-      // Start agent with default URL
-      onStartAgent(urlInput.trim() || 'https://magnitodo.com');
-    } else if (isAvatarReady) {
-      // Agent is starting/working
-      await speakText("I'm currently working on something. Please wait a moment.");
     }
-  }, [onSendTask, onStartAgent, isAgentReady, isAvatarReady, hasActiveSession, speakText, urlInput]);
+  }, [onSendTask, isAgentReady, isAgentWorking, isAvatarReady, speakText]);
 
-  // Voice input is enabled when avatar is ready OR agent is ready
-  const isVoiceEnabled = isAvatarReady || isAgentReady;
+  // Voice input is enabled when avatar is ready
+  const isVoiceEnabled = isAvatarReady;
+
+  const getPlaceholder = () => {
+    if (isAgentReady) return "Enter a task for the agent...";
+    if (isAgentWorking) return "Agent is working...";
+    if (isAvatarReady) return "Browser is starting...";
+    return "Start the assistant first...";
+  };
 
   return (
     <div className="chat-panel">
@@ -96,25 +84,9 @@ export function ChatPanel({
         </div>
       </div>
 
-      {!hasActiveSession ? (
-        <form className="url-form" onSubmit={handleStart}>
-          <input
-            type="url"
-            value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Enter URL to start..."
-            required
-          />
-          <button type="submit" disabled={status === 'working'}>
-            Start Agent
-          </button>
-        </form>
-      ) : (
-        <div className="session-controls">
+      {currentUrl && (
+        <div className="session-info">
           <span className="current-url">{currentUrl}</span>
-          <button onClick={onStopAgent} disabled={isAgentWorking}>
-            Stop
-          </button>
         </div>
       )}
 
@@ -133,13 +105,7 @@ export function ChatPanel({
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={
-            isAgentReady
-              ? "Enter a task for the agent..."
-              : isAgentWorking
-              ? "Agent is working..."
-              : "Start an agent first..."
-          }
+          placeholder={getPlaceholder()}
           disabled={!isAgentReady}
         />
         <VoiceInputButton

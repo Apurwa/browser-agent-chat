@@ -56,7 +56,7 @@ function getSpeechRecognition(): (new () => SpeechRecognition) | null {
 
 export function useVoiceInput({
   language = 'en-US',
-  continuous = false,
+  continuous = true,
   onResult,
   onError,
 }: UseVoiceInputOptions = {}): UseVoiceInputReturn {
@@ -67,6 +67,7 @@ export function useVoiceInput({
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const isListeningRef = useRef(false);
+  const shouldRestartRef = useRef(false);
 
   const SpeechRecognitionClass = getSpeechRecognition();
   const isSupported = Boolean(SpeechRecognitionClass);
@@ -94,6 +95,7 @@ export function useVoiceInput({
     setError(null);
     setTranscript('');
     setInterimTranscript('');
+    shouldRestartRef.current = true;
 
     const recognition = new SpeechRecognitionClass();
     recognition.continuous = continuous;
@@ -138,16 +140,18 @@ export function useVoiceInput({
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       isListeningRef.current = false;
 
+      // For no-speech, don't stop - just let it auto-restart
       if (event.error === 'no-speech') {
-        setState('idle');
         return;
       }
 
       if (event.error === 'aborted') {
+        shouldRestartRef.current = false;
         setState('idle');
         return;
       }
 
+      shouldRestartRef.current = false;
       const errorMessages: Record<string, string> = {
         'not-allowed': 'Microphone access denied. Please allow microphone access.',
         'network': 'Network error. Please check your connection.',
@@ -161,7 +165,22 @@ export function useVoiceInput({
     recognition.onend = () => {
       isListeningRef.current = false;
       setInterimTranscript('');
-      if (state !== 'error') {
+
+      // Auto-restart if user hasn't explicitly stopped
+      if (shouldRestartRef.current && state !== 'error') {
+        console.log('Auto-restarting speech recognition...');
+        setTimeout(() => {
+          if (shouldRestartRef.current) {
+            try {
+              recognition.start();
+            } catch (err) {
+              console.error('Failed to restart speech recognition:', err);
+              shouldRestartRef.current = false;
+              setState('idle');
+            }
+          }
+        }, 100);
+      } else if (state !== 'error') {
         setState('idle');
       }
     };
@@ -176,6 +195,7 @@ export function useVoiceInput({
   }, [SpeechRecognitionClass, continuous, language, handleError, onResult, state]);
 
   const stopListening = useCallback(() => {
+    shouldRestartRef.current = false;
     if (recognitionRef.current && isListeningRef.current) {
       recognitionRef.current.stop();
     }
@@ -188,6 +208,7 @@ export function useVoiceInput({
 
   useEffect(() => {
     return () => {
+      shouldRestartRef.current = false;
       if (recognitionRef.current) {
         recognitionRef.current.abort();
       }
