@@ -1,81 +1,31 @@
-import { useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
-import { useWebSocket } from './hooks/useWebSocket';
-import { isAuthEnabled } from './lib/supabase';
-import { ChatPanel } from './components/ChatPanel';
-import { BrowserView } from './components/BrowserView';
-import { LandingPage } from './components/LandingPage';
-import { LoginPage } from './components/LoginPage';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './components/LoginPage';
+import ProjectList from './components/ProjectList';
+import ProjectSetup from './components/ProjectSetup';
+import TestingView from './components/TestingView';
+import FindingsDashboard from './components/FindingsDashboard';
+import MemoryViewer from './components/MemoryViewer';
+import ProjectSettings from './components/ProjectSettings';
 
-function App() {
-  const [showApp, setShowApp] = useState(false);
-  const { user, session, loading, signInWithGitHub, signOut } = useAuth();
+export default function App() {
+  const { user, loading } = useAuth();
 
-  const {
-    connected,
-    status,
-    screenshot,
-    currentUrl,
-    messages,
-    accessDenied,
-    startAgent,
-    sendTask,
-    stopAgent
-  } = useWebSocket(session?.access_token);
-
-  // Show loading while checking auth state
-  if (isAuthEnabled() && loading) {
-    return (
-      <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <p style={{ color: '#888' }}>Loading...</p>
-      </div>
-    );
-  }
-
-  // Auth gate: if auth is enabled and no session, show login
-  if (isAuthEnabled() && !session) {
-    return <LoginPage onSignIn={signInWithGitHub} />;
-  }
-
-  // If authenticated but access denied by server
-  if (accessDenied) {
-    return <LoginPage onSignIn={signInWithGitHub} accessDenied onSignOut={signOut} />;
-  }
-
-  if (!showApp) {
-    return <LandingPage onLaunchApp={() => setShowApp(true)} />;
+  if (loading) {
+    return <div className="loading-screen">Loading...</div>;
   }
 
   return (
-    <div className="app">
-      <div className="app-container">
-        <ChatPanel
-          messages={messages}
-          status={status}
-          onSendTask={sendTask}
-          onStartAgent={startAgent}
-          onStopAgent={stopAgent}
-          currentUrl={currentUrl}
-        />
-        <BrowserView
-          screenshot={screenshot}
-          currentUrl={currentUrl}
-          status={status}
-        />
-      </div>
-      {user && (
-        <div className="user-bar">
-          <span>{user.user_metadata?.user_name}</span>
-          <button onClick={signOut} className="signout-btn">Sign out</button>
-        </div>
-      )}
-      {!connected && (
-        <div className="connection-banner">
-          Connecting to server...
-        </div>
-      )}
-    </div>
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/projects" replace /> : <LoginPage />} />
+      <Route path="/projects" element={<ProtectedRoute><ProjectList /></ProtectedRoute>} />
+      <Route path="/projects/new" element={<ProtectedRoute><ProjectSetup /></ProtectedRoute>} />
+      <Route path="/projects/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
+      <Route path="/projects/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
+      <Route path="/projects/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
+      <Route path="/projects/:id/settings" element={<ProtectedRoute><ProjectSettings /></ProtectedRoute>} />
+      <Route path="*" element={<Navigate to={user ? '/projects' : '/login'} replace />} />
+    </Routes>
   );
 }
-
-export default App;
