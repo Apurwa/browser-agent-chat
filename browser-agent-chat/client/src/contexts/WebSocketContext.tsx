@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
-import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding } from '../types';
+import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding, Suggestion } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 const HEARTBEAT_INTERVAL = 30_000;
@@ -12,11 +12,15 @@ interface WebSocketState {
   messages: ChatMessage[];
   findings: Finding[];
   findingsCount: number;
+  pendingSuggestionCount: number;
   activeProjectId: string | null;
   startAgent: (projectId: string) => void;
   resumeSession: (projectId: string) => void;
   sendTask: (content: string) => void;
   stopAgent: () => void;
+  explore: (projectId: string) => void;
+  resetSuggestionCount: () => void;
+  decrementSuggestionCount: () => void;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -39,6 +43,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
 
   // Stable ref for the active project so message handlers don't get stale closures
   const activeProjectRef = useRef<string | null>(null);
@@ -95,6 +100,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         const finding = (msg as any).finding as Finding;
         setFindings(prev => [...prev, finding]);
         addMessage('finding', finding.title, finding);
+        break;
+      }
+      case 'suggestion': {
+        const suggestion = (msg as any).suggestion as Suggestion;
+        setPendingSuggestionCount(c => c + 1);
+        const typeLabel = suggestion.type === 'feature' ? 'feature' : suggestion.type === 'flow' ? 'flow' : 'behavior';
+        const name = 'name' in suggestion.data ? (suggestion.data as any).name : (suggestion.data as any).feature_name;
+        addMessage('system', `💡 Learned: "${name}" ${typeLabel}`);
         break;
       }
       case 'sessionRestore': {
@@ -200,6 +213,18 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     activeProjectRef.current = null;
   }, [send]);
 
+  const explore = useCallback((projectId: string) => {
+    send({ type: 'explore', projectId });
+  }, [send]);
+
+  const resetSuggestionCount = useCallback(() => {
+    setPendingSuggestionCount(0);
+  }, []);
+
+  const decrementSuggestionCount = useCallback(() => {
+    setPendingSuggestionCount(c => Math.max(0, c - 1));
+  }, []);
+
   const value: WebSocketState = {
     connected,
     status,
@@ -208,11 +233,15 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     messages,
     findings,
     findingsCount: findings.length,
+    pendingSuggestionCount,
     activeProjectId,
     startAgent,
     resumeSession,
     sendTask,
     stopAgent,
+    explore,
+    resetSuggestionCount,
+    decrementSuggestionCount,
   };
 
   return (
