@@ -286,10 +286,12 @@ New server → client messages:
 ### Routing
 ```
 /login                          → LoginPage
+/projects                       → ProjectList
 /projects/new                   → ProjectSetup
 /projects/:id/testing           → TestingView (existing, adapted)
 /projects/:id/findings          → FindingsDashboard
 /projects/:id/memory            → MemoryViewer
+/projects/:id/settings          → ProjectSettings
 ```
 
 ### Component Structure
@@ -306,6 +308,8 @@ src/
 │   ├── FindingDetail.tsx        # Single finding full view
 │   ├── MemoryViewer.tsx         # Feature list + detail
 │   ├── FeatureDetail.tsx        # Feature with behaviors + flows
+│   ├── ProjectList.tsx           # Project cards grid
+│   ├── ProjectSettings.tsx      # Edit project, update creds, delete
 │   └── ProtectedRoute.tsx       # Auth guard wrapper
 ├── hooks/
 │   ├── useWebSocket.ts          # Adapted for project-scoped sessions
@@ -325,9 +329,254 @@ src/
 - Scheduled/automated test runs
 - Multiple browser/device testing
 
+## Memory Engine — Implementation Approach
+
+The Memory Engine is not a separate service — it is a prompt-engineering layer that wraps `agent.act()` calls with context, and processes agent responses to extract memory updates.
+
+### How It Works
+
+1. **Context injection:** Before each `agent.act(task)` call, the server constructs a system prompt that includes:
+   - All features, flows, and expected behaviors for the current project (serialized as structured text)
+   - Instructions telling the agent to compare what it observes against these expectations
+   - Instructions to output structured JSON blocks when it detects anomalies or learns new information
+
+2. **Teaching vs. testing mode:** The server does NOT distinguish modes. Every message goes through `agent.act()`. The difference is in the prompt wrapper:
+   - If the user says "this is the billing page, it's critical," the agent both navigates AND the server detects teaching-intent keywords in the user message (heuristics: "this is...", "should always...", "is critical", "expected behavior is..."). The server then calls the Memory REST API to create/update entries.
+   - If the user says "test billing," the agent navigates and tests. The prompt instructs it to compare observations against loaded memory.
+   - Teaching and testing can happen in the same message — "test billing and remember that prices should never be negative."
+
+3. **Memory extraction heuristics:** The server scans both user messages and agent responses for memory-relevant content:
+   - User declares a feature → create `memory_features` entry
+   - User describes a flow → create `memory_flows` entry
+   - User states an expected behavior → add to feature's `expected_behaviors` array
+   - User assigns criticality → update the relevant feature/flow
+   - Agent confirms it learned something → broadcast `memoryUpdate` via WebSocket
+
+4. **Prompt template (simplified):**
+   ```
+   You are a QA agent testing a SaaS application. Here is what you know about this product:
+
+   FEATURES:
+   - Billing [CRITICAL]: Prices match plan, payment validates fields, invoices generate after payment
+     Flows: Upgrade Plan (billing → select → pay → confirm), Cancel Subscription (billing → cancel → confirm)
+   - User Management [HIGH]: Invite works, roles enforced, deactivation removes access
+
+   TASK: {user_message}
+
+   As you perform this task:
+   1. If you observe anything that contradicts the expected behaviors above, report it as a FINDING in this JSON format: {"finding": {"title": "...", "type": "...", "severity": "...", ...}}
+   2. If the user is teaching you about the product (describing features, flows, or expected behaviors), acknowledge what you learned.
+   ```
+
+5. **Response parsing:** After `agent.act()` completes (or during `thought` events), the server parses agent output for:
+   - JSON finding blocks → create finding in database, broadcast via WebSocket
+   - Learning acknowledgments → trigger memory extraction heuristics
+
+## Finding Detector — Implementation Approach
+
+The Finding Detector is LLM-driven, not rule-based. It relies on Claude Sonnet 4's vision capabilities through Magnitude.
+
+### How Anomalies Are Detected
+
+1. **Behavioral comparison:** The agent's prompt includes expected behaviors. When the agent navigates and observes something that contradicts an expectation (e.g., "price should always match plan" but it sees $0.00), the LLM itself identifies the mismatch and reports it.
+
+2. **Visual anomalies:** The agent uses vision (screenshot analysis) to detect:
+   - Broken layouts, overlapping elements, missing images
+   - The LLM sees the screenshot and compares against what a well-functioning page should look like
+
+3. **Functional anomalies:** When `agent.act("click submit")` succeeds but nothing happens, or an error appears, the agent detects this through vision + DOM state.
+
+4. **Finding creation flow:**
+   - Agent detects anomaly → emits structured finding in `thought` event
+   - Server parses the `thought` for finding JSON
+   - Server calls `connector.getLastScreenshot()` to capture evidence
+   - Server uploads screenshot to Supabase Storage, gets URL
+   - Server saves finding to `findings` table
+   - Server broadcasts `{ type: 'finding', finding }` via WebSocket
+   - Chat shows inline finding alert
+
+5. **No pause needed:** Finding creation happens in the `thought` and `actionDone` event handlers (which already exist). The agent continues its `act()` execution uninterrupted. Evidence capture is async and non-blocking.
+
+## Credential Management
+
+### Encryption Strategy
+Application-level encryption using AES-256-GCM:
+
+1. **Encryption key:** Server-side environment variable `CREDENTIALS_ENCRYPTION_KEY` (32-byte hex string). Generated once, stored in deployment environment (Render env vars).
+
+2. **Encrypt flow (on project create/update):**
+   - Client sends credentials in plaintext over HTTPS
+   - Server encrypts with AES-256-GCM using the key + random IV
+   - Stores as JSONB: `{ "iv": "hex", "encrypted": "hex", "tag": "hex" }`
+   - Plaintext never persisted
+
+3. **Decrypt flow (on agent start):**
+   - Server reads project credentials from database
+   - Decrypts with the encryption key
+   - Passes plaintext credentials to the agent for login
+   - Credentials exist in memory only during the agent session
+
+4. **No client-side access:** Credentials are never sent back to the client. The `GET /api/projects/:id` response includes `hasCredentials: boolean` instead of the actual values.
+
+## Database Migration Plan
+
+### Approach: Clean Start
+The existing database tables (`sessions`, `messages`, `screenshots`) are from a prototype phase with no production users. The migration strategy is:
+
+1. **Drop existing tables** and create the new schema from scratch
+2. No data migration needed — there is no production data to preserve
+3. Migration SQL files stored in `server/src/migrations/`
+
+### Migration Order
+1. Enable required extensions: `pgcrypto` (for `gen_random_uuid()`)
+2. Create `projects` table
+3. Create `memory_features` table (FK → projects)
+4. Create `memory_flows` table (FK → memory_features, projects)
+5. Create `sessions` table (FK → projects) — new schema with `project_id`
+6. Create `messages` table (FK → sessions) — `role` column uses: user, agent, thought, action, system (preserves existing granularity)
+7. Create `findings` table (FK → projects, sessions)
+8. Create RLS policies for all tables
+9. Create Supabase Storage bucket for screenshots
+
+### Messages Table — Role Values
+To preserve the granularity that the existing codebase uses:
+- `user` — user chat messages
+- `agent` — agent responses
+- `thought` — agent reasoning (displayed differently in chat)
+- `action` — agent browser actions (displayed as monospace action items)
+- `system` — system messages (errors, status changes)
+
+### Findings — Text vs FK for Feature/Flow
+The `feature` and `flow` columns on `findings` are intentionally text (not foreign keys). This preserves historical accuracy — if a feature is renamed or deleted, existing findings retain their original context. Findings are immutable records of what was observed.
+
+## Supabase RLS Policies
+
+```sql
+-- Projects: users can only access their own
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can CRUD own projects"
+  ON projects FOR ALL USING (auth.uid() = user_id);
+
+-- Memory features: access through project ownership
+ALTER TABLE memory_features ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can CRUD features of own projects"
+  ON memory_features FOR ALL
+  USING (project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()));
+
+-- Memory flows: access through project ownership
+ALTER TABLE memory_flows ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can CRUD flows of own projects"
+  ON memory_flows FOR ALL
+  USING (project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()));
+
+-- Sessions: access through project ownership
+ALTER TABLE sessions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can access sessions of own projects"
+  ON sessions FOR ALL
+  USING (project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()));
+
+-- Messages: access through session → project ownership
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can access messages of own sessions"
+  ON messages FOR ALL
+  USING (session_id IN (
+    SELECT s.id FROM sessions s
+    JOIN projects p ON s.project_id = p.id
+    WHERE p.user_id = auth.uid()
+  ));
+
+-- Findings: access through project ownership
+ALTER TABLE findings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can access findings of own projects"
+  ON findings FOR ALL
+  USING (project_id IN (SELECT id FROM projects WHERE user_id = auth.uid()));
+```
+
+## Screenshots Strategy
+
+Two separate screenshot flows coexist:
+
+1. **Live streaming (existing):** During testing, `connector.getLastScreenshot()` returns base64 data. This is broadcast via WebSocket `{ type: 'screenshot', data: base64 }` for the real-time browser view. These are NOT persisted — they are ephemeral display data.
+
+2. **Finding evidence (new):** When a finding is created, the current screenshot is uploaded to Supabase Storage as a PNG file. The returned URL is stored in `findings.screenshot_url`. These ARE persisted for the findings dashboard.
+
+## Error Handling
+
+### Agent Failures
+- **Failed login:** If the agent cannot log in with stored credentials, it reports an error via WebSocket `{ type: 'error', message: 'Failed to log in...' }`. The session remains active so the user can provide updated credentials or troubleshoot.
+- **Agent crash mid-test:** The `executeTask` try/catch (existing) broadcasts an error and sets status to idle. Findings captured before the crash are preserved. User can send a new task to retry.
+- **WebSocket disconnect:** Client auto-reconnects (existing 3-second retry). The agent session continues running on the server. On reconnect, the server sends the current status and latest screenshot to resync. Messages sent during disconnect are lost (acceptable for v0).
+
+### False Positive Findings
+- The LLM may flag things that are not actual bugs. This is why the human review step exists — users confirm or dismiss findings. The dismissal rate over time can inform prompt tuning in future versions.
+
+## Additional Screens
+
+### 6. Project List (`/projects`)
+- Shown after login if user has existing projects
+- Simple card grid showing: project name, URL, last tested timestamp, finding count
+- "New Project" button
+- Click a project card → navigate to its Testing view
+
+### 7. Settings (`/projects/:id/settings`)
+- **Project details:** Edit name, URL, context
+- **Credentials:** Update login credentials (shows "Credentials saved" status, never shows actual values)
+- **Danger zone:** Delete project (with confirmation dialog)
+
+## API Request/Response Shapes
+
+### Projects
+```
+POST /api/projects
+  Body: { name: string, url: string, credentials: { username: string, password: string }, context?: string }
+  Response: { id: string, name: string, url: string, hasCredentials: boolean, context: string, created_at: string }
+
+GET /api/projects
+  Response: { projects: [{ id, name, url, hasCredentials, context, created_at, updated_at, findings_count, last_session_at }] }
+
+GET /api/projects/:id
+  Response: { id, name, url, hasCredentials, context, created_at, updated_at }
+```
+
+### Findings
+```
+GET /api/projects/:id/findings?type=visual&severity=critical&status=new&limit=50&offset=0
+  Response: { findings: Finding[], total: number }
+
+PUT /api/projects/:id/findings/:findingId
+  Body: { status: 'confirmed' | 'dismissed' }
+  Response: { finding: Finding }
+```
+
+### Memory
+```
+GET /api/projects/:id/memory/features
+  Response: { features: Feature[] }  // Each feature includes its flows
+
+POST /api/projects/:id/memory/features
+  Body: { name: string, description?: string, criticality: string, expected_behaviors?: string[] }
+  Response: { feature: Feature }
+
+PUT /api/projects/:id/memory/features/:featureId
+  Body: Partial<{ name, description, criticality, expected_behaviors }>
+  Response: { feature: Feature }
+
+POST /api/projects/:id/memory/features/:featureId/flows
+  Body: { name: string, steps: Step[], checkpoints?: Checkpoint[], criticality: string }
+  Response: { flow: Flow }
+
+PUT /api/projects/:id/memory/flows/:flowId
+  Body: Partial<{ name, steps, checkpoints, criticality }>
+  Response: { flow: Flow }
+```
+
+### Pagination
+All list endpoints support `limit` (default 50) and `offset` (default 0) query parameters. Responses include a `total` count for the client to implement pagination or infinite scroll.
+
 ## Security Considerations
-- Credentials encrypted at rest in Supabase (use pgcrypto or application-level encryption)
-- All API endpoints require authenticated user
-- Projects scoped to user (RLS policies in Supabase)
+- Credentials encrypted at rest using AES-256-GCM (see Credential Management section)
+- All API endpoints require authenticated user (Supabase JWT in Authorization header)
+- Projects scoped to user via RLS policies (see Supabase RLS Policies section)
 - OAuth tokens managed by Supabase Auth
 - No credentials exposed in client-side code or WebSocket messages
+- Existing `ALLOWED_GITHUB_USERS` allowlist mechanism is removed — replaced by proper per-user project isolation via RLS
