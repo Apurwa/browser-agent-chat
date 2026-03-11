@@ -94,7 +94,7 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
               <div className="flow-steps">
                 {flow.steps.map((s, i) => (
                   <span key={i} className="flow-step-pill">
-                    {i > 0 && <span className="flow-arrow">-></span>}
+                    {i > 0 && <span className="flow-arrow">{'→'}</span>}
                     {s.description}
                   </span>
                 ))}
