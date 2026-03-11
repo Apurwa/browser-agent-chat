@@ -58,7 +58,8 @@ router.post('/', requireAuth, async (req, res) => {
 
 // Get project details
 router.get('/:id', requireAuth, async (req, res) => {
-  const project = await getProject(req.params.id);
+  const projectId = req.params.id as string;
+  const project = await getProject(projectId);
   if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
 
   const response: ProjectResponse = {
@@ -75,13 +76,14 @@ router.get('/:id', requireAuth, async (req, res) => {
 
 // Update project
 router.put('/:id', requireAuth, async (req, res) => {
+  const projectId = req.params.id as string;
   const updates: Record<string, unknown> = {};
   if (req.body.name) updates.name = req.body.name;
   if (req.body.url) updates.url = req.body.url;
   if (req.body.context !== undefined) updates.context = req.body.context;
   if (req.body.credentials) updates.credentials = encryptCredentials(req.body.credentials);
 
-  const project = await updateProject(req.params.id, updates);
+  const project = await updateProject(projectId, updates);
   if (!project) { res.status(404).json({ error: 'Project not found' }); return; }
 
   res.json({
@@ -93,7 +95,8 @@ router.put('/:id', requireAuth, async (req, res) => {
 
 // Delete project
 router.delete('/:id', requireAuth, async (req, res) => {
-  const success = await deleteProject(req.params.id);
+  const projectId = req.params.id as string;
+  const success = await deleteProject(projectId);
   if (!success) { res.status(404).json({ error: 'Project not found' }); return; }
   res.status(204).send();
 });
