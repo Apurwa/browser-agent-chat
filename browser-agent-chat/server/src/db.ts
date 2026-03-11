@@ -1,148 +1,257 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
+import type {
+  Project, Feature, Flow, Finding, Session, Message,
+  EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep
+} from './types.js';
 
-export type MessageType = 'user' | 'agent' | 'system' | 'thought' | 'action';
+// === Projects ===
 
-export interface Session {
-  id: string;
-  url: string;
-  status: string;
-  created_at: string;
-  ended_at: string | null;
-  user_id: string | null;
+export async function createProject(
+  userId: string, name: string, url: string,
+  credentials: EncryptedCredentials | null, context: string | null
+): Promise<Project | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('projects')
+    .insert({ user_id: userId, name, url, credentials, context })
+    .select()
+    .single();
+  if (error) { console.error('createProject error:', error); return null; }
+  return data;
 }
 
-export interface Message {
-  id: string;
-  session_id: string;
-  type: MessageType;
-  content: string;
-  created_at: string;
+export async function getProject(projectId: string): Promise<Project | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('projects')
+    .select('*')
+    .eq('id', projectId)
+    .single();
+  if (error) return null;
+  return data;
 }
 
-export interface Screenshot {
-  id: string;
-  session_id: string;
-  data: string;
-  created_at: string;
+export async function listProjects(userId: string): Promise<Project[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('projects')
+    .select('*')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false });
+  if (error) { console.error('listProjects error:', error); return []; }
+  return data ?? [];
 }
 
-export async function createSession(url: string, userId: string | null = null): Promise<string | null> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return null;
-  }
+export async function updateProject(
+  projectId: string, updates: Partial<Pick<Project, 'name' | 'url' | 'credentials' | 'context'>>
+): Promise<Project | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('projects')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', projectId)
+    .select()
+    .single();
+  if (error) { console.error('updateProject error:', error); return null; }
+  return data;
+}
 
-  const { data, error } = await supabase
+export async function deleteProject(projectId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!.from('projects').delete().eq('id', projectId);
+  return !error;
+}
+
+// === Memory Features ===
+
+export async function listFeatures(projectId: string): Promise<Feature[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data: features, error } = await supabase!
+    .from('memory_features')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+  if (error || !features) return [];
+
+  // Attach flows to each feature
+  const { data: flows } = await supabase!
+    .from('memory_flows')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true });
+
+  return features.map(f => ({
+    ...f,
+    flows: (flows ?? []).filter(fl => fl.feature_id === f.id),
+  }));
+}
+
+export async function createFeature(
+  projectId: string, name: string, description: string | null,
+  criticality: Criticality, expectedBehaviors: string[]
+): Promise<Feature | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('memory_features')
+    .insert({ project_id: projectId, name, description, criticality, expected_behaviors: expectedBehaviors })
+    .select()
+    .single();
+  if (error) { console.error('createFeature error:', error); return null; }
+  return { ...data, flows: [] };
+}
+
+export async function updateFeature(
+  featureId: string, updates: Partial<Pick<Feature, 'name' | 'description' | 'criticality' | 'expected_behaviors'>>
+): Promise<Feature | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('memory_features')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', featureId)
+    .select()
+    .single();
+  if (error) { console.error('updateFeature error:', error); return null; }
+  return data;
+}
+
+export async function deleteFeature(featureId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!.from('memory_features').delete().eq('id', featureId);
+  return !error;
+}
+
+// === Memory Flows ===
+
+export async function createFlow(
+  featureId: string, projectId: string, name: string,
+  steps: Flow['steps'], checkpoints: Flow['checkpoints'], criticality: Criticality
+): Promise<Flow | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('memory_flows')
+    .insert({ feature_id: featureId, project_id: projectId, name, steps, checkpoints, criticality })
+    .select()
+    .single();
+  if (error) { console.error('createFlow error:', error); return null; }
+  return data;
+}
+
+export async function updateFlow(
+  flowId: string, updates: Partial<Pick<Flow, 'name' | 'steps' | 'checkpoints' | 'criticality'>>
+): Promise<Flow | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('memory_flows')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', flowId)
+    .select()
+    .single();
+  if (error) { console.error('updateFlow error:', error); return null; }
+  return data;
+}
+
+export async function deleteFlow(flowId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!.from('memory_flows').delete().eq('id', flowId);
+  return !error;
+}
+
+// === Sessions ===
+
+export async function createSession(projectId: string): Promise<string | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
     .from('sessions')
-    .insert({ url, user_id: userId })
+    .insert({ project_id: projectId })
     .select('id')
     .single();
-
-  if (error) {
-    console.error('Failed to create session:', error);
-    throw error;
-  }
-
+  if (error) { console.error('createSession error:', error); return null; }
   return data.id;
 }
 
 export async function endSession(sessionId: string): Promise<void> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return;
-  }
-
-  const { error } = await supabase
+  if (!isSupabaseEnabled()) return;
+  await supabase!
     .from('sessions')
-    .update({ status: 'ended', ended_at: new Date().toISOString() })
+    .update({ ended_at: new Date().toISOString() })
     .eq('id', sessionId);
-
-  if (error) {
-    console.error('Failed to end session:', error);
-  }
 }
+
+// === Messages ===
 
 export async function saveMessage(
-  sessionId: string,
-  type: MessageType,
-  content: string
+  sessionId: string, role: Message['role'], content: string
 ): Promise<void> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return;
-  }
-
-  const { error } = await supabase
-    .from('messages')
-    .insert({ session_id: sessionId, type, content });
-
-  if (error) {
-    console.error('Failed to save message:', error);
-  }
+  if (!isSupabaseEnabled()) return;
+  await supabase!.from('messages').insert({ session_id: sessionId, role, content });
 }
 
-export async function saveScreenshot(
-  sessionId: string,
-  data: string
-): Promise<void> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return;
-  }
+// === Findings ===
 
-  const { error } = await supabase
-    .from('screenshots')
-    .insert({ session_id: sessionId, data });
+export async function createFinding(finding: Omit<Finding, 'id' | 'created_at'>): Promise<Finding | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('findings')
+    .insert(finding)
+    .select()
+    .single();
+  if (error) { console.error('createFinding error:', error); return null; }
 
-  if (error) {
-    console.error('Failed to save screenshot:', error);
-  }
+  // Increment findings_count on session
+  await supabase!.rpc('increment_findings_count', { sid: finding.session_id }).catch(() => {});
+
+  return data;
 }
 
-export async function getSessionHistory(sessionId: string, userId?: string): Promise<{
-  session: Session | null;
-  messages: Message[];
-  screenshots: Screenshot[];
-}> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return { session: null, messages: [], screenshots: [] };
-  }
+export async function listFindings(
+  projectId: string,
+  filters: { type?: FindingType; severity?: Criticality; status?: FindingStatus },
+  limit = 50, offset = 0
+): Promise<{ findings: Finding[]; total: number }> {
+  if (!isSupabaseEnabled()) return { findings: [], total: 0 };
 
-  let sessionQuery = supabase.from('sessions').select('*').eq('id', sessionId);
-  if (userId) {
-    sessionQuery = sessionQuery.eq('user_id', userId);
-  }
+  let query = supabase!.from('findings').select('*', { count: 'exact' }).eq('project_id', projectId);
 
-  const [sessionResult, messagesResult, screenshotsResult] = await Promise.all([
-    sessionQuery.single(),
-    supabase.from('messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true }),
-    supabase.from('screenshots').select('*').eq('session_id', sessionId).order('created_at', { ascending: true })
-  ]);
+  if (filters.type) query = query.eq('type', filters.type);
+  if (filters.severity) query = query.eq('severity', filters.severity);
+  if (filters.status) query = query.eq('status', filters.status);
 
-  return {
-    session: sessionResult.data as Session | null,
-    messages: sessionResult.data ? (messagesResult.data || []) as Message[] : [],
-    screenshots: sessionResult.data ? (screenshotsResult.data || []) as Screenshot[] : []
-  };
-}
-
-export async function listSessions(limit = 50, userId?: string): Promise<Session[]> {
-  if (!isSupabaseEnabled() || !supabase) {
-    return [];
-  }
-
-  let query = supabase
-    .from('sessions')
-    .select('*')
+  const { data, count, error } = await query
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .range(offset, offset + limit - 1);
 
-  if (userId) {
-    query = query.eq('user_id', userId);
-  }
+  if (error) { console.error('listFindings error:', error); return { findings: [], total: 0 }; }
+  return { findings: data ?? [], total: count ?? 0 };
+}
 
-  const { data, error } = await query;
+export async function updateFindingStatus(
+  findingId: string, status: FindingStatus
+): Promise<Finding | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('findings')
+    .update({ status })
+    .eq('id', findingId)
+    .select()
+    .single();
+  if (error) { console.error('updateFindingStatus error:', error); return null; }
+  return data;
+}
 
-  if (error) {
-    console.error('Failed to list sessions:', error);
-    return [];
-  }
+// === Screenshot Upload ===
 
-  return (data || []) as Session[];
+export async function uploadScreenshot(
+  projectId: string, base64Data: string
+): Promise<string | null> {
+  if (!isSupabaseEnabled()) return null;
+  const buffer = Buffer.from(base64Data, 'base64');
+  const filename = `${projectId}/${Date.now()}.png`;
+
+  const { error } = await supabase!.storage
+    .from('screenshots')
+    .upload(filename, buffer, { contentType: 'image/png' });
+  if (error) { console.error('uploadScreenshot error:', error); return null; }
+
+  const { data } = supabase!.storage.from('screenshots').getPublicUrl(filename);
+  return data.publicUrl;
 }
