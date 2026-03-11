@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { createAgent, executeTask, type AgentSession } from './agent.js';
 import type { ClientMessage, ServerMessage } from './types.js';
 import { createSession, endSession, getSessionHistory, listSessions } from './db.js';
-import { isSupabaseEnabled } from './supabase.js';
+import { isSupabaseEnabled, verifyToken, type AuthenticatedUser } from './supabase.js';
 
 const PORT = process.env.PORT || 3001;
 
@@ -23,10 +23,28 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', supabaseEnabled: isSupabaseEnabled() });
 });
 
+async function authenticateRequest(req: express.Request): Promise<AuthenticatedUser | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.slice(7);
+  return verifyToken(token);
+}
+
 // REST endpoints for session history
 app.get('/api/sessions', async (req, res) => {
   try {
-    const sessions = await listSessions();
+    let userId: string | undefined;
+    if (process.env.ALLOWED_GITHUB_USERS) {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      userId = user.id;
+    }
+    const sessions = await listSessions(50, userId);
     res.json(sessions);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch sessions' });
@@ -35,7 +53,16 @@ app.get('/api/sessions', async (req, res) => {
 
 app.get('/api/sessions/:sessionId', async (req, res) => {
   try {
-    const history = await getSessionHistory(req.params.sessionId);
+    let userId: string | undefined;
+    if (process.env.ALLOWED_GITHUB_USERS) {
+      const user = await authenticateRequest(req);
+      if (!user) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      userId = user.id;
+    }
+    const history = await getSessionHistory(req.params.sessionId, userId);
     if (!history.session) {
       res.status(404).json({ error: 'Session not found' });
       return;
@@ -52,7 +79,32 @@ const wss = new WebSocketServer({ server });
 // Store active session per client
 const sessions = new Map<WebSocket, AgentSession>();
 
-wss.on('connection', (ws) => {
+wss.on('connection', async (ws, req) => {
+  // Extract token from query string
+  const url = new URL(req.url || '', `http://${req.headers.host}`);
+  const token = url.searchParams.get('token');
+
+  let authenticatedUser: AuthenticatedUser | null = null;
+
+  if (token) {
+    try {
+      authenticatedUser = await verifyToken(token);
+      console.log(`Client authenticated: ${authenticatedUser.githubUsername}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      if (message === 'User not in allowlist') {
+        ws.close(4003, 'Forbidden: user not in allowlist');
+      } else {
+        ws.close(4001, 'Unauthorized: invalid token');
+      }
+      return;
+    }
+  } else if (process.env.ALLOWED_GITHUB_USERS) {
+    // If allowlist is configured but no token provided, reject
+    ws.close(4001, 'Unauthorized: token required');
+    return;
+  }
+
   console.log('Client connected');
 
   // Broadcast function for this client
@@ -82,8 +134,8 @@ wss.on('connection', (ws) => {
           // Create new agent session
           try {
             // Create database session first
-            const dbSessionId = await createSession(message.url);
-            const session = await createAgent(message.url, broadcast, dbSessionId);
+            const dbSessionId = await createSession(message.url, authenticatedUser?.id || null);
+            const session = await createAgent(message.url, broadcast, dbSessionId, authenticatedUser?.id || null);
             sessions.set(ws, session);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to start agent';
