@@ -7,11 +7,13 @@ import 'dotenv/config';
 import projectsRouter from './routes/projects.js';
 import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
-import { createAgent, executeTask } from './agent.js';
+import suggestionsRouter from './routes/suggestions.js';
+import { createAgent, executeTask, executeExplore } from './agent.js';
 import { getProject, createSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionPool from './sessionPool.js';
+import * as browserPool from './browserPool.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 
 const app = express();
@@ -33,12 +35,15 @@ app.get('/health', (_req, res) => {
 app.use('/api/projects', projectsRouter);
 app.use('/api/projects/:id/findings', findingsRouter);
 app.use('/api/projects/:id/memory', memoryRouter);
+app.use('/api/projects/:id/suggestions', suggestionsRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
 
 // Track which project each client is associated with
 const clientProjects = new Map<WebSocket, string>();
+// Guard against duplicate start attempts while agent is launching
+const startingProjects = new Set<string>();
 
 function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessage {
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
@@ -55,6 +60,8 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
 
+    console.log('WS message:', msg.type, JSON.stringify(msg).slice(0, 200));
+
     if (msg.type === 'ping') {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'pong' }));
@@ -63,6 +70,8 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     if (msg.type === 'start') {
+      console.log('[START] Starting agent for project:', msg.projectId);
+
       // If client was attached to another session, detach first
       const prevProjectId = clientProjects.get(ws);
       if (prevProjectId) {
@@ -74,6 +83,7 @@ wss.on('connection', (ws: WebSocket) => {
       // Check if there's already a running session for this project
       const existing = sessionPool.getSession(msg.projectId);
       if (existing) {
+        console.log('[START] Reattaching to existing session');
         // Reattach to existing session
         sessionPool.addClient(existing, ws);
         clientProjects.set(ws, msg.projectId);
@@ -81,13 +91,27 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Guard: if already starting this project, just wait
+      if (startingProjects.has(msg.projectId)) {
+        console.log('[START] Already starting, ignoring duplicate');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        return;
+      }
+
       // Create new session
+      startingProjects.add(msg.projectId);
+      // Send immediate feedback so user knows it's working
+      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
       try {
+        console.log('[START] Looking up project in DB...');
         const project = await getProject(msg.projectId);
         if (!project) {
+          console.log('[START] Project not found in DB!');
+          startingProjects.delete(msg.projectId);
           ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
           return;
         }
+        console.log('[START] Project found:', project.name, project.url);
 
         let credentials: { username: string; password: string } | null = null;
         if (project.credentials) {
@@ -126,12 +150,18 @@ wss.on('connection', (ws: WebSocket) => {
             sessionPool.addMessage(session, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
           } else if (serverMsg.type === 'finding') {
             sessionPool.addMessage(session, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+          } else if (serverMsg.type === 'suggestion') {
+            const s = serverMsg.suggestion;
+            const typeLabel = s.type === 'feature' ? 'feature' : s.type === 'flow' ? 'flow' : 'behavior';
+            const name = 'name' in s.data ? (s.data as any).name : (s.data as any).feature_name;
+            sessionPool.addMessage(session, makeChatMessage('system', `💡 Learned: "${name}" ${typeLabel}`));
           }
 
           // Broadcast to all connected clients
           sessionPool.broadcast(session, serverMsg);
         };
 
+        console.log('[START] Creating agent for URL:', project.url);
         const agentSession = await createAgent(
           project.url, poolBroadcast, dbSessionId, project.id, credentials
         );
@@ -139,9 +169,13 @@ wss.on('connection', (ws: WebSocket) => {
         const pooled = sessionPool.registerSession(msg.projectId, agentSession, dbSessionId);
         sessionPool.addClient(pooled, ws);
         clientProjects.set(ws, msg.projectId);
+        console.log('[START] Agent started successfully');
       } catch (err) {
+        console.error('[START] Error creating agent:', err);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
+      } finally {
+        startingProjects.delete(msg.projectId);
       }
 
     } else if (msg.type === 'resume') {
@@ -202,6 +236,11 @@ wss.on('connection', (ws: WebSocket) => {
           sessionPool.addMessage(s, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
         } else if (serverMsg.type === 'finding') {
           sessionPool.addMessage(s, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+        } else if (serverMsg.type === 'suggestion') {
+          const sg = serverMsg.suggestion;
+          const typeLabel = sg.type === 'feature' ? 'feature' : sg.type === 'flow' ? 'flow' : 'behavior';
+          const name = 'name' in sg.data ? (sg.data as any).name : (sg.data as any).feature_name;
+          sessionPool.addMessage(s, makeChatMessage('system', `💡 Learned: "${name}" ${typeLabel}`));
         }
 
         sessionPool.broadcast(s, serverMsg);
@@ -218,6 +257,55 @@ wss.on('connection', (ws: WebSocket) => {
           if (pid === projectId) clientProjects.delete(client);
         }
       }
+    } else if (msg.type === 'explore') {
+      const projectId = clientProjects.get(ws);
+      if (!projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session. Send start first.' } as ServerMessage));
+        return;
+      }
+      if (projectId !== msg.projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Project ID mismatch with active session.' } as ServerMessage));
+        return;
+      }
+
+      const session = sessionPool.getSession(projectId);
+      if (!session) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired.' } as ServerMessage));
+        return;
+      }
+
+      const project = await getProject(msg.projectId);
+      if (!project) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Project not found.' } as ServerMessage));
+        return;
+      }
+
+      // Log explore start in chat history
+      sessionPool.addMessage(session, makeChatMessage('system', 'Explore & Learn started...'));
+
+      // Reuse the task broadcast pattern
+      const exploreBroadcast = (serverMsg: ServerMessage) => {
+        const s = sessionPool.getSession(projectId);
+        if (!s) return;
+        if (serverMsg.type === 'screenshot') sessionPool.updateScreenshot(s, serverMsg.data);
+        else if (serverMsg.type === 'nav') sessionPool.updateUrl(s, serverMsg.url);
+        else if (serverMsg.type === 'status') sessionPool.updateStatus(s, serverMsg.status as any);
+
+        if (serverMsg.type === 'thought') sessionPool.addMessage(s, makeChatMessage('agent', serverMsg.content));
+        else if (serverMsg.type === 'action') sessionPool.addMessage(s, makeChatMessage('agent', `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`));
+        else if (serverMsg.type === 'error') sessionPool.addMessage(s, makeChatMessage('system', `Error: ${serverMsg.message}`));
+        else if (serverMsg.type === 'taskComplete') sessionPool.addMessage(s, makeChatMessage('system', serverMsg.success ? 'Exploration completed.' : 'Exploration failed.'));
+        else if (serverMsg.type === 'finding') sessionPool.addMessage(s, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+        else if (serverMsg.type === 'suggestion') {
+          const sg = serverMsg.suggestion;
+          const name = 'name' in sg.data ? (sg.data as any).name : (sg.data as any).feature_name;
+          sessionPool.addMessage(s, makeChatMessage('system', `💡 Learned: "${name}" ${sg.type}`));
+        }
+
+        sessionPool.broadcast(s, serverMsg);
+      };
+
+      executeExplore(session.agentSession, project?.context || null, exploreBroadcast);
     }
   });
 
@@ -238,4 +326,6 @@ const PORT = parseInt(process.env.PORT || '3001');
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log('WebSocket server ready');
+  // Pre-warm a browser so first agent start is fast
+  browserPool.warmUp().catch(() => {});
 });
