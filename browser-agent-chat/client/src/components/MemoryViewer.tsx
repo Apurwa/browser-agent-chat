@@ -2,19 +2,84 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import FeatureDetail from './FeatureDetail';
+import SuggestionCard from './SuggestionCard';
 import { useAuth } from '../hooks/useAuth';
-import type { Feature, Criticality } from '../types';
+import { useWS } from '../contexts/WebSocketContext';
+import type { Feature, Criticality, Suggestion } from '../types';
+import {
+  fetchPendingSuggestions,
+  acceptSuggestionApi,
+  dismissSuggestionApi,
+  updateSuggestionApi,
+  bulkAcceptSuggestionsApi,
+  bulkDismissSuggestionsApi,
+} from '../lib/api';
 
 export default function MemoryViewer() {
   const { id } = useParams();
   const { getAccessToken } = useAuth();
+  const { resetSuggestionCount, decrementSuggestionCount, pendingSuggestionCount } = useWS();
   const [features, setFeatures] = useState<Feature[]>([]);
   const [selected, setSelected] = useState<Feature | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState('');
   const [newCriticality, setNewCriticality] = useState<Criticality>('medium');
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
 
   useEffect(() => { loadFeatures(); }, [id]);
+  useEffect(() => { loadSuggestions(); }, [id]);
+
+  // Re-fetch suggestions when new ones arrive via WebSocket
+  useEffect(() => { loadSuggestions(); }, [pendingSuggestionCount]);
+
+  const loadSuggestions = async () => {
+    if (!id) return;
+    const token = await getAccessToken();
+    try {
+      const data = await fetchPendingSuggestions(id, token);
+      setSuggestions(data);
+    } catch (err) {
+      console.error('Failed to load suggestions:', err);
+    }
+  };
+
+  const handleAcceptSuggestion = async (suggestionId: string) => {
+    const token = await getAccessToken();
+    await acceptSuggestionApi(id!, suggestionId, token);
+    setSuggestions(prev => prev.filter(s => s.id !== suggestionId));
+    decrementSuggestionCount();
+    await loadFeatures();
+  };
+
+  const handleDismissSuggestion = async (suggestionId: string) => {
+    const token = await getAccessToken();
+    await dismissSuggestionApi(id!, suggestionId, token);
+    setSuggestions(prev => prev.filter(s => s.id !== suggestionId));
+    decrementSuggestionCount();
+  };
+
+  const handleEditSuggestion = async (suggestionId: string, data: Suggestion['data']) => {
+    const token = await getAccessToken();
+    const updated = await updateSuggestionApi(id!, suggestionId, data, token);
+    if (updated) {
+      setSuggestions(prev => prev.map(s => s.id === suggestionId ? updated : s));
+    }
+  };
+
+  const handleAcceptAll = async () => {
+    const token = await getAccessToken();
+    await bulkAcceptSuggestionsApi(id!, token);
+    setSuggestions([]);
+    resetSuggestionCount();
+    await loadFeatures();
+  };
+
+  const handleDismissAll = async () => {
+    const token = await getAccessToken();
+    await bulkDismissSuggestionsApi(id!, token);
+    setSuggestions([]);
+    resetSuggestionCount();
+  };
 
   const loadFeatures = async () => {
     const token = await getAccessToken();
@@ -67,6 +132,30 @@ export default function MemoryViewer() {
     <div className="app-layout">
       <Sidebar />
       <div className="memory-content">
+        {suggestions.length > 0 && (
+          <div className="memory-suggestions-pending" style={{ marginBottom: '1rem', borderLeft: '3px solid #fdcb6e' }}>
+            <div className="memory-list-header">
+              <h2 style={{ color: '#fdcb6e' }}>
+                ⏳ Pending Suggestions <span className="count">({suggestions.length})</span>
+              </h2>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="btn-add" onClick={handleAcceptAll}>Accept All</button>
+                <button onClick={handleDismissAll}>Dismiss All</button>
+              </div>
+            </div>
+            <div className="memory-items">
+              {suggestions.map(s => (
+                <SuggestionCard
+                  key={s.id}
+                  suggestion={s}
+                  onAccept={handleAcceptSuggestion}
+                  onDismiss={handleDismissSuggestion}
+                  onEdit={handleEditSuggestion}
+                />
+              ))}
+            </div>
+          </div>
+        )}
         <div className="memory-list">
           <div className="memory-list-header">
             <h2>Features <span className="count">({features.length})</span></h2>
