@@ -1,182 +1,111 @@
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'http';
+import http from 'node:http';
 import 'dotenv/config';
 
+import projectsRouter from './routes/projects.js';
+import findingsRouter from './routes/findings.js';
+import memoryRouter from './routes/memory.js';
 import { createAgent, executeTask, type AgentSession } from './agent.js';
+import { getProject, createSession, endSession } from './db.js';
+import { decryptCredentials } from './crypto.js';
+import { isSupabaseEnabled } from './supabase.js';
 import type { ClientMessage, ServerMessage } from './types.js';
-import { createSession, endSession, getSessionHistory, listSessions } from './db.js';
-import { isSupabaseEnabled, verifyToken, type AuthenticatedUser } from './supabase.js';
-
-const PORT = process.env.PORT || 3001;
 
 const app = express();
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
-}));
+const server = http.createServer(app);
+
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', supabaseEnabled: isSupabaseEnabled() });
+// Health check
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', supabase: isSupabaseEnabled() });
 });
 
-async function authenticateRequest(req: express.Request): Promise<AuthenticatedUser | null> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
-    return null;
-  }
-  const token = authHeader.slice(7);
-  return verifyToken(token);
-}
+// REST API routes
+app.use('/api/projects', projectsRouter);
+app.use('/api/projects/:id/findings', findingsRouter);
+app.use('/api/projects/:id/memory', memoryRouter);
 
-// REST endpoints for session history
-app.get('/api/sessions', async (req, res) => {
-  try {
-    let userId: string | undefined;
-    if (process.env.ALLOWED_GITHUB_USERS) {
-      const user = await authenticateRequest(req);
-      if (!user) {
-        res.status(401).json({ error: 'Authentication required' });
-        return;
-      }
-      userId = user.id;
-    }
-    const sessions = await listSessions(50, userId);
-    res.json(sessions);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch sessions' });
-  }
-});
-
-app.get('/api/sessions/:sessionId', async (req, res) => {
-  try {
-    let userId: string | undefined;
-    if (process.env.ALLOWED_GITHUB_USERS) {
-      const user = await authenticateRequest(req);
-      if (!user) {
-        res.status(401).json({ error: 'Authentication required' });
-        return;
-      }
-      userId = user.id;
-    }
-    const history = await getSessionHistory(req.params.sessionId, userId);
-    if (!history.session) {
-      res.status(404).json({ error: 'Session not found' });
-      return;
-    }
-    res.json(history);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch session history' });
-  }
-});
-
-const server = createServer(app);
+// WebSocket server
 const wss = new WebSocketServer({ server });
-
-// Store active session per client
 const sessions = new Map<WebSocket, AgentSession>();
 
-wss.on('connection', async (ws, req) => {
-  // Extract token from query string
-  const url = new URL(req.url || '', `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
-
-  let authenticatedUser: AuthenticatedUser | null = null;
-
-  if (token) {
-    try {
-      authenticatedUser = await verifyToken(token);
-      console.log(`Client authenticated: ${authenticatedUser.githubUsername}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Authentication failed';
-      if (message === 'User not in allowlist') {
-        ws.close(4003, 'Forbidden: user not in allowlist');
-      } else {
-        ws.close(4001, 'Unauthorized: invalid token');
-      }
-      return;
-    }
-  } else if (process.env.ALLOWED_GITHUB_USERS) {
-    // If allowlist is configured but no token provided, reject
-    ws.close(4001, 'Unauthorized: token required');
-    return;
-  }
-
+wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
 
-  // Broadcast function for this client
   const broadcast = (msg: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(msg));
     }
   };
 
-  ws.on('message', async (data) => {
+  ws.on('message', async (raw: Buffer) => {
+    let msg: ClientMessage;
     try {
-      const message: ClientMessage = JSON.parse(data.toString());
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
 
-      switch (message.type) {
-        case 'start': {
-          // Close existing session if any
-          const existingSession = sessions.get(ws);
-          if (existingSession) {
-            // End the database session
-            if (existingSession.sessionId) {
-              await endSession(existingSession.sessionId);
-            }
-            await existingSession.close();
-            sessions.delete(ws);
-          }
-
-          // Create new agent session
-          try {
-            // Create database session first
-            const dbSessionId = await createSession(message.url, authenticatedUser?.id || null);
-            const session = await createAgent(message.url, broadcast, dbSessionId, authenticatedUser?.id || null);
-            sessions.set(ws, session);
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : 'Failed to start agent';
-            broadcast({ type: 'error', message: errorMsg });
-            broadcast({ type: 'status', status: 'error' });
-          }
-          break;
-        }
-
-        case 'task': {
-          const session = sessions.get(ws);
-          if (!session) {
-            broadcast({ type: 'error', message: 'No active session. Please start an agent first.' });
-            return;
-          }
-
-          await executeTask(session, message.content, broadcast);
-          break;
-        }
-
-        case 'stop': {
-          const session = sessions.get(ws);
-          if (session) {
-            // End the database session
-            if (session.sessionId) {
-              await endSession(session.sessionId);
-            }
-            await session.close();
-            sessions.delete(ws);
-          }
-          // Always send disconnected status when stop is requested
-          broadcast({ type: 'status', status: 'disconnected' });
-          break;
-        }
-
-        default:
-          console.warn('Unknown message type:', message);
+    if (msg.type === 'start') {
+      // Close existing session if any
+      const existing = sessions.get(ws);
+      if (existing) {
+        if (existing.sessionId) await endSession(existing.sessionId);
+        await existing.close();
+        sessions.delete(ws);
       }
-    } catch (err) {
-      console.error('Error processing message:', err);
-      broadcast({ type: 'error', message: 'Failed to process message' });
+
+      try {
+        // Look up project
+        const project = await getProject(msg.projectId);
+        if (!project) {
+          broadcast({ type: 'error', message: 'Project not found' });
+          return;
+        }
+
+        // Decrypt credentials if available
+        let loginUrl = project.url;
+        let credentials: { username: string; password: string } | null = null;
+        if (project.credentials) {
+          try {
+            credentials = decryptCredentials(project.credentials);
+          } catch (err) {
+            console.error('Failed to decrypt credentials:', err);
+          }
+        }
+
+        // Create DB session
+        const sessionId = await createSession(project.id);
+
+        // Create agent
+        const session = await createAgent(
+          loginUrl, broadcast, sessionId, project.id, credentials
+        );
+        sessions.set(ws, session);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to start agent';
+        broadcast({ type: 'error', message });
+      }
+    } else if (msg.type === 'task') {
+      const session = sessions.get(ws);
+      if (!session) {
+        broadcast({ type: 'error', message: 'No active session. Start an agent first.' });
+        return;
+      }
+      // Fire and forget — task runs async, broadcasts progress
+      executeTask(session, msg.content, broadcast);
+    } else if (msg.type === 'stop') {
+      const session = sessions.get(ws);
+      if (session) {
+        if (session.sessionId) await endSession(session.sessionId);
+        await session.close();
+        sessions.delete(ws);
+        broadcast({ type: 'status', status: 'disconnected' });
+      }
     }
   });
 
@@ -184,21 +113,15 @@ wss.on('connection', async (ws, req) => {
     console.log('Client disconnected');
     const session = sessions.get(ws);
     if (session) {
-      // End the database session
-      if (session.sessionId) {
-        await endSession(session.sessionId);
-      }
+      if (session.sessionId) await endSession(session.sessionId);
       await session.close();
       sessions.delete(ws);
     }
   });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
-  });
 });
 
+const PORT = parseInt(process.env.PORT || '3001');
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`WebSocket server ready`);
+  console.log('WebSocket server ready');
 });
