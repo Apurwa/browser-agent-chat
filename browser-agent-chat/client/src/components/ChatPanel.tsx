@@ -13,7 +13,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({
-  projectId, messages, status, currentUrl,
+  projectId: _projectId, messages, status, currentUrl,
   onStartAgent, onSendTask, onStopAgent,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
