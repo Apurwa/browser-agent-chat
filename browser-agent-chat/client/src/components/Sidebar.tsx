@@ -1,4 +1,6 @@
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
+import { useTheme } from '../contexts/ThemeContext';
+import { useWS } from '../contexts/WebSocketContext';
 
 interface SidebarProps {
   findingsCount?: number;
@@ -9,6 +11,8 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   const navigate = useNavigate();
   const location = useLocation();
   const { id } = useParams();
+  const { theme, toggleTheme } = useTheme();
+  const { pendingSuggestionCount } = useWS();
 
   const isActive = (path: string) => location.pathname.includes(path);
 
@@ -40,8 +44,20 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
         title="Memory"
       >
         <span role="img" aria-label="Memory">&#x1F9E0;</span>
+        {pendingSuggestionCount > 0 && (
+          <span className="sidebar-badge" style={{ background: '#fdcb6e', color: '#000' }}>
+            {pendingSuggestionCount}
+          </span>
+        )}
       </div>
       <div className="sidebar-spacer" />
+      <div
+        className="sidebar-item"
+        onClick={toggleTheme}
+        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      >
+        <span role="img" aria-label="Theme">{theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19'}</span>
+      </div>
       <div
         className={`sidebar-item ${isActive('settings') ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
         onClick={() => navTo('settings')}
