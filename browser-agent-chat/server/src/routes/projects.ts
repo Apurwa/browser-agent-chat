@@ -8,6 +8,14 @@ import type { CreateProjectRequest, ProjectResponse, ProjectListItem } from '../
 
 const router = Router();
 
+function normalizeUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!/^https?:\/\//i.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return trimmed;
+}
+
 // List user's projects
 router.get('/', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
@@ -37,7 +45,7 @@ router.post('/', requireAuth, async (req, res) => {
   }
 
   const encrypted = body.credentials ? encryptCredentials(body.credentials) : null;
-  const project = await createProject(userId, body.name, body.url, encrypted, body.context ?? null);
+  const project = await createProject(userId, body.name, normalizeUrl(body.url), encrypted, body.context ?? null);
 
   if (!project) {
     res.status(500).json({ error: 'Failed to create project' });
@@ -79,7 +87,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   const projectId = req.params.id as string;
   const updates: Record<string, unknown> = {};
   if (req.body.name) updates.name = req.body.name;
-  if (req.body.url) updates.url = req.body.url;
+  if (req.body.url) updates.url = normalizeUrl(req.body.url);
   if (req.body.context !== undefined) updates.context = req.body.context;
   if (req.body.credentials) updates.credentials = encryptCredentials(req.body.credentials);
 

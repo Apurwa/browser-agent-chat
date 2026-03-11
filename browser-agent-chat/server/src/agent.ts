@@ -26,6 +26,8 @@ export async function createAgent(
   // Load memory context for prompt injection
   const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
 
+  const isHeadless = process.env.HEADLESS !== 'false'; // headless by default
+
   const agent = await startBrowserAgent({
     url,
     narrate: false,
@@ -34,7 +36,17 @@ export async function createAgent(
       options: {
         model: 'claude-sonnet-4-20250514'
       }
-    }
+    },
+    browser: {
+      launchOptions: {
+        headless: isHeadless,
+        args: [
+          '--disable-gpu',
+          '--disable-blink-features=AutomationControlled',
+          ...(isHeadless ? ['--no-sandbox'] : []),
+        ],
+      },
+    },
   });
 
   const connector = agent.require(BrowserConnector);

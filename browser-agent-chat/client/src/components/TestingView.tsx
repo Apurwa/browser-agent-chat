@@ -1,12 +1,20 @@
+import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useWS } from '../contexts/WebSocketContext';
 
 export default function TestingView() {
   const { id } = useParams();
-  const ws = useWebSocket();
+  const ws = useWS();
+
+  // On mount: try to resume an existing session for this project
+  useEffect(() => {
+    if (id && ws.activeProjectId !== id) {
+      ws.resumeSession(id);
+    }
+  }, [id]);
 
   return (
     <div className="app-layout">

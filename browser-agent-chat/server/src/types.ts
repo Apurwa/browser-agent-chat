@@ -109,8 +109,10 @@ export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected';
 
 export type ClientMessage =
   | { type: 'start'; projectId: string }
+  | { type: 'resume'; projectId: string }
   | { type: 'task'; content: string }
-  | { type: 'stop' };
+  | { type: 'stop' }
+  | { type: 'ping' };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -121,7 +123,9 @@ export type ServerMessage =
   | { type: 'error'; message: string }
   | { type: 'taskComplete'; success: boolean }
   | { type: 'finding'; finding: Finding }
-  | { type: 'memoryUpdate'; feature?: Feature; flow?: Flow };
+  | { type: 'memoryUpdate'; feature?: Feature; flow?: Flow }
+  | { type: 'pong' }
+  | { type: 'sessionRestore'; messages: ChatMessage[] };
 
 // === API Request/Response ===
 
@@ -159,4 +163,13 @@ export interface CreateFlowRequest {
   steps: FlowStep[];
   checkpoints?: Checkpoint[];
   criticality: Criticality;
+}
+
+// === Chat Messages (for session persistence) ===
+
+export interface ChatMessage {
+  id: string;
+  type: 'user' | 'agent' | 'system' | 'finding';
+  content: string;
+  timestamp: number;
 }

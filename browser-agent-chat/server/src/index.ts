@@ -7,11 +7,12 @@ import 'dotenv/config';
 import projectsRouter from './routes/projects.js';
 import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
-import { createAgent, executeTask, type AgentSession } from './agent.js';
-import { getProject, createSession, endSession } from './db.js';
+import { createAgent, executeTask } from './agent.js';
+import { getProject, createSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
-import type { ClientMessage, ServerMessage } from './types.js';
+import * as sessionPool from './sessionPool.js';
+import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -21,7 +22,11 @@ app.use(express.json());
 
 // Health check
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', supabase: isSupabaseEnabled() });
+  res.json({
+    status: 'ok',
+    supabase: isSupabaseEnabled(),
+    activeSessions: sessionPool.listActiveSessions().length,
+  });
 });
 
 // REST API routes
@@ -31,16 +36,16 @@ app.use('/api/projects/:id/memory', memoryRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
-const sessions = new Map<WebSocket, AgentSession>();
+
+// Track which project each client is associated with
+const clientProjects = new Map<WebSocket, string>();
+
+function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessage {
+  return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
+}
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
-
-  const broadcast = (msg: ServerMessage) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
-    }
-  };
 
   ws.on('message', async (raw: Buffer) => {
     let msg: ClientMessage;
@@ -50,25 +55,40 @@ wss.on('connection', (ws: WebSocket) => {
       return;
     }
 
+    if (msg.type === 'ping') {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'pong' }));
+      }
+      return;
+    }
+
     if (msg.type === 'start') {
-      // Close existing session if any
-      const existing = sessions.get(ws);
-      if (existing) {
-        if (existing.sessionId) await endSession(existing.sessionId);
-        await existing.close();
-        sessions.delete(ws);
+      // If client was attached to another session, detach first
+      const prevProjectId = clientProjects.get(ws);
+      if (prevProjectId) {
+        const prevSession = sessionPool.getSession(prevProjectId);
+        if (prevSession) sessionPool.removeClient(prevSession, ws);
+        clientProjects.delete(ws);
       }
 
+      // Check if there's already a running session for this project
+      const existing = sessionPool.getSession(msg.projectId);
+      if (existing) {
+        // Reattach to existing session
+        sessionPool.addClient(existing, ws);
+        clientProjects.set(ws, msg.projectId);
+        sessionPool.sendSnapshot(existing, ws);
+        return;
+      }
+
+      // Create new session
       try {
-        // Look up project
         const project = await getProject(msg.projectId);
         if (!project) {
-          broadcast({ type: 'error', message: 'Project not found' });
+          ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
           return;
         }
 
-        // Decrypt credentials if available
-        let loginUrl = project.url;
         let credentials: { username: string; password: string } | null = null;
         if (project.credentials) {
           try {
@@ -78,44 +98,138 @@ wss.on('connection', (ws: WebSocket) => {
           }
         }
 
-        // Create DB session
-        const sessionId = await createSession(project.id);
+        const dbSessionId = await createSession(project.id);
 
-        // Create agent
-        const session = await createAgent(
-          loginUrl, broadcast, sessionId, project.id, credentials
+        // Create broadcast function that goes through the pool
+        const poolBroadcast = (serverMsg: ServerMessage) => {
+          const session = sessionPool.getSession(msg.projectId);
+          if (!session) return;
+
+          // Track state in pool
+          if (serverMsg.type === 'screenshot') {
+            sessionPool.updateScreenshot(session, serverMsg.data);
+          } else if (serverMsg.type === 'nav') {
+            sessionPool.updateUrl(session, serverMsg.url);
+          } else if (serverMsg.type === 'status') {
+            sessionPool.updateStatus(session, serverMsg.status as any);
+          }
+
+          // Store messages for replay
+          if (serverMsg.type === 'thought') {
+            sessionPool.addMessage(session, makeChatMessage('agent', serverMsg.content));
+          } else if (serverMsg.type === 'action') {
+            const text = `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`;
+            sessionPool.addMessage(session, makeChatMessage('agent', text));
+          } else if (serverMsg.type === 'error') {
+            sessionPool.addMessage(session, makeChatMessage('system', `Error: ${serverMsg.message}`));
+          } else if (serverMsg.type === 'taskComplete') {
+            sessionPool.addMessage(session, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
+          } else if (serverMsg.type === 'finding') {
+            sessionPool.addMessage(session, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+          }
+
+          // Broadcast to all connected clients
+          sessionPool.broadcast(session, serverMsg);
+        };
+
+        const agentSession = await createAgent(
+          project.url, poolBroadcast, dbSessionId, project.id, credentials
         );
-        sessions.set(ws, session);
+
+        const pooled = sessionPool.registerSession(msg.projectId, agentSession, dbSessionId);
+        sessionPool.addClient(pooled, ws);
+        clientProjects.set(ws, msg.projectId);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Failed to start agent';
-        broadcast({ type: 'error', message });
+        ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
       }
+
+    } else if (msg.type === 'resume') {
+      // Detach from previous if needed
+      const prevProjectId = clientProjects.get(ws);
+      if (prevProjectId && prevProjectId !== msg.projectId) {
+        const prevSession = sessionPool.getSession(prevProjectId);
+        if (prevSession) sessionPool.removeClient(prevSession, ws);
+      }
+
+      const session = sessionPool.getSession(msg.projectId);
+      if (session) {
+        sessionPool.addClient(session, ws);
+        clientProjects.set(ws, msg.projectId);
+        sessionPool.sendSnapshot(session, ws);
+      } else {
+        // No active session — tell client
+        ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+      }
+
     } else if (msg.type === 'task') {
-      const session = sessions.get(ws);
-      if (!session) {
-        broadcast({ type: 'error', message: 'No active session. Start an agent first.' });
+      const projectId = clientProjects.get(ws);
+      if (!projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session. Start an agent first.' } as ServerMessage));
         return;
       }
-      // Fire and forget — task runs async, broadcasts progress
-      executeTask(session, msg.content, broadcast);
+
+      const session = sessionPool.getSession(projectId);
+      if (!session) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired. Please restart the agent.' } as ServerMessage));
+        return;
+      }
+
+      // Store user message
+      sessionPool.addMessage(session, makeChatMessage('user', msg.content));
+
+      // Broadcast function for task goes through the pool's existing broadcast
+      const taskBroadcast = (serverMsg: ServerMessage) => {
+        const s = sessionPool.getSession(projectId);
+        if (!s) return;
+
+        if (serverMsg.type === 'screenshot') {
+          sessionPool.updateScreenshot(s, serverMsg.data);
+        } else if (serverMsg.type === 'nav') {
+          sessionPool.updateUrl(s, serverMsg.url);
+        } else if (serverMsg.type === 'status') {
+          sessionPool.updateStatus(s, serverMsg.status as any);
+        }
+
+        if (serverMsg.type === 'thought') {
+          sessionPool.addMessage(s, makeChatMessage('agent', serverMsg.content));
+        } else if (serverMsg.type === 'action') {
+          const text = `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`;
+          sessionPool.addMessage(s, makeChatMessage('agent', text));
+        } else if (serverMsg.type === 'error') {
+          sessionPool.addMessage(s, makeChatMessage('system', `Error: ${serverMsg.message}`));
+        } else if (serverMsg.type === 'taskComplete') {
+          sessionPool.addMessage(s, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
+        } else if (serverMsg.type === 'finding') {
+          sessionPool.addMessage(s, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+        }
+
+        sessionPool.broadcast(s, serverMsg);
+      };
+
+      executeTask(session.agentSession, msg.content, taskBroadcast);
+
     } else if (msg.type === 'stop') {
-      const session = sessions.get(ws);
-      if (session) {
-        if (session.sessionId) await endSession(session.sessionId);
-        await session.close();
-        sessions.delete(ws);
-        broadcast({ type: 'status', status: 'disconnected' });
+      const projectId = clientProjects.get(ws);
+      if (projectId) {
+        await sessionPool.destroySession(projectId);
+        // Clear all clients that were on this project
+        for (const [client, pid] of clientProjects) {
+          if (pid === projectId) clientProjects.delete(client);
+        }
       }
     }
   });
 
-  ws.on('close', async () => {
+  ws.on('close', () => {
     console.log('Client disconnected');
-    const session = sessions.get(ws);
-    if (session) {
-      if (session.sessionId) await endSession(session.sessionId);
-      await session.close();
-      sessions.delete(ws);
+    const projectId = clientProjects.get(ws);
+    if (projectId) {
+      const session = sessionPool.getSession(projectId);
+      if (session) {
+        sessionPool.removeClient(session, ws);
+      }
+      clientProjects.delete(ws);
     }
   });
 });
