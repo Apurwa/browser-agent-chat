@@ -105,12 +105,46 @@ export type FindingStatus = 'new' | 'confirmed' | 'dismissed';
 export type MessageRole = 'user' | 'agent' | 'thought' | 'action' | 'system';
 export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected';
 
+// === Suggestions ===
+
+export interface Suggestion {
+  id: string;
+  project_id: string;
+  type: 'feature' | 'flow' | 'behavior';
+  status: 'pending' | 'accepted' | 'dismissed';
+  data: FeatureSuggestionData | FlowSuggestionData | BehaviorSuggestionData;
+  source_session: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface FeatureSuggestionData {
+  name: string;
+  description: string;
+  criticality: Criticality;
+  expected_behaviors: string[];
+}
+
+export interface FlowSuggestionData {
+  feature_name: string;
+  name: string;
+  steps: FlowStep[];
+  checkpoints: Checkpoint[];
+  criticality: Criticality;
+}
+
+export interface BehaviorSuggestionData {
+  feature_name: string;
+  behavior: string;
+}
+
 // === WebSocket Messages ===
 
 export type ClientMessage =
   | { type: 'start'; projectId: string }
   | { type: 'resume'; projectId: string }
   | { type: 'task'; content: string }
+  | { type: 'explore'; projectId: string }
   | { type: 'stop' }
   | { type: 'ping' };
 
@@ -124,6 +158,7 @@ export type ServerMessage =
   | { type: 'taskComplete'; success: boolean }
   | { type: 'finding'; finding: Finding }
   | { type: 'memoryUpdate'; feature?: Feature; flow?: Flow }
+  | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
   | { type: 'sessionRestore'; messages: ChatMessage[] };
 
