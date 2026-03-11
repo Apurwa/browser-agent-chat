@@ -8,6 +8,7 @@ export interface Session {
   status: string;
   created_at: string;
   ended_at: string | null;
+  user_id: string | null;
 }
 
 export interface Message {
@@ -25,14 +26,14 @@ export interface Screenshot {
   created_at: string;
 }
 
-export async function createSession(url: string): Promise<string | null> {
+export async function createSession(url: string, userId: string | null = null): Promise<string | null> {
   if (!isSupabaseEnabled() || !supabase) {
     return null;
   }
 
   const { data, error } = await supabase
     .from('sessions')
-    .insert({ url })
+    .insert({ url, user_id: userId })
     .select('id')
     .single();
 
@@ -94,7 +95,7 @@ export async function saveScreenshot(
   }
 }
 
-export async function getSessionHistory(sessionId: string): Promise<{
+export async function getSessionHistory(sessionId: string, userId?: string): Promise<{
   session: Session | null;
   messages: Message[];
   screenshots: Screenshot[];
@@ -103,29 +104,40 @@ export async function getSessionHistory(sessionId: string): Promise<{
     return { session: null, messages: [], screenshots: [] };
   }
 
+  let sessionQuery = supabase.from('sessions').select('*').eq('id', sessionId);
+  if (userId) {
+    sessionQuery = sessionQuery.eq('user_id', userId);
+  }
+
   const [sessionResult, messagesResult, screenshotsResult] = await Promise.all([
-    supabase.from('sessions').select('*').eq('id', sessionId).single(),
+    sessionQuery.single(),
     supabase.from('messages').select('*').eq('session_id', sessionId).order('created_at', { ascending: true }),
     supabase.from('screenshots').select('*').eq('session_id', sessionId).order('created_at', { ascending: true })
   ]);
 
   return {
     session: sessionResult.data as Session | null,
-    messages: (messagesResult.data || []) as Message[],
-    screenshots: (screenshotsResult.data || []) as Screenshot[]
+    messages: sessionResult.data ? (messagesResult.data || []) as Message[] : [],
+    screenshots: sessionResult.data ? (screenshotsResult.data || []) as Screenshot[] : []
   };
 }
 
-export async function listSessions(limit = 50): Promise<Session[]> {
+export async function listSessions(limit = 50, userId?: string): Promise<Session[]> {
   if (!isSupabaseEnabled() || !supabase) {
     return [];
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('sessions')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
+
+  if (userId) {
+    query = query.eq('user_id', userId);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error('Failed to list sessions:', error);
