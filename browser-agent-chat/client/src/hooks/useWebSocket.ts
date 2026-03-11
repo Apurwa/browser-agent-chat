@@ -60,10 +60,6 @@ export function useWebSocket() {
           setFindings(prev => [...prev, msg.finding]);
           addMessage('finding', msg.finding.title, msg.finding);
           break;
-        case 'memoryUpdate':
-          if (msg.feature) addMessage('system', `Learned about feature: ${msg.feature.name}`);
-          if (msg.flow) addMessage('system', `Learned about flow: ${msg.flow.name}`);
-          break;
       }
     };
 

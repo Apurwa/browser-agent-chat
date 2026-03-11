@@ -1,8 +1,10 @@
 import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitude-core';
-import type { ServerMessage, Finding, Feature, Flow, Criticality } from './types.js';
-import { saveMessage, createFeature, updateFeature } from './db.js';
-import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
-import { parseFindingsFromText, parseMemoryUpdatesFromText, processFinding } from './finding-detector.js';
+import type { ServerMessage } from './types.js';
+import { saveMessage, createSuggestion } from './db.js';
+import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
+import { parseFindingsFromText, processFinding } from './finding-detector.js';
+import { parseMemoryUpdates } from './suggestion-detector.js';
+import * as browserPool from './browserPool.js';
 
 export interface AgentSession {
   agent: BrowserAgent;
@@ -22,11 +24,16 @@ export async function createAgent(
   credentials: { username: string; password: string } | null = null
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
+  const t0 = Date.now();
 
   // Load memory context for prompt injection
   const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
+  console.log(`[TIMING] Memory context loaded: ${Date.now() - t0}ms`);
 
-  const isHeadless = process.env.HEADLESS !== 'false'; // headless by default
+  // Acquire a pre-warmed browser for fast startup
+  const browser = await browserPool.acquire();
+  console.log(`[TIMING] Browser acquired: ${Date.now() - t0}ms`);
+  broadcast({ type: 'thought', content: 'Browser ready, loading page...' });
 
   const agent = await startBrowserAgent({
     url,
@@ -38,17 +45,11 @@ export async function createAgent(
       }
     },
     browser: {
-      launchOptions: {
-        headless: isHeadless,
-        args: [
-          '--disable-gpu',
-          '--disable-blink-features=AutomationControlled',
-          ...(isHeadless ? ['--no-sandbox'] : []),
-        ],
-      },
+      instance: browser,
     },
   });
 
+  console.log(`[TIMING] startBrowserAgent complete: ${Date.now() - t0}ms`);
   const connector = agent.require(BrowserConnector);
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
@@ -79,20 +80,15 @@ export async function createAgent(
         }
       }
 
-      // Check for memory updates
-      const memoryUpdates = parseMemoryUpdatesFromText(thought);
-      for (const update of memoryUpdates) {
-        if (update.action === 'create_feature' && update.data.name) {
-          const feature = await createFeature(
-            projectId,
-            update.data.name as string,
-            (update.data.description as string) ?? null,
-            ((update.data.criticality as string) ?? 'medium') as Criticality,
-            (update.data.expected_behaviors as string[]) ?? []
-          );
-          if (feature) broadcast({ type: 'memoryUpdate', feature });
+      // Parse MEMORY_JSON → create suggestions (not direct features)
+      const memUpdates = parseMemoryUpdates(thought);
+      for (const update of memUpdates) {
+        const suggestion = await createSuggestion(
+          projectId, update.type, update.data, sessionId
+        );
+        if (suggestion) {
+          broadcast({ type: 'suggestion', suggestion });
         }
-        // Additional memory update actions can be added here
       }
     }
   });
@@ -149,6 +145,7 @@ export async function createAgent(
     }
   }
 
+  console.log(`[TIMING] Agent fully ready: ${Date.now() - t0}ms`);
   broadcast({ type: 'status', status: 'idle' });
   broadcast({ type: 'nav', url });
 
@@ -163,6 +160,28 @@ export async function createAgent(
       await agent.stop();
     }
   };
+}
+
+export async function executeExplore(
+  session: AgentSession,
+  context: string | null,
+  broadcast: (msg: ServerMessage) => void
+): Promise<void> {
+  broadcast({ type: 'status', status: 'working' });
+
+  const prompt = buildExplorePrompt(context);
+  session.stepsHistory.length = 0;
+
+  try {
+    await session.agent.act(prompt);
+    broadcast({ type: 'taskComplete', success: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Exploration failed';
+    broadcast({ type: 'error', message });
+    broadcast({ type: 'taskComplete', success: false });
+  } finally {
+    broadcast({ type: 'status', status: 'idle' });
+  }
 }
 
 export async function executeTask(

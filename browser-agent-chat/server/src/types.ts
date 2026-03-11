@@ -157,7 +157,6 @@ export type ServerMessage =
   | { type: 'error'; message: string }
   | { type: 'taskComplete'; success: boolean }
   | { type: 'finding'; finding: Finding }
-  | { type: 'memoryUpdate'; feature?: Feature; flow?: Flow }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
   | { type: 'sessionRestore'; messages: ChatMessage[] };

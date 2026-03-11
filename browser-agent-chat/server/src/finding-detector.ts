@@ -1,5 +1,6 @@
 import { createFinding, uploadScreenshot } from './db.js';
 import type { Finding, FindingType, Criticality, ServerMessage } from './types.js';
+import { extractJsonBlocks } from './json-parser.js';
 
 interface RawFinding {
   title: string;
@@ -11,20 +12,16 @@ interface RawFinding {
   actual_behavior?: string;
 }
 
-const FINDING_REGEX = /FINDING_JSON:(\{[^}]*(?:\{[^}]*\}[^}]*)*\})/g;
-const MEMORY_REGEX = /MEMORY_JSON:(\{[^}]*(?:\{[^}]*\}[^}]*)*\})/g;
-
 /**
  * Parse agent thought/response text for finding JSON blocks.
  */
 export function parseFindingsFromText(text: string): RawFinding[] {
   const findings: RawFinding[] = [];
-  let match;
+  const blocks = extractJsonBlocks(text, 'FINDING_JSON:');
 
-  FINDING_REGEX.lastIndex = 0;
-  while ((match = FINDING_REGEX.exec(text)) !== null) {
+  for (const block of blocks) {
     try {
-      const parsed = JSON.parse(match[1]);
+      const parsed = JSON.parse(block);
       if (parsed.title && parsed.type && parsed.severity) {
         findings.push(parsed);
       }
@@ -34,28 +31,6 @@ export function parseFindingsFromText(text: string): RawFinding[] {
   }
 
   return findings;
-}
-
-/**
- * Parse agent text for memory update instructions.
- */
-export function parseMemoryUpdatesFromText(text: string): Array<{ action: string; data: Record<string, unknown> }> {
-  const updates: Array<{ action: string; data: Record<string, unknown> }> = [];
-  let match;
-
-  MEMORY_REGEX.lastIndex = 0;
-  while ((match = MEMORY_REGEX.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (parsed.action && parsed.data) {
-        updates.push(parsed);
-      }
-    } catch {
-      // Skip malformed JSON
-    }
-  }
-
-  return updates;
 }
 
 /**

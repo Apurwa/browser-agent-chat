@@ -97,12 +97,6 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         addMessage('finding', finding.title, finding);
         break;
       }
-      case 'memoryUpdate': {
-        const mu = msg as any;
-        if (mu.feature) addMessage('system', `Learned about feature: ${mu.feature.name}`);
-        if (mu.flow) addMessage('system', `Learned about flow: ${mu.flow.name}`);
-        break;
-      }
       case 'sessionRestore': {
         // Server sent full message history on reconnect
         const restored = (msg as any).messages as ChatMessage[];
@@ -168,17 +162,22 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   }, [connect]);
 
   const send = useCallback((msg: ClientMessage) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
+    const ready = wsRef.current?.readyState;
+    console.log('[WS] send', msg.type, 'readyState:', ready);
+    if (ready === WebSocket.OPEN) {
+      wsRef.current!.send(JSON.stringify(msg));
+    } else {
+      console.warn('[WS] send DROPPED — socket not open, readyState:', ready);
     }
   }, []);
 
   const startAgent = useCallback((projectId: string) => {
+    console.log('[WS] startAgent called with projectId:', projectId);
     setMessages([]);
     setFindings([]);
     setScreenshot(null);
     setCurrentUrl(null);
-    setStatus('disconnected');
+    setStatus('working');
     setActiveProjectId(projectId);
     activeProjectRef.current = projectId;
     send({ type: 'start', projectId });
