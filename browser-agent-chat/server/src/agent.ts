@@ -6,13 +6,15 @@ export interface AgentSession {
   agent: BrowserAgent;
   connector: BrowserConnector;
   sessionId: string | null;
+  userId: string | null;
   close: () => Promise<void>;
 }
 
 export async function createAgent(
   url: string,
   broadcast: (msg: ServerMessage) => void,
-  sessionId: string | null = null
+  sessionId: string | null = null,
+  userId: string | null = null
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
 
@@ -20,10 +22,9 @@ export async function createAgent(
     url,
     narrate: false,
     llm: {
-      provider: 'anthropic',
+      provider: 'claude-code',
       options: {
-        model: 'claude-sonnet-4-20250514',
-        apiKey: process.env.ANTHROPIC_API_KEY
+        model: 'claude-sonnet-4-20250514'
       }
     }
   });
@@ -93,6 +94,7 @@ export async function createAgent(
     agent,
     connector,
     sessionId,
+    userId,
     close: async () => {
       await agent.stop();
     }
