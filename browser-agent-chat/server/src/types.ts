@@ -87,6 +87,7 @@ export interface Session {
   started_at: string;
   ended_at: string | null;
   findings_count: number;
+  user_id: string | null;
 }
 
 export interface Message {

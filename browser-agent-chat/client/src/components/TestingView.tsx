@@ -3,10 +3,12 @@ import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useAuth } from '../hooks/useAuth';
 
 export default function TestingView() {
   const { id } = useParams();
-  const ws = useWebSocket();
+  const { session } = useAuth();
+  const ws = useWebSocket({ token: session?.access_token });
 
   return (
     <div className="app-layout">

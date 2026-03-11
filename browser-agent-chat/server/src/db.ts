@@ -158,11 +158,11 @@ export async function deleteFlow(flowId: string): Promise<boolean> {
 
 // === Sessions ===
 
-export async function createSession(projectId: string): Promise<string | null> {
+export async function createSession(projectId: string, userId: string | null = null): Promise<string | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
     .from('sessions')
-    .insert({ project_id: projectId })
+    .insert({ project_id: projectId, user_id: userId })
     .select('id')
     .single();
   if (error) { console.error('createSession error:', error); return null; }

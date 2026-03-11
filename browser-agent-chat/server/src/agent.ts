@@ -9,6 +9,7 @@ export interface AgentSession {
   connector: BrowserConnector;
   sessionId: string | null;
   projectId: string | null;
+  userId: string | null;
   memoryContext: string;
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
   close: () => Promise<void>;
@@ -19,7 +20,8 @@ export async function createAgent(
   broadcast: (msg: ServerMessage) => void,
   sessionId: string | null = null,
   projectId: string | null = null,
-  credentials: { username: string; password: string } | null = null
+  credentials: { username: string; password: string } | null = null,
+  userId: string | null = null
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
 
@@ -145,6 +147,7 @@ export async function createAgent(
     connector,
     sessionId,
     projectId,
+    userId,
     memoryContext,
     stepsHistory,
     close: async () => {

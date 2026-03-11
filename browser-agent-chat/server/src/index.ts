@@ -10,7 +10,7 @@ import memoryRouter from './routes/memory.js';
 import { createAgent, executeTask, type AgentSession } from './agent.js';
 import { getProject, createSession, endSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
-import { isSupabaseEnabled } from './supabase.js';
+import { isSupabaseEnabled, verifyToken, type AuthenticatedUser } from './supabase.js';
 import type { ClientMessage, ServerMessage } from './types.js';
 
 const app = express();
@@ -29,11 +29,45 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/projects/:id/findings', findingsRouter);
 app.use('/api/projects/:id/memory', memoryRouter);
 
+// Auth helper
+async function authenticateRequest(req: express.Request): Promise<AuthenticatedUser | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.slice(7);
+  return verifyToken(token);
+}
+
 // WebSocket server
 const wss = new WebSocketServer({ server });
 const sessions = new Map<WebSocket, AgentSession>();
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', async (ws: WebSocket, req) => {
+  // Extract token from query string
+  const url = new URL(req.url || '', `http://${req.headers.host}`);
+  const token = url.searchParams.get('token');
+
+  let authenticatedUser: AuthenticatedUser | null = null;
+
+  if (token) {
+    try {
+      authenticatedUser = await verifyToken(token);
+      console.log(`Client authenticated: ${authenticatedUser.githubUsername}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      if (message === 'User not in allowlist') {
+        ws.close(4003, 'Forbidden: user not in allowlist');
+      } else {
+        ws.close(4001, 'Unauthorized: invalid token');
+      }
+      return;
+    }
+  } else if (process.env.ALLOWED_GITHUB_USERS) {
+    ws.close(4001, 'Unauthorized: token required');
+    return;
+  }
+
   console.log('Client connected');
 
   const broadcast = (msg: ServerMessage) => {
@@ -79,11 +113,11 @@ wss.on('connection', (ws: WebSocket) => {
         }
 
         // Create DB session
-        const sessionId = await createSession(project.id);
+        const sessionId = await createSession(project.id, authenticatedUser?.id || null);
 
         // Create agent
         const session = await createAgent(
-          loginUrl, broadcast, sessionId, project.id, credentials
+          loginUrl, broadcast, sessionId, project.id, credentials, authenticatedUser?.id || null
         );
         sessions.set(ws, session);
       } catch (err) {
