@@ -1,5 +1,5 @@
 import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitude-core';
-import type { ServerMessage, Finding, Feature, Flow } from './types.js';
+import type { ServerMessage, Finding, Feature, Flow, Criticality } from './types.js';
 import { saveMessage, createFeature, updateFeature } from './db.js';
 import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
 import { parseFindingsFromText, parseMemoryUpdatesFromText, processFinding } from './finding-detector.js';
@@ -75,7 +75,7 @@ export async function createAgent(
             projectId,
             update.data.name as string,
             (update.data.description as string) ?? null,
-            (update.data.criticality as string) ?? 'medium',
+            ((update.data.criticality as string) ?? 'medium') as Criticality,
             (update.data.expected_behaviors as string[]) ?? []
           );
           if (feature) broadcast({ type: 'memoryUpdate', feature });
