@@ -1,7 +1,8 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
 import type {
   Project, Feature, Flow, Finding, Session, Message,
-  EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep
+  EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
+  Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint
 } from './types.js';
 
 // === Projects ===
@@ -118,6 +119,24 @@ export async function deleteFeature(featureId: string): Promise<boolean> {
   if (!isSupabaseEnabled()) return false;
   const { error } = await supabase!.from('memory_features').delete().eq('id', featureId);
   return !error;
+}
+
+export async function findFeatureByName(
+  projectId: string,
+  name: string
+): Promise<Feature | null> {
+  if (!isSupabaseEnabled()) return null;
+  // Escape SQL wildcards for ilike (case-insensitive exact match)
+  const escaped = name.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const { data, error } = await supabase!
+    .from('memory_features')
+    .select('*')
+    .eq('project_id', projectId)
+    .ilike('name', escaped)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data;
 }
 
 // === Memory Flows ===
@@ -258,4 +277,217 @@ export async function uploadScreenshot(
 
   const { data } = supabase!.storage.from('screenshots').getPublicUrl(filename);
   return data.publicUrl;
+}
+
+// === Memory Suggestions ===
+
+export async function createSuggestion(
+  projectId: string,
+  type: Suggestion['type'],
+  data: Suggestion['data'],
+  sessionId: string | null
+): Promise<Suggestion | null> {
+  if (!isSupabaseEnabled()) return null;
+
+  // --- Deduplication ---
+  const name = 'name' in data ? (data as any).name : ('feature_name' in data ? (data as any).feature_name : null);
+
+  if (name) {
+    // Check for existing pending suggestion with same type and matching identity
+    const { data: pendingDupes } = await supabase!
+      .from('memory_suggestions')
+      .select('id, data')
+      .eq('project_id', projectId)
+      .eq('type', type)
+      .eq('status', 'pending');
+
+    if (pendingDupes) {
+      let isDupe = false;
+      if (type === 'behavior') {
+        // For behaviors, check both feature_name AND behavior text
+        const bd = data as BehaviorSuggestionData;
+        isDupe = pendingDupes.some((s: any) =>
+          s.data?.feature_name?.toLowerCase() === bd.feature_name.toLowerCase()
+          && s.data?.behavior === bd.behavior
+        );
+      } else {
+        // For features/flows, check by name
+        isDupe = pendingDupes.some((s: any) => {
+          const sName = s.data?.name;
+          return sName && sName.toLowerCase() === name.toLowerCase();
+        });
+      }
+      if (isDupe) return null;
+    }
+
+    // Check for already-accepted entities
+    if (type === 'feature') {
+      const existing = await findFeatureByName(projectId, name);
+      if (existing) return null;
+    }
+
+    if (type === 'flow') {
+      // Check if a flow with this name already exists under the parent feature
+      const fd = data as FlowSuggestionData;
+      const feature = await findFeatureByName(projectId, fd.feature_name);
+      if (feature) {
+        const escaped = fd.name.replace(/%/g, '\\%').replace(/_/g, '\\_');
+        const { data: existingFlow } = await supabase!
+          .from('memory_flows')
+          .select('id')
+          .eq('feature_id', feature.id)
+          .ilike('name', escaped)
+          .limit(1)
+          .maybeSingle();
+        if (existingFlow) return null;
+      }
+    }
+
+    if (type === 'behavior') {
+      const bd = data as BehaviorSuggestionData;
+      const feature = await findFeatureByName(projectId, bd.feature_name);
+      if (feature && feature.expected_behaviors?.includes(bd.behavior)) {
+        return null; // Identical behavior already accepted
+      }
+    }
+  }
+
+  // --- Insert ---
+  const { data: inserted, error } = await supabase!
+    .from('memory_suggestions')
+    .insert({
+      project_id: projectId,
+      type,
+      data,
+      source_session: sessionId,
+    })
+    .select()
+    .single();
+
+  if (error) { console.error('createSuggestion error:', error); return null; }
+  return inserted;
+}
+
+export async function listPendingSuggestions(projectId: string): Promise<Suggestion[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('memory_suggestions')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true });
+  if (error) { console.error('listPendingSuggestions error:', error); return []; }
+  return data ?? [];
+}
+
+export async function getPendingSuggestionCount(projectId: string): Promise<number> {
+  if (!isSupabaseEnabled()) return 0;
+  const { count, error } = await supabase!
+    .from('memory_suggestions')
+    .select('*', { count: 'exact', head: true })
+    .eq('project_id', projectId)
+    .eq('status', 'pending');
+  if (error) { console.error('getPendingSuggestionCount error:', error); return 0; }
+  return count ?? 0;
+}
+
+export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+
+  const { data: suggestion, error: fetchError } = await supabase!
+    .from('memory_suggestions')
+    .select('*')
+    .eq('id', suggestionId)
+    .single();
+
+  if (fetchError || !suggestion) return false;
+
+  const { type, data: suggData, project_id: projectId } = suggestion;
+
+  // Process by type
+  if (type === 'feature') {
+    const fd = suggData as FeatureSuggestionData;
+    await createFeature(projectId, fd.name, fd.description, fd.criticality, fd.expected_behaviors);
+  } else if (type === 'flow') {
+    const fd = suggData as FlowSuggestionData;
+    let feature = await findFeatureByName(projectId, fd.feature_name);
+    if (!feature) {
+      feature = await createFeature(projectId, fd.feature_name, null, fd.criticality, []);
+    }
+    if (feature) {
+      await createFlow(feature.id, projectId, fd.name, fd.steps, fd.checkpoints, fd.criticality);
+    }
+  } else if (type === 'behavior') {
+    const fd = suggData as BehaviorSuggestionData;
+    let feature = await findFeatureByName(projectId, fd.feature_name);
+    if (!feature) {
+      feature = await createFeature(projectId, fd.feature_name, null, 'medium', []);
+    }
+    if (feature) {
+      await supabase!.rpc('append_expected_behavior', {
+        feature_uuid: feature.id,
+        new_behavior: fd.behavior,
+      });
+    }
+  }
+
+  // Mark as accepted
+  const { error } = await supabase!
+    .from('memory_suggestions')
+    .update({ status: 'accepted', resolved_at: new Date().toISOString() })
+    .eq('id', suggestionId);
+
+  return !error;
+}
+
+export async function dismissSuggestion(suggestionId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!
+    .from('memory_suggestions')
+    .update({ status: 'dismissed', resolved_at: new Date().toISOString() })
+    .eq('id', suggestionId);
+  return !error;
+}
+
+export async function updateSuggestionData(
+  suggestionId: string,
+  data: Suggestion['data']
+): Promise<Suggestion | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data: updated, error } = await supabase!
+    .from('memory_suggestions')
+    .update({ data })
+    .eq('id', suggestionId)
+    .select()
+    .single();
+  if (error) { console.error('updateSuggestionData error:', error); return null; }
+  return updated;
+}
+
+export async function bulkAcceptSuggestions(projectId: string): Promise<number> {
+  if (!isSupabaseEnabled()) return 0;
+  const pending = await listPendingSuggestions(projectId);
+  if (pending.length === 0) return 0;
+
+  // Process in order: features first, then flows, then behaviors
+  const features = pending.filter(s => s.type === 'feature');
+  const flows = pending.filter(s => s.type === 'flow');
+  const behaviors = pending.filter(s => s.type === 'behavior');
+
+  let accepted = 0;
+  for (const s of [...features, ...flows, ...behaviors]) {
+    const ok = await acceptSuggestion(s.id);
+    if (ok) accepted++;
+  }
+  return accepted;
+}
+
+export async function bulkDismissSuggestions(projectId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!
+    .from('memory_suggestions')
+    .update({ status: 'dismissed', resolved_at: new Date().toISOString() })
+    .eq('project_id', projectId)
+    .eq('status', 'pending');
+  return !error;
 }
