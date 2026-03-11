@@ -53,8 +53,31 @@ As you perform this task:
 1. If you observe anything that contradicts the expected behaviors above, report it as a FINDING by including this exact JSON in your response (on its own line):
    FINDING_JSON:{"title":"...","type":"visual|functional|data|ux","severity":"critical|high|medium|low","feature":"...","flow":"...","expected_behavior":"...","actual_behavior":"..."}
 2. If the user is teaching you about the product (describing features, flows, or expected behaviors), acknowledge what you learned and include:
-   MEMORY_JSON:{"action":"create_feature|update_feature|create_flow|add_behavior","data":{...}}
+   MEMORY_JSON:{"action":"create_feature","data":{"name":"...","description":"...","criticality":"...","expected_behaviors":[...]}}
+   MEMORY_JSON:{"action":"create_flow","data":{"feature_name":"...","name":"...","steps":["..."],"checkpoints":["..."],"criticality":"..."}}
+   MEMORY_JSON:{"action":"add_behavior","data":{"feature_name":"...","behavior":"..."}}
+   If you notice any new features, behaviors, or flows that aren't in the product knowledge above, report them using MEMORY_JSON.
 3. Otherwise, just perform the requested task.`;
+}
+
+/**
+ * Build an exploration prompt for Explore & Learn mode.
+ */
+export function buildExplorePrompt(context: string | null): string {
+  return `Explore this application thoroughly. Start from the current page and navigate through all reachable sections. For each distinct feature you discover, report it using MEMORY_JSON.
+
+For features: MEMORY_JSON:{"action":"create_feature","data":{"name":"...","description":"...","criticality":"critical|high|medium|low","expected_behaviors":["..."]}}
+For flows: MEMORY_JSON:{"action":"create_flow","data":{"feature_name":"...","name":"...","steps":["..."],"checkpoints":["..."],"criticality":"critical|high|medium|low"}}
+For behaviors: MEMORY_JSON:{"action":"add_behavior","data":{"feature_name":"...","behavior":"..."}}
+
+Context about this app: ${context || 'No context provided, discover freely.'}
+
+Guidelines:
+- Navigate methodically: main menu, each section, forms, buttons
+- Report each feature once with a clear name and description
+- For multi-step workflows (login, checkout, etc.), report them as flows
+- Note any expected behaviors you observe (error handling, validation, redirects)
+- Do NOT report the same feature twice`;
 }
 
 /**
