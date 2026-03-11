@@ -5,14 +5,20 @@ services:
     runtime: docker
     dockerfilePath: ./browser-agent-chat/server/Dockerfile
     dockerContext: ./browser-agent-chat/server
-    plan: starter  # Need at least starter for browser automation
+    plan: starter
     envVars:
       - key: ANTHROPIC_API_KEY
-        sync: false  # You'll set this manually in Render dashboard
+        sync: false
       - key: CORS_ORIGIN
         value: https://browser-agent-client.onrender.com
       - key: NODE_ENV
         value: production
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ALLOWED_GITHUB_USERS
+        sync: false
 
   # Frontend React app
   - type: web
@@ -23,3 +29,7 @@ services:
     envVars:
       - key: VITE_WS_URL
         value: wss://browser-agent-server.onrender.com
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false

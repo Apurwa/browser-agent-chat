@@ -7,7 +7,7 @@ import 'dotenv/config';
 import { createAgent, executeTask, type AgentSession } from './agent.js';
 import type { ClientMessage, ServerMessage } from './types.js';
 import { createSession, endSession, getSessionHistory, listSessions } from './db.js';
-import { isSupabaseEnabled } from './supabase.js';
+import { isSupabaseEnabled, verifyToken, type AuthenticatedUser } from './supabase.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 
 const PORT = process.env.PORT || 3001;
@@ -72,7 +72,32 @@ const wss = new WebSocketServer({ server });
 // Store active session per client
 const sessions = new Map<WebSocket, AgentSession>();
 
-wss.on('connection', (ws) => {
+wss.on('connection', async (ws, req) => {
+  // --- WebSocket Authentication ---
+  const url = new URL(req.url || '', `http://${req.headers.host}`);
+  const token = url.searchParams.get('token');
+
+  let authenticatedUser: AuthenticatedUser | null = null;
+
+  if (token) {
+    try {
+      authenticatedUser = await verifyToken(token);
+      console.log(`Client authenticated: ${authenticatedUser.githubUsername}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Authentication failed';
+      if (message === 'User not in allowlist') {
+        ws.close(4003, 'Forbidden: user not in allowlist');
+      } else {
+        ws.close(4001, 'Unauthorized: invalid token');
+      }
+      return;
+    }
+  } else if (process.env.ALLOWED_GITHUB_USERS) {
+    // Token required when allowlist is configured
+    ws.close(4001, 'Unauthorized: token required');
+    return;
+  }
+
   console.log('Client connected');
 
   // Broadcast function for this client
@@ -91,7 +116,6 @@ wss.on('connection', (ws) => {
           // Close existing session if any
           const existingSession = sessions.get(ws);
           if (existingSession) {
-            // End the database session
             if (existingSession.sessionId) {
               await endSession(existingSession.sessionId);
             }
@@ -101,9 +125,8 @@ wss.on('connection', (ws) => {
 
           // Create new agent session
           try {
-            // Create database session first
-            const dbSessionId = await createSession(message.url);
-            const session = await createAgent(message.url, broadcast, dbSessionId);
+            const dbSessionId = await createSession(message.url, authenticatedUser?.id || null);
+            const session = await createAgent(message.url, broadcast, dbSessionId, authenticatedUser?.id || null);
             sessions.set(ws, session);
           } catch (err) {
             const errorMsg = err instanceof Error ? err.message : 'Failed to start agent';
@@ -127,14 +150,12 @@ wss.on('connection', (ws) => {
         case 'stop': {
           const session = sessions.get(ws);
           if (session) {
-            // End the database session
             if (session.sessionId) {
               await endSession(session.sessionId);
             }
             await session.close();
             sessions.delete(ws);
           }
-          // Always send disconnected status when stop is requested
           broadcast({ type: 'status', status: 'disconnected' });
           break;
         }
@@ -152,7 +173,6 @@ wss.on('connection', (ws) => {
     console.log('Client disconnected');
     const session = sessions.get(ws);
     if (session) {
-      // End the database session
       if (session.sessionId) {
         await endSession(session.sessionId);
       }
