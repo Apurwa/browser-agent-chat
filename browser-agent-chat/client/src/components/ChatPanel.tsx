@@ -1,26 +1,24 @@
 import { useState, useRef, useEffect } from 'react';
+import FindingAlert from './FindingAlert';
 import type { ChatMessage, AgentStatus } from '../types';
 
 interface ChatPanelProps {
+  projectId: string;
   messages: ChatMessage[];
   status: AgentStatus;
-  onSendTask: (task: string) => void;
-  onStartAgent: (url: string) => void;
-  onStopAgent: () => void;
   currentUrl: string | null;
+  onStartAgent: () => void;
+  onSendTask: (content: string) => void;
+  onStopAgent: () => void;
 }
 
-export function ChatPanel({
-  messages,
-  status,
-  onSendTask,
-  onStartAgent,
-  onStopAgent,
-  currentUrl
+export default function ChatPanel({
+  projectId, messages, status, currentUrl,
+  onStartAgent, onSendTask, onStopAgent,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
-  const [urlInput, setUrlInput] = useState('https://magnitodo.com');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isActive = status === 'idle' || status === 'working';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -28,81 +26,49 @@ export function ChatPanel({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-
+    if (!input.trim() || status !== 'idle') return;
     onSendTask(input.trim());
     setInput('');
   };
 
-  const handleStart = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!urlInput.trim()) return;
-    onStartAgent(urlInput.trim());
-  };
-
-  const isAgentReady = status === 'idle';
-  const isAgentWorking = status === 'working';
-  const hasActiveSession = currentUrl !== null;
-
   return (
     <div className="chat-panel">
       <div className="chat-header">
-        <h2>Browser Agent Chat</h2>
-        <div className="status-indicator">
-          <span className={`status-dot ${status}`} />
-          <span>{status}</span>
+        <div className="chat-status">
+          <span className={`status-dot status-${status}`} />
+          <span className="status-text">{status}</span>
         </div>
+        {isActive ? (
+          <button className="btn-stop" onClick={onStopAgent}>Stop</button>
+        ) : (
+          <button className="btn-primary btn-sm" onClick={onStartAgent}>Start Agent</button>
+        )}
       </div>
 
-      {!hasActiveSession ? (
-        <form className="url-form" onSubmit={handleStart}>
-          <input
-            type="url"
-            value={urlInput}
-            onChange={(e) => setUrlInput(e.target.value)}
-            placeholder="Enter URL to start..."
-            required
-          />
-          <button type="submit" disabled={status === 'working'}>
-            Start Agent
-          </button>
-        </form>
-      ) : (
-        <div className="session-controls">
-          <span className="current-url">{currentUrl}</span>
-          <button onClick={onStopAgent} disabled={isAgentWorking}>
-            Stop
-          </button>
-        </div>
-      )}
+      {currentUrl && <div className="chat-url">{currentUrl}</div>}
 
-      <div className="messages-container">
-        {messages.map((msg) => (
-          <div key={msg.id} className={`message ${msg.type}`}>
-            <span className="message-type">{msg.type}</span>
-            <span className="message-content">{msg.content}</span>
+      <div className="chat-messages">
+        {messages.map(msg => (
+          <div key={msg.id} className={`chat-message chat-message-${msg.type}`}>
+            {msg.type === 'finding' && msg.finding ? (
+              <FindingAlert finding={msg.finding} />
+            ) : (
+              <p>{msg.content}</p>
+            )}
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
 
-      <form className="input-form" onSubmit={handleSubmit}>
+      <form className="chat-input" onSubmit={handleSubmit}>
         <input
           type="text"
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={
-            isAgentReady
-              ? "Enter a task for the agent..."
-              : isAgentWorking
-              ? "Agent is working..."
-              : "Start an agent first..."
-          }
-          disabled={!isAgentReady}
+          onChange={e => setInput(e.target.value)}
+          placeholder={status === 'working' ? 'Agent is working...' : 'Send a message...'}
+          disabled={!isActive || status === 'working'}
         />
-        <button type="submit" disabled={!isAgentReady || !input.trim()}>
-          Send
-        </button>
+        <button type="submit" disabled={!input.trim() || status !== 'idle'}>→</button>
       </form>
     </div>
   );
