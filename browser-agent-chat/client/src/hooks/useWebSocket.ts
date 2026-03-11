@@ -3,13 +3,14 @@ import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage } from '../
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 
-export function useWebSocket() {
+export function useWebSocket(token?: string) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<AgentStatus>('disconnected');
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const addMessage = useCallback((type: ChatMessage['type'], content: string) => {
     setMessages((prev) => [
@@ -24,8 +25,12 @@ export function useWebSocket() {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+
     const connect = () => {
-      const ws = new WebSocket(WS_URL);
+      if (disposed) return;
+      const wsUrl = token ? `${WS_URL}?token=${token}` : WS_URL;
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
@@ -70,13 +75,29 @@ export function useWebSocket() {
         }
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.onclose = (event) => {
+        console.log('WebSocket disconnected', event.code);
         setConnected(false);
         setStatus('disconnected');
+
+        if (event.code === 4003) {
+          // Forbidden - user not in allowlist
+          setAccessDenied(true);
+          addMessage('system', 'Access denied — your GitHub account is not authorized');
+          return; // Do not reconnect
+        }
+
+        if (event.code === 4001) {
+          // Token expired or invalid - do not reconnect
+          addMessage('system', 'Session expired. Please sign in again.');
+          return;
+        }
+
         addMessage('system', 'Disconnected from server');
-        // Reconnect after delay
-        setTimeout(connect, 3000);
+        // Reconnect after delay (only for non-auth disconnects)
+        if (!disposed) {
+          setTimeout(connect, 3000);
+        }
       };
 
       ws.onerror = (err) => {
@@ -89,9 +110,10 @@ export function useWebSocket() {
     connect();
 
     return () => {
+      disposed = true;
       wsRef.current?.close();
     };
-  }, [addMessage]);
+  }, [addMessage, token]);
 
   const send = useCallback((message: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -125,6 +147,7 @@ export function useWebSocket() {
     screenshot,
     currentUrl,
     messages,
+    accessDenied,
     startAgent,
     sendTask,
     stopAgent
