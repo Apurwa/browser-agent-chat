@@ -198,7 +198,11 @@ export async function createFinding(finding: Omit<Finding, 'id' | 'created_at'>)
   if (error) { console.error('createFinding error:', error); return null; }
 
   // Increment findings_count on session
-  await supabase!.rpc('increment_findings_count', { sid: finding.session_id }).catch(() => {});
+  try {
+    await supabase!.rpc('increment_findings_count', { sid: finding.session_id });
+  } catch {
+    // Best effort
+  }
 
   return data;
 }
