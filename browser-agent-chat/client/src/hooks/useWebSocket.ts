@@ -14,6 +14,7 @@ export interface AgentEvent {
 
 interface UseWebSocketOptions {
   onAgentEvent?: (event: AgentEvent) => void;
+  token?: string;
 }
 
 export function useWebSocket(options: UseWebSocketOptions = {}) {
@@ -29,6 +30,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const addMessage = useCallback((type: ChatMessage['type'], content: string) => {
     setMessages((prev) => [
@@ -43,8 +45,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   }, []);
 
   useEffect(() => {
+    let disposed = false;
+
     const connect = () => {
-      const ws = new WebSocket(WS_URL);
+      if (disposed) return;
+
+      const wsUrl = options.token ? `${WS_URL}?token=${options.token}` : WS_URL;
+      const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
         console.log('WebSocket connected');
@@ -73,7 +80,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
             case 'status':
               setStatus(message.status);
               onAgentEventRef.current?.({ type: 'status', content: message.status, status: message.status });
-              // Reset session state when disconnected
               if (message.status === 'disconnected') {
                 setCurrentUrl(null);
                 setScreenshot(null);
@@ -96,13 +102,25 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
         }
       };
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected');
+      ws.onclose = (event) => {
+        console.log('WebSocket disconnected', event.code);
         setConnected(false);
         setStatus('disconnected');
+
+        if (event.code === 4003) {
+          setAccessDenied(true);
+          addMessage('system', 'Access denied — your GitHub account is not authorized');
+          return;
+        }
+        if (event.code === 4001) {
+          addMessage('system', 'Session expired. Please sign in again.');
+          return;
+        }
+
         addMessage('system', 'Disconnected from server');
-        // Reconnect after delay
-        setTimeout(connect, 3000);
+        if (!disposed) {
+          setTimeout(connect, 3000);
+        }
       };
 
       ws.onerror = (err) => {
@@ -115,9 +133,10 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     connect();
 
     return () => {
+      disposed = true;
       wsRef.current?.close();
     };
-  }, [addMessage]);
+  }, [addMessage, options.token]);
 
   const send = useCallback((message: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -151,6 +170,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
     screenshot,
     currentUrl,
     messages,
+    accessDenied,
     startAgent,
     sendTask,
     stopAgent

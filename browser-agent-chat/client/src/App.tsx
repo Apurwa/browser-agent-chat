@@ -1,14 +1,18 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useWebSocket, type AgentEvent } from './hooks/useWebSocket';
+import { useAuth } from './hooks/useAuth';
+import { isAuthEnabled } from './lib/supabase';
 import { AssistantProvider, useAssistant } from './contexts/AssistantContext';
 import { ChatPanel } from './components/ChatPanel';
 import { BrowserView } from './components/BrowserView';
 import { LandingPage } from './components/LandingPage';
+import { LoginPage } from './components/LoginPage';
 import { AvatarContainer } from './components/Avatar/AvatarContainer';
 
 const DEFAULT_URL = 'https://google.com';
 
 function AppContent() {
+  const { user, session, loading, signInWithGitHub, signOut } = useAuth();
   const [showApp, setShowApp] = useState(false);
   const { speakText, isAvatarReady, isSpeaking } = useAssistant();
   const lastSpokenRef = useRef<string>('');
@@ -16,30 +20,24 @@ function AppContent() {
 
   const handleAgentEvent = useCallback(async (event: AgentEvent) => {
     if (!isAvatarReady) return;
-
-    // Don't interrupt if already speaking, and avoid repeating
     if (isSpeaking) return;
 
     let narration = '';
 
     switch (event.type) {
       case 'thought':
-        // Share the agent's reasoning/plan - this is the "thinking out loud" part
-        // Keep thoughts that are meaningful (not too short, not too long)
         if (event.content.length > 5 && event.content.length < 200) {
           narration = event.content;
         }
         break;
 
-      case 'action':
-        // Skip most actions - they're too granular
-        // Only mention significant navigation events
+      case 'action': {
         const action = event.content.toLowerCase();
         if (action.includes('navigate') || action.includes('go to') || action.includes('open')) {
           // Don't narrate, the thought already explained the plan
         }
-        // Skip clicks, typing, scrolling - too robotic
         break;
+      }
 
       case 'taskComplete':
         narration = event.success
@@ -52,11 +50,9 @@ function AppContent() {
         break;
 
       case 'status':
-        // Don't narrate status changes
         break;
     }
 
-    // Only speak if we have something new to say
     if (narration && narration !== lastSpokenRef.current) {
       lastSpokenRef.current = narration;
       await speakText(narration);
@@ -69,9 +65,13 @@ function AppContent() {
     screenshot,
     currentUrl,
     messages,
+    accessDenied,
     startAgent,
     sendTask
-  } = useWebSocket({ onAgentEvent: handleAgentEvent });
+  } = useWebSocket({
+    onAgentEvent: handleAgentEvent,
+    token: session?.access_token,
+  });
 
   // Start browser agent when avatar becomes ready
   const handleAvatarReady = useCallback(() => {
@@ -87,6 +87,19 @@ function AppContent() {
       hasStartedAgentRef.current = false;
     }
   }, [isAvatarReady]);
+
+  // Auth gate
+  if (isAuthEnabled() && loading) {
+    return <div className="loading-screen">Loading...</div>;
+  }
+
+  if (isAuthEnabled() && !session) {
+    return <LoginPage onSignIn={signInWithGitHub} />;
+  }
+
+  if (accessDenied) {
+    return <LoginPage onSignIn={signInWithGitHub} accessDenied onSignOut={signOut} />;
+  }
 
   if (!showApp) {
     return <LandingPage onLaunchApp={() => setShowApp(true)} />;
@@ -117,6 +130,12 @@ function AppContent() {
       {!connected && (
         <div className="connection-banner">
           Connecting to server...
+        </div>
+      )}
+      {user && (
+        <div className="user-bar">
+          <span>{user.user_metadata?.user_name}</span>
+          <button onClick={signOut} className="signout-btn">Sign out</button>
         </div>
       )}
     </div>

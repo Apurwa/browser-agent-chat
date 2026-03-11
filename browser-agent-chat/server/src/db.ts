@@ -25,14 +25,14 @@ export interface Screenshot {
   created_at: string;
 }
 
-export async function createSession(url: string): Promise<string | null> {
+export async function createSession(url: string, userId: string | null = null): Promise<string | null> {
   if (!isSupabaseEnabled() || !supabase) {
     return null;
   }
 
   const { data, error } = await supabase
     .from('sessions')
-    .insert({ url })
+    .insert(userId ? { url, user_id: userId } : { url })
     .select('id')
     .single();
 
