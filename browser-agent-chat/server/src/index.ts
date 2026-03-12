@@ -14,6 +14,7 @@ import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionPool from './sessionPool.js';
 import * as browserPool from './browserPool.js';
+import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 
 const app = express();
@@ -27,8 +28,24 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     supabase: isSupabaseEnabled(),
+    heygenEnabled: isHeyGenEnabled(),
     activeSessions: sessionPool.listActiveSessions().length,
   });
+});
+
+// HeyGen token endpoint
+app.post('/api/heygen/token', async (_req, res) => {
+  try {
+    if (!isHeyGenEnabled()) {
+      res.status(503).json({ error: 'HeyGen is not configured' });
+      return;
+    }
+    const tokenData = await createHeyGenToken();
+    res.json(tokenData);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to generate HeyGen token';
+    res.status(500).json({ error: message });
+  }
 });
 
 // REST API routes
