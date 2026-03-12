@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, isAuthEnabled } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
 export function useAuth() {
@@ -8,37 +8,39 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthEnabled() || !supabase) {
-      setLoading(false);
-      return;
-    }
-
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
       setLoading(false);
     });
 
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
+  const signInWithGoogle = useCallback(async () => {
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  }, []);
+
   const signInWithGitHub = useCallback(async () => {
-    if (!supabase) return;
-    await supabase.auth.signInWithOAuth({
-      provider: 'github',
-      options: { redirectTo: window.location.origin },
-    });
+    await supabase.auth.signInWithOAuth({ provider: 'github' });
   }, []);
 
   const signOut = useCallback(async () => {
-    if (!supabase) return;
     await supabase.auth.signOut();
   }, []);
 
-  return { user, session, loading, signInWithGitHub, signOut };
+  const getAccessToken = useCallback(async (): Promise<string | null> => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ?? null;
+  }, []);
+
+  return { user, session, loading, signInWithGoogle, signInWithGitHub, signOut, getAccessToken };
 }

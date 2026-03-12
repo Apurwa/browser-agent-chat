@@ -1,153 +1,31 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { useWebSocket, type AgentEvent } from './hooks/useWebSocket';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
-import { isAuthEnabled } from './lib/supabase';
-import { AssistantProvider, useAssistant } from './contexts/AssistantContext';
-import { ChatPanel } from './components/ChatPanel';
-import { BrowserView } from './components/BrowserView';
-import { LandingPage } from './components/LandingPage';
-import { LoginPage } from './components/LoginPage';
-import { AvatarContainer } from './components/Avatar/AvatarContainer';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './components/LoginPage';
+import ProjectList from './components/ProjectList';
+import ProjectSetup from './components/ProjectSetup';
+import TestingView from './components/TestingView';
+import FindingsDashboard from './components/FindingsDashboard';
+import MemoryViewer from './components/MemoryViewer';
+import ProjectSettings from './components/ProjectSettings';
 
-const DEFAULT_URL = 'https://google.com';
+export default function App() {
+  const { user, loading } = useAuth();
 
-function AppContent() {
-  const { user, session, loading, signInWithGitHub, signOut } = useAuth();
-  const [showApp, setShowApp] = useState(false);
-  const { speakText, isAvatarReady, isSpeaking } = useAssistant();
-  const lastSpokenRef = useRef<string>('');
-  const hasStartedAgentRef = useRef(false);
-
-  const handleAgentEvent = useCallback(async (event: AgentEvent) => {
-    if (!isAvatarReady) return;
-    if (isSpeaking) return;
-
-    let narration = '';
-
-    switch (event.type) {
-      case 'thought':
-        if (event.content.length > 5 && event.content.length < 200) {
-          narration = event.content;
-        }
-        break;
-
-      case 'action': {
-        const action = event.content.toLowerCase();
-        if (action.includes('navigate') || action.includes('go to') || action.includes('open')) {
-          // Don't narrate, the thought already explained the plan
-        }
-        break;
-      }
-
-      case 'taskComplete':
-        narration = event.success
-          ? "All done!"
-          : "Hmm, I ran into a problem. Let me know if you'd like me to try again.";
-        break;
-
-      case 'error':
-        narration = "Something went wrong. Would you like me to try a different approach?";
-        break;
-
-      case 'status':
-        break;
-    }
-
-    if (narration && narration !== lastSpokenRef.current) {
-      lastSpokenRef.current = narration;
-      await speakText(narration);
-    }
-  }, [isAvatarReady, isSpeaking, speakText]);
-
-  const {
-    connected,
-    status,
-    screenshot,
-    currentUrl,
-    messages,
-    accessDenied,
-    startAgent,
-    sendTask
-  } = useWebSocket({
-    onAgentEvent: handleAgentEvent,
-    token: session?.access_token,
-  });
-
-  // Start browser agent when avatar becomes ready
-  const handleAvatarReady = useCallback(() => {
-    if (!hasStartedAgentRef.current) {
-      hasStartedAgentRef.current = true;
-      startAgent(DEFAULT_URL);
-    }
-  }, [startAgent]);
-
-  // Reset agent started flag when avatar disconnects
-  useEffect(() => {
-    if (!isAvatarReady) {
-      hasStartedAgentRef.current = false;
-    }
-  }, [isAvatarReady]);
-
-  // Auth gate
-  if (isAuthEnabled() && loading) {
+  if (loading) {
     return <div className="loading-screen">Loading...</div>;
   }
 
-  if (isAuthEnabled() && !session) {
-    return <LoginPage onSignIn={signInWithGitHub} />;
-  }
-
-  if (accessDenied) {
-    return <LoginPage onSignIn={signInWithGitHub} accessDenied onSignOut={signOut} />;
-  }
-
-  if (!showApp) {
-    return <LandingPage onLaunchApp={() => setShowApp(true)} />;
-  }
-
   return (
-    <div className="app">
-      <div className="app-container">
-        <div className="left-panel">
-          <div className="avatar-section">
-            <AvatarContainer onAvatarReady={handleAvatarReady} />
-          </div>
-          <div className="chat-section">
-            <ChatPanel
-              messages={messages}
-              status={status}
-              onSendTask={sendTask}
-              currentUrl={currentUrl}
-            />
-          </div>
-        </div>
-        <BrowserView
-          screenshot={screenshot}
-          currentUrl={currentUrl}
-          status={status}
-        />
-      </div>
-      {!connected && (
-        <div className="connection-banner">
-          Connecting to server...
-        </div>
-      )}
-      {user && (
-        <div className="user-bar">
-          <span>{user.user_metadata?.user_name}</span>
-          <button onClick={signOut} className="signout-btn">Sign out</button>
-        </div>
-      )}
-    </div>
+    <Routes>
+      <Route path="/login" element={user ? <Navigate to="/projects" replace /> : <LoginPage />} />
+      <Route path="/projects" element={<ProtectedRoute><ProjectList /></ProtectedRoute>} />
+      <Route path="/projects/new" element={<ProtectedRoute><ProjectSetup /></ProtectedRoute>} />
+      <Route path="/projects/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
+      <Route path="/projects/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
+      <Route path="/projects/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
+      <Route path="/projects/:id/settings" element={<ProtectedRoute><ProjectSettings /></ProtectedRoute>} />
+      <Route path="*" element={<Navigate to={user ? '/projects' : '/login'} replace />} />
+    </Routes>
   );
 }
-
-function App() {
-  return (
-    <AssistantProvider>
-      <AppContent />
-    </AssistantProvider>
-  );
-}
-
-export default App;

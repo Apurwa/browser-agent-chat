@@ -1,178 +1,108 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage } from '../types';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 
-export type AgentEventType = 'thought' | 'action' | 'taskComplete' | 'error' | 'status';
-
-export interface AgentEvent {
-  type: AgentEventType;
-  content: string;
-  success?: boolean;
-  status?: AgentStatus;
-}
-
-interface UseWebSocketOptions {
-  onAgentEvent?: (event: AgentEvent) => void;
-  token?: string;
-}
-
-export function useWebSocket(options: UseWebSocketOptions = {}) {
-  const onAgentEventRef = useRef(options.onAgentEvent);
-
-  // Keep ref updated
-  useEffect(() => {
-    onAgentEventRef.current = options.onAgentEvent;
-  }, [options.onAgentEvent]);
-  const wsRef = useRef<WebSocket | null>(null);
+export function useWebSocket() {
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<AgentStatus>('disconnected');
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [accessDenied, setAccessDenied] = useState(false);
+  const [findings, setFindings] = useState<Finding[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const addMessage = useCallback((type: ChatMessage['type'], content: string) => {
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        type,
-        content,
-        timestamp: Date.now()
-      }
-    ]);
+  const addMessage = useCallback((type: ChatMessage['type'], content: string, finding?: Finding) => {
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      type,
+      content,
+      timestamp: Date.now(),
+      finding,
+    }]);
   }, []);
 
-  useEffect(() => {
-    let disposed = false;
+  const connect = useCallback(() => {
+    const ws = new WebSocket(WS_URL);
 
-    const connect = () => {
-      if (disposed) return;
+    ws.onopen = () => setConnected(true);
 
-      const wsUrl = options.token ? `${WS_URL}?token=${options.token}` : WS_URL;
-      const ws = new WebSocket(wsUrl);
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data) as ServerMessage;
 
-      ws.onopen = () => {
-        console.log('WebSocket connected');
-        setConnected(true);
-        addMessage('system', 'Connected to server');
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message: ServerMessage = JSON.parse(event.data);
-
-          switch (message.type) {
-            case 'thought':
-              addMessage('agent', message.content);
-              onAgentEventRef.current?.({ type: 'thought', content: message.content });
-              break;
-            case 'action': {
-              const actionText = `${message.action}${message.target ? ` on "${message.target}"` : ''}`;
-              addMessage('agent', `Action: ${actionText}`);
-              onAgentEventRef.current?.({ type: 'action', content: actionText });
-              break;
-            }
-            case 'screenshot':
-              setScreenshot(`data:image/png;base64,${message.data}`);
-              break;
-            case 'status':
-              setStatus(message.status);
-              onAgentEventRef.current?.({ type: 'status', content: message.status, status: message.status });
-              if (message.status === 'disconnected') {
-                setCurrentUrl(null);
-                setScreenshot(null);
-              }
-              break;
-            case 'nav':
-              setCurrentUrl(message.url);
-              break;
-            case 'error':
-              addMessage('system', `Error: ${message.message}`);
-              onAgentEventRef.current?.({ type: 'error', content: message.message });
-              break;
-            case 'taskComplete':
-              addMessage('system', message.success ? 'Task completed' : 'Task failed');
-              onAgentEventRef.current?.({ type: 'taskComplete', content: message.success ? 'completed' : 'failed', success: message.success });
-              break;
+      switch (msg.type) {
+        case 'thought':
+          addMessage('agent', msg.content);
+          break;
+        case 'action':
+          addMessage('agent', `Action: ${msg.action}${msg.target ? ` → ${msg.target}` : ''}`);
+          break;
+        case 'screenshot':
+          setScreenshot(`data:image/png;base64,${msg.data}`);
+          break;
+        case 'status':
+          setStatus(msg.status);
+          if (msg.status === 'disconnected') {
+            setScreenshot(null);
+            setCurrentUrl(null);
           }
-        } catch (err) {
-          console.error('Failed to parse message:', err);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log('WebSocket disconnected', event.code);
-        setConnected(false);
-        setStatus('disconnected');
-
-        if (event.code === 4003) {
-          setAccessDenied(true);
-          addMessage('system', 'Access denied — your GitHub account is not authorized');
-          return;
-        }
-        if (event.code === 4001) {
-          addMessage('system', 'Session expired. Please sign in again.');
-          return;
-        }
-
-        addMessage('system', 'Disconnected from server');
-        if (!disposed) {
-          setTimeout(connect, 3000);
-        }
-      };
-
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-      };
-
-      wsRef.current = ws;
-    };
-
-    connect();
-
-    return () => {
-      disposed = true;
-      wsRef.current?.close();
-    };
-  }, [addMessage, options.token]);
-
-  const send = useCallback((message: ClientMessage) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(message));
-
-      if (message.type === 'task') {
-        addMessage('user', message.content);
-      } else if (message.type === 'start') {
-        addMessage('system', `Starting agent at ${message.url}`);
-      } else if (message.type === 'stop') {
-        addMessage('system', 'Stopping agent');
+          break;
+        case 'nav':
+          setCurrentUrl(msg.url);
+          break;
+        case 'error':
+          addMessage('system', `Error: ${msg.message}`);
+          break;
+        case 'taskComplete':
+          addMessage('system', msg.success ? 'Task completed.' : 'Task failed.');
+          break;
+        case 'finding':
+          setFindings(prev => [...prev, msg.finding]);
+          addMessage('finding', msg.finding.title, msg.finding);
+          break;
       }
-    }
+    };
+
+    ws.onclose = () => {
+      setConnected(false);
+      setStatus('disconnected');
+      setTimeout(connect, 3000);
+    };
+
+    ws.onerror = () => ws.close();
+
+    wsRef.current = ws;
   }, [addMessage]);
 
-  const startAgent = useCallback((url: string) => {
-    send({ type: 'start', url });
+  useEffect(() => {
+    connect();
+    return () => { wsRef.current?.close(); };
+  }, [connect]);
+
+  const send = useCallback((msg: ClientMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
+  }, []);
+
+  const startAgent = useCallback((projectId: string) => {
+    setMessages([]);
+    setFindings([]);
+    send({ type: 'start', projectId });
   }, [send]);
 
   const sendTask = useCallback((content: string) => {
+    addMessage('user', content);
     send({ type: 'task', content });
-  }, [send]);
+  }, [send, addMessage]);
 
   const stopAgent = useCallback(() => {
     send({ type: 'stop' });
   }, [send]);
 
   return {
-    connected,
-    status,
-    screenshot,
-    currentUrl,
-    messages,
-    accessDenied,
-    startAgent,
-    sendTask,
-    stopAgent
+    connected, status, screenshot, currentUrl, messages, findings,
+    findingsCount: findings.length,
+    startAgent, sendTask, stopAgent,
   };
 }

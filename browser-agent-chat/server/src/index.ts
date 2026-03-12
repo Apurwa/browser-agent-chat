@@ -1,35 +1,40 @@
 import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'http';
+import http from 'node:http';
 import 'dotenv/config';
 
-import { createAgent, executeTask, type AgentSession } from './agent.js';
-import type { ClientMessage, ServerMessage } from './types.js';
-import { createSession, endSession, getSessionHistory, listSessions } from './db.js';
-import { isSupabaseEnabled, verifyToken, type AuthenticatedUser } from './supabase.js';
+import projectsRouter from './routes/projects.js';
+import findingsRouter from './routes/findings.js';
+import memoryRouter from './routes/memory.js';
+import suggestionsRouter from './routes/suggestions.js';
+import { createAgent, executeTask, executeExplore } from './agent.js';
+import { getProject, createSession } from './db.js';
+import { decryptCredentials } from './crypto.js';
+import { isSupabaseEnabled } from './supabase.js';
+import * as sessionPool from './sessionPool.js';
+import * as browserPool from './browserPool.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
-
-const PORT = process.env.PORT || 3001;
+import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 
 const app = express();
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true
-}));
+const server = http.createServer(app);
+
+app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Health check
+app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
-    supabaseEnabled: isSupabaseEnabled(),
-    heygenEnabled: isHeyGenEnabled()
+    supabase: isSupabaseEnabled(),
+    heygenEnabled: isHeyGenEnabled(),
+    activeSessions: sessionPool.listActiveSessions().length,
   });
 });
 
 // HeyGen token endpoint
-app.post('/api/heygen/token', async (req, res) => {
+app.post('/api/heygen/token', async (_req, res) => {
   try {
     if (!isHeyGenEnabled()) {
       res.status(503).json({ error: 'HeyGen is not configured' });
@@ -43,150 +48,301 @@ app.post('/api/heygen/token', async (req, res) => {
   }
 });
 
-// REST endpoints for session history
-app.get('/api/sessions', async (req, res) => {
-  try {
-    const sessions = await listSessions();
-    res.json(sessions);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch sessions' });
-  }
-});
+// REST API routes
+app.use('/api/projects', projectsRouter);
+app.use('/api/projects/:id/findings', findingsRouter);
+app.use('/api/projects/:id/memory', memoryRouter);
+app.use('/api/projects/:id/suggestions', suggestionsRouter);
 
-app.get('/api/sessions/:sessionId', async (req, res) => {
-  try {
-    const history = await getSessionHistory(req.params.sessionId);
-    if (!history.session) {
-      res.status(404).json({ error: 'Session not found' });
-      return;
-    }
-    res.json(history);
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch session history' });
-  }
-});
-
-const server = createServer(app);
+// WebSocket server
 const wss = new WebSocketServer({ server });
 
-// Store active session per client
-const sessions = new Map<WebSocket, AgentSession>();
+// Track which project each client is associated with
+const clientProjects = new Map<WebSocket, string>();
+// Guard against duplicate start attempts while agent is launching
+const startingProjects = new Set<string>();
 
-wss.on('connection', async (ws, req) => {
-  // --- WebSocket Authentication ---
-  const url = new URL(req.url || '', `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
+function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessage {
+  return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
+}
 
-  let authenticatedUser: AuthenticatedUser | null = null;
+wss.on('connection', (ws: WebSocket) => {
+  console.log('Client connected');
 
-  if (token) {
+  ws.on('message', async (raw: Buffer) => {
+    let msg: ClientMessage;
     try {
-      authenticatedUser = await verifyToken(token);
-      console.log(`Client authenticated: ${authenticatedUser.githubUsername}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Authentication failed';
-      if (message === 'User not in allowlist') {
-        ws.close(4003, 'Forbidden: user not in allowlist');
-      } else {
-        ws.close(4001, 'Unauthorized: invalid token');
+      msg = JSON.parse(raw.toString());
+    } catch {
+      return;
+    }
+
+    console.log('WS message:', msg.type, JSON.stringify(msg).slice(0, 200));
+
+    if (msg.type === 'ping') {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'pong' }));
       }
       return;
     }
-  } else if (process.env.ALLOWED_GITHUB_USERS) {
-    // Token required when allowlist is configured
-    ws.close(4001, 'Unauthorized: token required');
-    return;
-  }
 
-  console.log('Client connected');
+    if (msg.type === 'start') {
+      console.log('[START] Starting agent for project:', msg.projectId);
 
-  // Broadcast function for this client
-  const broadcast = (msg: ServerMessage) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(msg));
-    }
-  };
+      // If client was attached to another session, detach first
+      const prevProjectId = clientProjects.get(ws);
+      if (prevProjectId) {
+        const prevSession = sessionPool.getSession(prevProjectId);
+        if (prevSession) sessionPool.removeClient(prevSession, ws);
+        clientProjects.delete(ws);
+      }
 
-  ws.on('message', async (data) => {
-    try {
-      const message: ClientMessage = JSON.parse(data.toString());
+      // Check if there's already a running session for this project
+      const existing = sessionPool.getSession(msg.projectId);
+      if (existing) {
+        console.log('[START] Reattaching to existing session');
+        // Reattach to existing session
+        sessionPool.addClient(existing, ws);
+        clientProjects.set(ws, msg.projectId);
+        sessionPool.sendSnapshot(existing, ws);
+        return;
+      }
 
-      switch (message.type) {
-        case 'start': {
-          // Close existing session if any
-          const existingSession = sessions.get(ws);
-          if (existingSession) {
-            if (existingSession.sessionId) {
-              await endSession(existingSession.sessionId);
-            }
-            await existingSession.close();
-            sessions.delete(ws);
-          }
+      // Guard: if already starting this project, just wait
+      if (startingProjects.has(msg.projectId)) {
+        console.log('[START] Already starting, ignoring duplicate');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        return;
+      }
 
-          // Create new agent session
+      // Create new session
+      startingProjects.add(msg.projectId);
+      // Send immediate feedback so user knows it's working
+      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+      try {
+        console.log('[START] Looking up project in DB...');
+        const project = await getProject(msg.projectId);
+        if (!project) {
+          console.log('[START] Project not found in DB!');
+          startingProjects.delete(msg.projectId);
+          ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
+          return;
+        }
+        console.log('[START] Project found:', project.name, project.url);
+
+        let credentials: { username: string; password: string } | null = null;
+        if (project.credentials) {
           try {
-            const dbSessionId = await createSession(message.url, authenticatedUser?.id || null);
-            const session = await createAgent(message.url, broadcast, dbSessionId, authenticatedUser?.id || null);
-            sessions.set(ws, session);
+            credentials = decryptCredentials(project.credentials);
           } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : 'Failed to start agent';
-            broadcast({ type: 'error', message: errorMsg });
-            broadcast({ type: 'status', status: 'error' });
+            console.error('Failed to decrypt credentials:', err);
           }
-          break;
         }
 
-        case 'task': {
-          const session = sessions.get(ws);
-          if (!session) {
-            broadcast({ type: 'error', message: 'No active session. Please start an agent first.' });
-            return;
+        const dbSessionId = await createSession(project.id);
+
+        // Create broadcast function that goes through the pool
+        const poolBroadcast = (serverMsg: ServerMessage) => {
+          const session = sessionPool.getSession(msg.projectId);
+          if (!session) return;
+
+          // Track state in pool
+          if (serverMsg.type === 'screenshot') {
+            sessionPool.updateScreenshot(session, serverMsg.data);
+          } else if (serverMsg.type === 'nav') {
+            sessionPool.updateUrl(session, serverMsg.url);
+          } else if (serverMsg.type === 'status') {
+            sessionPool.updateStatus(session, serverMsg.status as any);
           }
 
-          await executeTask(session, message.content, broadcast);
-          break;
-        }
-
-        case 'stop': {
-          const session = sessions.get(ws);
-          if (session) {
-            if (session.sessionId) {
-              await endSession(session.sessionId);
-            }
-            await session.close();
-            sessions.delete(ws);
+          // Store messages for replay
+          if (serverMsg.type === 'thought') {
+            sessionPool.addMessage(session, makeChatMessage('agent', serverMsg.content));
+          } else if (serverMsg.type === 'action') {
+            const text = `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`;
+            sessionPool.addMessage(session, makeChatMessage('agent', text));
+          } else if (serverMsg.type === 'error') {
+            sessionPool.addMessage(session, makeChatMessage('system', `Error: ${serverMsg.message}`));
+          } else if (serverMsg.type === 'taskComplete') {
+            sessionPool.addMessage(session, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
+          } else if (serverMsg.type === 'finding') {
+            sessionPool.addMessage(session, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+          } else if (serverMsg.type === 'suggestion') {
+            const s = serverMsg.suggestion;
+            const typeLabel = s.type === 'feature' ? 'feature' : s.type === 'flow' ? 'flow' : 'behavior';
+            const name = 'name' in s.data ? (s.data as any).name : (s.data as any).feature_name;
+            sessionPool.addMessage(session, makeChatMessage('system', `💡 Learned: "${name}" ${typeLabel}`));
           }
-          broadcast({ type: 'status', status: 'disconnected' });
-          break;
-        }
 
-        default:
-          console.warn('Unknown message type:', message);
+          // Broadcast to all connected clients
+          sessionPool.broadcast(session, serverMsg);
+        };
+
+        console.log('[START] Creating agent for URL:', project.url);
+        const agentSession = await createAgent(
+          project.url, poolBroadcast, dbSessionId, project.id, credentials
+        );
+
+        const pooled = sessionPool.registerSession(msg.projectId, agentSession, dbSessionId);
+        sessionPool.addClient(pooled, ws);
+        clientProjects.set(ws, msg.projectId);
+        console.log('[START] Agent started successfully');
+      } catch (err) {
+        console.error('[START] Error creating agent:', err);
+        const message = err instanceof Error ? err.message : 'Failed to start agent';
+        ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
+      } finally {
+        startingProjects.delete(msg.projectId);
       }
-    } catch (err) {
-      console.error('Error processing message:', err);
-      broadcast({ type: 'error', message: 'Failed to process message' });
+
+    } else if (msg.type === 'resume') {
+      // Detach from previous if needed
+      const prevProjectId = clientProjects.get(ws);
+      if (prevProjectId && prevProjectId !== msg.projectId) {
+        const prevSession = sessionPool.getSession(prevProjectId);
+        if (prevSession) sessionPool.removeClient(prevSession, ws);
+      }
+
+      const session = sessionPool.getSession(msg.projectId);
+      if (session) {
+        sessionPool.addClient(session, ws);
+        clientProjects.set(ws, msg.projectId);
+        sessionPool.sendSnapshot(session, ws);
+      } else {
+        // No active session — tell client
+        ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+      }
+
+    } else if (msg.type === 'task') {
+      const projectId = clientProjects.get(ws);
+      if (!projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session. Start an agent first.' } as ServerMessage));
+        return;
+      }
+
+      const session = sessionPool.getSession(projectId);
+      if (!session) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired. Please restart the agent.' } as ServerMessage));
+        return;
+      }
+
+      // Store user message
+      sessionPool.addMessage(session, makeChatMessage('user', msg.content));
+
+      // Broadcast function for task goes through the pool's existing broadcast
+      const taskBroadcast = (serverMsg: ServerMessage) => {
+        const s = sessionPool.getSession(projectId);
+        if (!s) return;
+
+        if (serverMsg.type === 'screenshot') {
+          sessionPool.updateScreenshot(s, serverMsg.data);
+        } else if (serverMsg.type === 'nav') {
+          sessionPool.updateUrl(s, serverMsg.url);
+        } else if (serverMsg.type === 'status') {
+          sessionPool.updateStatus(s, serverMsg.status as any);
+        }
+
+        if (serverMsg.type === 'thought') {
+          sessionPool.addMessage(s, makeChatMessage('agent', serverMsg.content));
+        } else if (serverMsg.type === 'action') {
+          const text = `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`;
+          sessionPool.addMessage(s, makeChatMessage('agent', text));
+        } else if (serverMsg.type === 'error') {
+          sessionPool.addMessage(s, makeChatMessage('system', `Error: ${serverMsg.message}`));
+        } else if (serverMsg.type === 'taskComplete') {
+          sessionPool.addMessage(s, makeChatMessage('system', serverMsg.success ? 'Task completed.' : 'Task failed.'));
+        } else if (serverMsg.type === 'finding') {
+          sessionPool.addMessage(s, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+        } else if (serverMsg.type === 'suggestion') {
+          const sg = serverMsg.suggestion;
+          const typeLabel = sg.type === 'feature' ? 'feature' : sg.type === 'flow' ? 'flow' : 'behavior';
+          const name = 'name' in sg.data ? (sg.data as any).name : (sg.data as any).feature_name;
+          sessionPool.addMessage(s, makeChatMessage('system', `💡 Learned: "${name}" ${typeLabel}`));
+        }
+
+        sessionPool.broadcast(s, serverMsg);
+      };
+
+      executeTask(session.agentSession, msg.content, taskBroadcast);
+
+    } else if (msg.type === 'stop') {
+      const projectId = clientProjects.get(ws);
+      if (projectId) {
+        await sessionPool.destroySession(projectId);
+        // Clear all clients that were on this project
+        for (const [client, pid] of clientProjects) {
+          if (pid === projectId) clientProjects.delete(client);
+        }
+      }
+    } else if (msg.type === 'explore') {
+      const projectId = clientProjects.get(ws);
+      if (!projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session. Send start first.' } as ServerMessage));
+        return;
+      }
+      if (projectId !== msg.projectId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Project ID mismatch with active session.' } as ServerMessage));
+        return;
+      }
+
+      const session = sessionPool.getSession(projectId);
+      if (!session) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired.' } as ServerMessage));
+        return;
+      }
+
+      const project = await getProject(msg.projectId);
+      if (!project) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Project not found.' } as ServerMessage));
+        return;
+      }
+
+      // Log explore start in chat history
+      sessionPool.addMessage(session, makeChatMessage('system', 'Explore & Learn started...'));
+
+      // Reuse the task broadcast pattern
+      const exploreBroadcast = (serverMsg: ServerMessage) => {
+        const s = sessionPool.getSession(projectId);
+        if (!s) return;
+        if (serverMsg.type === 'screenshot') sessionPool.updateScreenshot(s, serverMsg.data);
+        else if (serverMsg.type === 'nav') sessionPool.updateUrl(s, serverMsg.url);
+        else if (serverMsg.type === 'status') sessionPool.updateStatus(s, serverMsg.status as any);
+
+        if (serverMsg.type === 'thought') sessionPool.addMessage(s, makeChatMessage('agent', serverMsg.content));
+        else if (serverMsg.type === 'action') sessionPool.addMessage(s, makeChatMessage('agent', `Action: ${serverMsg.action}${serverMsg.target ? ` → ${serverMsg.target}` : ''}`));
+        else if (serverMsg.type === 'error') sessionPool.addMessage(s, makeChatMessage('system', `Error: ${serverMsg.message}`));
+        else if (serverMsg.type === 'taskComplete') sessionPool.addMessage(s, makeChatMessage('system', serverMsg.success ? 'Exploration completed.' : 'Exploration failed.'));
+        else if (serverMsg.type === 'finding') sessionPool.addMessage(s, { id: crypto.randomUUID(), type: 'finding', content: serverMsg.finding.title, timestamp: Date.now() });
+        else if (serverMsg.type === 'suggestion') {
+          const sg = serverMsg.suggestion;
+          const name = 'name' in sg.data ? (sg.data as any).name : (sg.data as any).feature_name;
+          sessionPool.addMessage(s, makeChatMessage('system', `💡 Learned: "${name}" ${sg.type}`));
+        }
+
+        sessionPool.broadcast(s, serverMsg);
+      };
+
+      executeExplore(session.agentSession, project?.context || null, exploreBroadcast);
     }
   });
 
-  ws.on('close', async () => {
+  ws.on('close', () => {
     console.log('Client disconnected');
-    const session = sessions.get(ws);
-    if (session) {
-      if (session.sessionId) {
-        await endSession(session.sessionId);
+    const projectId = clientProjects.get(ws);
+    if (projectId) {
+      const session = sessionPool.getSession(projectId);
+      if (session) {
+        sessionPool.removeClient(session, ws);
       }
-      await session.close();
-      sessions.delete(ws);
+      clientProjects.delete(ws);
     }
-  });
-
-  ws.on('error', (err) => {
-    console.error('WebSocket error:', err);
   });
 });
 
+const PORT = parseInt(process.env.PORT || '3001');
 server.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`WebSocket server ready`);
+  console.log('WebSocket server ready');
+  // Pre-warm a browser so first agent start is fast
+  browserPool.warmUp().catch(() => {});
 });

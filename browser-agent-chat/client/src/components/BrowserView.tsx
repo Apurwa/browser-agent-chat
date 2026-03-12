@@ -7,6 +7,8 @@ interface BrowserViewProps {
 }
 
 export function BrowserView({ screenshot, currentUrl, status }: BrowserViewProps) {
+  const isStarting = status === 'working' && !screenshot;
+
   return (
     <div className="browser-view">
       <div className="browser-header">
@@ -30,6 +32,12 @@ export function BrowserView({ screenshot, currentUrl, status }: BrowserViewProps
             alt="Browser view"
             className="browser-screenshot"
           />
+        ) : isStarting ? (
+          <div className="browser-loading">
+            <div className="browser-loading-spinner" />
+            <p className="browser-loading-text">Launching browser...</p>
+            <p className="browser-loading-subtext">This usually takes a few seconds</p>
+          </div>
         ) : (
           <div className="browser-placeholder">
             <p>No browser session active</p>

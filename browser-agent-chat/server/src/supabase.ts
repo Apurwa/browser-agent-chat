@@ -1,21 +1,20 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import 'dotenv/config';
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 
-// Prefer service role key (bypasses RLS), fall back to anon key
-const supabaseKey = supabaseServiceRoleKey || supabaseAnonKey;
+export let supabase: SupabaseClient | null = null;
 
-if (!supabaseUrl || !supabaseKey) {
+if (supabaseUrl && supabaseKey) {
+  supabase = createClient(supabaseUrl, supabaseKey);
+} else {
   console.warn('Supabase credentials not configured. Database persistence disabled.');
 }
 
-export const supabase: SupabaseClient | null = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
-
-export const isSupabaseEnabled = (): boolean => supabase !== null;
+export function isSupabaseEnabled(): boolean {
+  return supabase !== null;
+}
 
 // --- Authentication ---
 

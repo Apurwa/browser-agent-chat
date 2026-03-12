@@ -1,32 +1,26 @@
-import './LoginPage.css';
+import { useAuth } from '../hooks/useAuth';
 
-interface LoginPageProps {
-  onSignIn: () => void;
-  accessDenied?: boolean;
-  onSignOut?: () => void;
-}
+export default function LoginPage() {
+  const { signInWithGoogle, signInWithGitHub } = useAuth();
 
-export function LoginPage({ onSignIn, accessDenied, onSignOut }: LoginPageProps) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1>Browser Agent Chat</h1>
-        <p>Sign in to get started</p>
+        <div className="login-logo">
+          <span className="login-logo-accent">QA</span> Agent
+        </div>
+        <p className="login-tagline">AI-powered QA testing for your SaaS</p>
 
-        {accessDenied ? (
-          <div className="access-denied">
-            <p>Your GitHub account is not authorized to access this app.</p>
-            {onSignOut && (
-              <button onClick={onSignOut} className="login-btn secondary">
-                Sign out and try another account
-              </button>
-            )}
-          </div>
-        ) : (
-          <button onClick={onSignIn} className="login-btn">
-            Sign in with GitHub
+        <div className="login-buttons">
+          <button className="login-btn login-btn-google" onClick={signInWithGoogle}>
+            Continue with Google
           </button>
-        )}
+          <button className="login-btn login-btn-github" onClick={signInWithGitHub}>
+            Continue with GitHub
+          </button>
+        </div>
+
+        <p className="login-terms">By signing in, you agree to our Terms of Service</p>
       </div>
     </div>
   );
