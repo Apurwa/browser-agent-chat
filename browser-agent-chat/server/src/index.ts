@@ -119,16 +119,24 @@ wss.on('connection', (ws: WebSocket) => {
       startingProjects.add(msg.projectId);
       // Send immediate feedback so user knows it's working
       ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+      const startT0 = Date.now();
+      let lastT = startT0;
+      const orchSteps: Array<{ name: string; duration: number }> = [];
+      const recordStep = (name: string) => {
+        const now = Date.now();
+        orchSteps.push({ name, duration: now - lastT });
+        lastT = now;
+      };
+
       try {
-        console.log('[START] Looking up project in DB...');
         const project = await getProject(msg.projectId);
+        recordStep('db_get_project');
         if (!project) {
-          console.log('[START] Project not found in DB!');
           startingProjects.delete(msg.projectId);
           ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
+          ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
           return;
         }
-        console.log('[START] Project found:', project.name, project.url);
 
         let credentials: { username: string; password: string } | null = null;
         if (project.credentials) {
@@ -138,13 +146,23 @@ wss.on('connection', (ws: WebSocket) => {
             console.error('Failed to decrypt credentials:', err);
           }
         }
+        recordStep('decrypt_credentials');
 
         const dbSessionId = await createSession(project.id);
+        recordStep('db_create_session');
 
-        // Create broadcast function that goes through the pool
+        // Create broadcast function — sends directly to ws during startup,
+        // then through the pool once the session is registered
         const poolBroadcast = (serverMsg: ServerMessage) => {
           const session = sessionPool.getSession(msg.projectId);
-          if (!session) return;
+
+          if (!session) {
+            // Session not registered yet (during createAgent) — send directly
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(serverMsg));
+            }
+            return;
+          }
 
           // Track state in pool
           if (serverMsg.type === 'screenshot') {
@@ -178,19 +196,23 @@ wss.on('connection', (ws: WebSocket) => {
           sessionPool.broadcast(session, serverMsg);
         };
 
-        console.log('[START] Creating agent for URL:', project.url);
         const agentSession = await createAgent(
           project.url, poolBroadcast, dbSessionId, project.id, credentials
         );
+        recordStep('create_agent_total');
+
+        // Log combined startup metrics (orchestration + agent internals)
+        const totalMs = Date.now() - startT0;
+        console.log('[METRICS] Full startup:', JSON.stringify({ total: totalMs, steps: orchSteps }));
 
         const pooled = sessionPool.registerSession(msg.projectId, agentSession, dbSessionId);
         sessionPool.addClient(pooled, ws);
         clientProjects.set(ws, msg.projectId);
-        console.log('[START] Agent started successfully');
       } catch (err) {
         console.error('[START] Error creating agent:', err);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
+        ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       } finally {
         startingProjects.delete(msg.projectId);
       }
@@ -268,10 +290,13 @@ wss.on('connection', (ws: WebSocket) => {
     } else if (msg.type === 'stop') {
       const projectId = clientProjects.get(ws);
       if (projectId) {
-        await sessionPool.destroySession(projectId);
-        // Clear all clients that were on this project
-        for (const [client, pid] of clientProjects) {
-          if (pid === projectId) clientProjects.delete(client);
+        const session = sessionPool.getSession(projectId);
+        if (session) {
+          // Pause — keep session alive but tell clients agent is idle
+          sessionPool.updateStatus(session, 'idle');
+          sessionPool.broadcast(session, { type: 'status', status: 'idle' });
+          sessionPool.addMessage(session, makeChatMessage('system', 'Agent paused. Send a message to continue.'));
+          sessionPool.broadcast(session, { type: 'taskComplete', success: true });
         }
       }
     } else if (msg.type === 'explore') {

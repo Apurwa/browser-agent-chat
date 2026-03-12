@@ -118,6 +118,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         }
         break;
       }
+      case 'metrics': {
+        const m = (msg as any).metrics;
+        const summary = m.steps
+          .map((s: any) => `${s.name}: ${s.duration}ms`)
+          .join(' | ');
+        addMessage('system', `Startup: ${m.total}ms (${summary})`);
+        break;
+      }
       case 'pong':
         // Heartbeat response — no action needed
         break;
@@ -186,10 +194,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const startAgent = useCallback((projectId: string) => {
     console.log('[WS] startAgent called with projectId:', projectId);
-    setMessages([]);
-    setFindings([]);
-    setScreenshot(null);
-    setCurrentUrl(null);
+    // Don't clear state — server will reattach to existing session if one exists,
+    // or send fresh state if creating a new one
     setStatus('working');
     setActiveProjectId(projectId);
     activeProjectRef.current = projectId;
@@ -209,8 +215,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const stopAgent = useCallback(() => {
     send({ type: 'stop' });
-    setActiveProjectId(null);
-    activeProjectRef.current = null;
+    // Don't clear activeProjectId — session stays alive, just paused
   }, [send]);
 
   const explore = useCallback((projectId: string) => {

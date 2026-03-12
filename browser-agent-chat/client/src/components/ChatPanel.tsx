@@ -26,7 +26,7 @@ export default function ChatPanel({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || status !== 'idle') return;
+    if (!input.trim() || !isActive) return;
     onSendTask(input.trim());
     setInput('');
   };
@@ -65,10 +65,10 @@ export default function ChatPanel({
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={status === 'working' ? 'Agent is working...' : 'Send a message...'}
-          disabled={!isActive || status === 'working'}
+          placeholder={status === 'working' ? 'Type a message (will send when ready)...' : 'Send a message...'}
+          disabled={!isActive}
         />
-        <button type="submit" disabled={!input.trim() || status !== 'idle'}>→</button>
+        <button type="submit" disabled={!input.trim() || !isActive}>→</button>
       </form>
     </div>
   );

@@ -103,6 +103,18 @@ export interface BehaviorSuggestionData {
   behavior: string;
 }
 
+// === Startup Metrics ===
+
+export interface MetricStep {
+  name: string;
+  duration: number;
+}
+
+export interface StartupMetrics {
+  total: number;
+  steps: MetricStep[];
+}
+
 // === WebSocket Messages ===
 
 export type ClientMessage =
@@ -124,7 +136,8 @@ export type ServerMessage =
   | { type: 'finding'; finding: Finding }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
-  | { type: 'sessionRestore'; messages: ChatMessage[] };
+  | { type: 'sessionRestore'; messages: ChatMessage[] }
+  | { type: 'metrics'; metrics: StartupMetrics };
 
 // === Chat ===
 

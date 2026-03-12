@@ -1,5 +1,5 @@
 import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitude-core';
-import type { ServerMessage } from './types.js';
+import type { ServerMessage, MetricStep } from './types.js';
 import { saveMessage, createSuggestion } from './db.js';
 import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
@@ -16,6 +16,21 @@ export interface AgentSession {
   close: () => Promise<void>;
 }
 
+/** Simple timing helper — records named steps with cumulative timestamps. */
+class StepTimer {
+  private t0 = Date.now();
+  private last = this.t0;
+  readonly steps: MetricStep[] = [];
+
+  step(name: string): void {
+    const now = Date.now();
+    this.steps.push({ name, duration: now - this.last });
+    this.last = now;
+  }
+
+  get total(): number { return Date.now() - this.t0; }
+}
+
 export async function createAgent(
   url: string,
   broadcast: (msg: ServerMessage) => void,
@@ -24,15 +39,15 @@ export async function createAgent(
   credentials: { username: string; password: string } | null = null
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
-  const t0 = Date.now();
+  const timer = new StepTimer();
 
   // Load memory context for prompt injection
   const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
-  console.log(`[TIMING] Memory context loaded: ${Date.now() - t0}ms`);
+  timer.step('load_memory');
 
   // Acquire a pre-warmed browser for fast startup
   const browser = await browserPool.acquire();
-  console.log(`[TIMING] Browser acquired: ${Date.now() - t0}ms`);
+  timer.step('acquire_browser');
   broadcast({ type: 'thought', content: 'Browser ready, loading page...' });
 
   const agent = await startBrowserAgent({
@@ -49,7 +64,7 @@ export async function createAgent(
     },
   });
 
-  console.log(`[TIMING] startBrowserAgent complete: ${Date.now() - t0}ms`);
+  timer.step('start_browser_agent');
   const connector = agent.require(BrowserConnector);
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
@@ -134,18 +149,100 @@ export async function createAgent(
   } catch (err) {
     console.error('Failed to capture initial screenshot:', err);
   }
+  timer.step('initial_screenshot');
 
   // Log in with credentials if provided
   if (credentials) {
+    const page = connector.getHarness().page;
+    broadcast({ type: 'thought', content: 'Logging in...' });
+
+    // Try Playwright direct login (fast path)
+    let playwrightFilled = false;
     try {
-      await agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
+      const usernameField = page.getByPlaceholder(/username|email|login/i).first();
+      const passwordField = page.getByPlaceholder(/password/i).first();
+
+      await usernameField.waitFor({ state: 'visible', timeout: 3000 });
+      await usernameField.fill(credentials.username);
+      await passwordField.fill(credentials.password);
+
+      const submitBtn = page.locator(
+        'button[type="submit"], input[type="submit"], ' +
+        'button:has-text("Sign In"), button:has-text("Log In"), ' +
+        'button:has-text("Login"), button:has-text("Submit")'
+      ).first();
+      await submitBtn.click();
+      playwrightFilled = true;
+      console.log('[LOGIN] Playwright filled and submitted');
+
+      // Wait for full redirect chain + SPA auth guards to settle
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      // Poll until URL is stable for 2 seconds (catches delayed SPA redirects)
+      let lastUrl = page.url();
+      let stableMs = 0;
+      while (stableMs < 2000) {
+        await page.waitForTimeout(500);
+        const currentUrl = page.url();
+        if (currentUrl === lastUrl) {
+          stableMs += 500;
+        } else {
+          lastUrl = currentUrl;
+          stableMs = 0;
+        }
+        // Safety cap at 10 seconds of polling
+        if (stableMs < 0) break;
+      }
+      console.log('[LOGIN] URL stabilized at:', page.url());
     } catch (err) {
-      console.error('Auto-login failed:', err);
-      broadcast({ type: 'error', message: 'Failed to log in with stored credentials. You can try logging in manually via chat.' });
+      console.warn('[LOGIN] Playwright fill/submit failed:', (err as Error).message);
     }
+
+    // Check if we're still on a login page after everything settled
+    const stillOnLogin = await page.locator('input[type="password"]').isVisible().catch(() => false);
+    console.log('[LOGIN] After settle — URL:', page.url(), '| Still on login?', stillOnLogin);
+
+    if (stillOnLogin) {
+      // Playwright login didn't stick — use LLM agent as fallback
+      broadcast({ type: 'thought', content: 'Retrying login with AI agent...' });
+      try {
+        await agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
+        // Wait for LLM login to settle
+        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+        console.log('[LOGIN] LLM agent login done, URL:', page.url());
+      } catch (err2) {
+        console.error('[LOGIN] LLM agent login also failed:', err2);
+        broadcast({ type: 'error', message: 'Auto-login failed. You can log in manually via chat.' });
+      }
+    }
+
+    // Final screenshot and status — whatever state we ended up in
+    try {
+      const screenshotBuffer = await page.screenshot({ type: 'png' });
+      const base64 = screenshotBuffer.toString('base64');
+      broadcast({ type: 'screenshot', data: base64 });
+      broadcast({ type: 'nav', url: page.url() });
+
+      const finallyOnLogin = await page.locator('input[type="password"]').isVisible().catch(() => false);
+      if (finallyOnLogin) {
+        console.log('[LOGIN] FAILED — still on login page after all attempts');
+        broadcast({ type: 'thought', content: 'Could not log in automatically. Please log in via chat.' });
+      } else {
+        console.log('[LOGIN] SUCCESS — logged in, URL:', page.url());
+        broadcast({ type: 'thought', content: 'Logged in successfully' });
+      }
+    } catch (err) {
+      console.error('[LOGIN] Failed to capture final screenshot:', err);
+    }
+
+    timer.step('auto_login');
   }
 
-  console.log(`[TIMING] Agent fully ready: ${Date.now() - t0}ms`);
+  // Emit startup metrics
+  const metrics = { total: timer.total, steps: timer.steps };
+  console.log('[METRICS] Agent startup:', JSON.stringify(metrics));
+  broadcast({ type: 'metrics', metrics });
+
   broadcast({ type: 'status', status: 'idle' });
   broadcast({ type: 'nav', url });
 

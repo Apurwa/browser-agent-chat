@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding } from '../types';
+import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding, StartupMetrics } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 
@@ -10,6 +10,7 @@ export function useWebSocket() {
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [startupMetrics, setStartupMetrics] = useState<StartupMetrics | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   const addMessage = useCallback((type: ChatMessage['type'], content: string, finding?: Finding) => {
@@ -60,6 +61,14 @@ export function useWebSocket() {
           setFindings(prev => [...prev, msg.finding]);
           addMessage('finding', msg.finding.title, msg.finding);
           break;
+        case 'metrics': {
+          setStartupMetrics(msg.metrics);
+          const summary = msg.metrics.steps
+            .map(s => `${s.name}: ${s.duration}ms`)
+            .join(' | ');
+          addMessage('system', `Startup: ${msg.metrics.total}ms (${summary})`);
+          break;
+        }
       }
     };
 
@@ -88,6 +97,7 @@ export function useWebSocket() {
   const startAgent = useCallback((projectId: string) => {
     setMessages([]);
     setFindings([]);
+    setStartupMetrics(null);
     send({ type: 'start', projectId });
   }, [send]);
 
@@ -102,7 +112,7 @@ export function useWebSocket() {
 
   return {
     connected, status, screenshot, currentUrl, messages, findings,
-    findingsCount: findings.length,
+    findingsCount: findings.length, startupMetrics,
     startAgent, sendTask, stopAgent,
   };
 }

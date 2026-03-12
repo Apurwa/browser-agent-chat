@@ -33,12 +33,16 @@ export async function acquire(): Promise<Browser> {
   if (warmBrowser?.isConnected()) {
     const browser = warmBrowser;
     warmBrowser = null;
+    console.log('[BrowserPool] Acquired warm browser (instant)');
     // Start warming the next one in the background
     warmUp().catch(() => {});
     return browser;
   }
-  // No warm browser — launch on demand
+  // No warm browser — launch on demand (slow path)
+  console.log('[BrowserPool] No warm browser, launching cold...');
+  const t0 = Date.now();
   const browser = await chromium.launch(LAUNCH_OPTIONS);
+  console.log(`[BrowserPool] Cold launch took ${Date.now() - t0}ms`);
   // Start warming the next one in the background
   warmUp().catch(() => {});
   return browser;
