@@ -14,6 +14,25 @@ import {
   bulkAcceptSuggestionsApi,
   bulkDismissSuggestionsApi,
 } from '../lib/api';
+import {
+  ShieldAlert,
+  AlertTriangle,
+  Minus,
+  ChevronDown,
+  Plus,
+  CheckCheck,
+  XCircle,
+  Layers,
+  PackageOpen,
+  MousePointerClick,
+} from 'lucide-react';
+
+const CRIT_ICON: Record<Criticality, React.ReactNode> = {
+  critical: <ShieldAlert size={14} />,
+  high:     <AlertTriangle size={14} />,
+  medium:   <Minus size={14} />,
+  low:      <ChevronDown size={14} />,
+};
 
 export default function MemoryViewer() {
   const { id } = useParams();
@@ -126,9 +145,6 @@ export default function MemoryViewer() {
     await loadFeatures();
   };
 
-  const critIcon = (c: Criticality) =>
-    c === 'critical' ? '!!' : c === 'high' ? '!' : c === 'medium' ? '-' : '~';
-
   return (
     <div className="app-layout">
       <Sidebar />
@@ -145,10 +161,10 @@ export default function MemoryViewer() {
               </div>
               <div className="mv-suggestions-btns">
                 <button className="mv-btn mv-btn-accept" onClick={handleAcceptAll}>
-                  Accept all
+                  <CheckCheck size={13} /> Accept all
                 </button>
                 <button className="mv-btn mv-btn-ghost" onClick={handleDismissAll}>
-                  Dismiss all
+                  <XCircle size={13} /> Dismiss all
                 </button>
               </div>
             </div>
@@ -171,11 +187,12 @@ export default function MemoryViewer() {
           <div className="mv-list">
             <div className="mv-list-top">
               <h2 className="mv-list-title">
+                <Layers size={15} />
                 Features
                 <span className="mv-count">{features.length}</span>
               </h2>
               <button className="mv-btn mv-btn-outline" onClick={() => setShowAdd(true)}>
-                + New
+                <Plus size={13} /> New
               </button>
             </div>
 
@@ -209,7 +226,7 @@ export default function MemoryViewer() {
             <div className="mv-items">
               {features.length === 0 && (
                 <div className="mv-empty">
-                  <div className="mv-empty-icon">{ }</div>
+                  <PackageOpen size={32} strokeWidth={1.5} />
                   <p>No features yet</p>
                   <span>Use Explore or add manually</span>
                 </div>
@@ -221,7 +238,7 @@ export default function MemoryViewer() {
                   onClick={() => setSelected(f)}
                 >
                   <span className={`mv-crit mv-crit--${f.criticality}`}>
-                    {critIcon(f.criticality)}
+                    {CRIT_ICON[f.criticality]}
                   </span>
                   <div className="mv-feature-row-body">
                     <span className="mv-feature-row-name">{f.name}</span>
@@ -249,6 +266,7 @@ export default function MemoryViewer() {
             />
           ) : features.length > 0 ? (
             <div className="mv-detail-empty">
+              <MousePointerClick size={24} strokeWidth={1.5} />
               <p>Select a feature</p>
             </div>
           ) : null}

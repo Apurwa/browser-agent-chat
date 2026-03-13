@@ -1,6 +1,16 @@
 import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import type { Feature, Criticality } from '../types';
+import {
+  Trash2,
+  Plus,
+  X,
+  CircleDot,
+  Route,
+  ListChecks,
+  Diamond,
+  ArrowRight,
+} from 'lucide-react';
 
 interface FeatureDetailProps {
   feature: Feature;
@@ -67,13 +77,13 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
             className="mv-btn mv-btn-dismiss mv-btn-sm"
             onClick={() => setConfirmDelete(true)}
           >
-            Delete
+            <Trash2 size={12} /> Delete
           </button>
         ) : (
           <div className="mv-detail-confirm-delete">
             <span>Delete this feature?</span>
-            <button className="mv-btn mv-btn-dismiss mv-btn-sm" onClick={() => onDelete(feature.id)}>Yes</button>
-            <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setConfirmDelete(false)}>No</button>
+            <button className="mv-btn mv-btn-dismiss mv-btn-sm" onClick={() => onDelete(feature.id)}>Yes, delete</button>
+            <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
           </div>
         )}
       </div>
@@ -84,13 +94,17 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
 
       {/* Expected Behaviors */}
       <section className="mv-section">
-        <h3 className="mv-section-title">Expected Behaviors</h3>
+        <h3 className="mv-section-title">
+          <ListChecks size={13} /> Expected Behaviors
+        </h3>
         <div className="mv-behaviors">
           {feature.expected_behaviors.map((b, i) => (
             <div key={i} className="mv-behavior">
-              <span className="mv-behavior-bullet" />
+              <CircleDot size={10} className="mv-behavior-icon" />
               <span className="mv-behavior-text">{b}</span>
-              <button className="mv-behavior-remove" onClick={() => removeBehavior(i)} title="Remove">&times;</button>
+              <button className="mv-behavior-remove" onClick={() => removeBehavior(i)} title="Remove">
+                <X size={14} />
+              </button>
             </div>
           ))}
           {feature.expected_behaviors.length === 0 && (
@@ -105,13 +119,17 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
             onChange={e => setNewBehavior(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addBehavior()}
           />
-          <button className="mv-btn mv-btn-outline" onClick={addBehavior}>Add</button>
+          <button className="mv-btn mv-btn-outline" onClick={addBehavior}>
+            <Plus size={13} /> Add
+          </button>
         </div>
       </section>
 
       {/* Flows */}
       <section className="mv-section">
-        <h3 className="mv-section-title">Flows</h3>
+        <h3 className="mv-section-title">
+          <Route size={13} /> Flows
+        </h3>
         <div className="mv-flows">
           {feature.flows?.map(flow => (
             <div key={flow.id} className="mv-flow">
@@ -120,13 +138,15 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
                 <span className={`mv-crit-label mv-crit-label--${flow.criticality}`}>
                   {flow.criticality}
                 </span>
-                <button className="mv-behavior-remove" onClick={() => deleteFlow(flow.id)} title="Delete flow">&times;</button>
+                <button className="mv-behavior-remove" onClick={() => deleteFlow(flow.id)} title="Delete flow">
+                  <X size={14} />
+                </button>
               </div>
               {flow.steps.length > 0 && (
                 <div className="mv-flow-steps">
                   {flow.steps.map((s, i) => (
                     <span key={i} className="mv-flow-step">
-                      {i > 0 && <span className="mv-flow-arrow">&rarr;</span>}
+                      {i > 0 && <ArrowRight size={10} className="mv-flow-arrow-icon" />}
                       {s.description}
                     </span>
                   ))}
@@ -136,7 +156,7 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
                 <div className="mv-flow-checkpoints">
                   {flow.checkpoints.map((cp, i) => (
                     <div key={i} className="mv-checkpoint">
-                      <span className="mv-checkpoint-icon">&#9670;</span>
+                      <Diamond size={8} className="mv-checkpoint-icon" />
                       <span>{cp.description}</span>
                       <span className="mv-checkpoint-expected">expect: {cp.expected}</span>
                     </div>
@@ -167,7 +187,9 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          <button className="mv-btn mv-btn-outline" onClick={addFlow}>Add Flow</button>
+          <button className="mv-btn mv-btn-outline" onClick={addFlow}>
+            <Plus size={13} /> Add Flow
+          </button>
         </div>
       </section>
     </div>

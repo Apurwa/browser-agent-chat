@@ -1071,6 +1071,9 @@ body {
   border-radius: 4px;
   line-height: 1.5;
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .mv-stype--feature  { background: rgba(124, 92, 255, 0.15); color: #a78bfa; }
@@ -1133,6 +1136,9 @@ body {
   transition: all 0.15s;
   white-space: nowrap;
   line-height: 1.4;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .mv-btn-sm {
@@ -1213,7 +1219,7 @@ body {
   color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   letter-spacing: 0.01em;
 }
 
@@ -1406,8 +1412,11 @@ body {
 .mv-detail-empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
+  color: var(--text-dimmest);
 }
 
 .mv-detail-empty p {
@@ -1475,6 +1484,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.8px;
   margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .mv-muted {
@@ -1507,14 +1519,11 @@ body {
   border-color: var(--border-primary);
 }
 
-.mv-behavior-bullet {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0.5;
+.mv-behavior-icon {
   flex-shrink: 0;
-  margin-top: 6px;
+  color: var(--accent);
+  opacity: 0.5;
+  margin-top: 3px;
 }
 
 .mv-behavior-text {
@@ -1528,12 +1537,15 @@ body {
   background: none;
   border: none;
   color: var(--text-dimmest);
-  font-size: 16px;
   cursor: pointer;
-  padding: 0 2px;
-  line-height: 1;
+  padding: 2px;
+  line-height: 0;
   opacity: 0;
   transition: opacity 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
 }
 
 .mv-behavior:hover .mv-behavior-remove {
@@ -1608,9 +1620,9 @@ body {
   line-height: 1.5;
 }
 
-.mv-flow-arrow {
+.mv-flow-arrow-icon {
   color: var(--text-dimmest);
-  margin: 0 2px;
+  flex-shrink: 0;
 }
 
 .mv-flow-checkpoints {
@@ -1630,7 +1642,7 @@ body {
 
 .mv-checkpoint-icon {
   color: #f0a500;
-  font-size: 8px;
+  flex-shrink: 0;
 }
 
 .mv-checkpoint-expected {
