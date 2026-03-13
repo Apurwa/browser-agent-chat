@@ -205,8 +205,6 @@ export async function executeLogin(
       ? 'Could not log in. Please log in via chat.'
       : 'Logged in successfully' });
   } catch {}
-
-  broadcast({ type: 'status', status: 'idle' });
 }
 
 // Schema for features extracted from the current page
@@ -242,87 +240,64 @@ export async function executeExplore(
   session.stepsHistory.length = 0;
 
   try {
-    // Phase 1: Navigate and discover (with 90s timeout to prevent runaway exploration)
-    console.log('[EXPLORE] Phase 1: agent.act() starting...');
-    const EXPLORE_TIMEOUT_MS = 90_000;
-    await Promise.race([
-      session.agent.act(prompt),
-      new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('EXPLORE_TIMEOUT')), EXPLORE_TIMEOUT_MS)
-      ),
-    ]).catch(err => {
-      if (err.message === 'EXPLORE_TIMEOUT') {
-        console.log('[EXPLORE] Phase 1: timed out after 90s, proceeding to extraction');
-        broadcast({ type: 'thought', content: 'Exploration time limit reached, analyzing what was found...' });
-      } else {
-        throw err; // Re-throw real errors
-      }
-    });
-    console.log('[EXPLORE] Phase 1: complete');
+    // Extract features from the current page using vision
+    console.log('[EXPLORE] Extracting features from current page...');
+    broadcast({ type: 'thought', content: 'Analyzing the application...' });
 
-    // Phase 2: Extract features from what the agent observed
-    console.log('[EXPLORE] Phase 2: Extracting features...');
-    broadcast({ type: 'thought', content: 'Analyzing discovered features...' });
-    try {
-      const extracted = await session.agent.extract(
-        'Based on what you can see on this page and what you explored, list all features, their expected behaviors, and any multi-step flows (like login, signup, navigation). Include features from pages you visited earlier.',
-        ExtractedFeatureSchema
-      );
-      console.log('[EXPLORE] Extracted:', JSON.stringify(extracted, null, 2));
+    const extracted = await session.agent.extract(
+      'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows (like login, signup, settings changes). Be thorough — include features from the navigation/sidebar even if you can only see their names.',
+      ExtractedFeatureSchema
+    );
+    console.log('[EXPLORE] Extracted:', JSON.stringify(extracted, null, 2));
 
-      // Create suggestions for each extracted feature
-      if (session.projectId && session.sessionId) {
-        for (const feature of extracted.features) {
-          const suggestion = await createSuggestion(
-            session.projectId,
-            'feature',
-            {
-              name: feature.name,
-              description: feature.description,
-              criticality: feature.criticality,
-              expected_behaviors: feature.expected_behaviors,
-            },
-            session.sessionId
-          );
-          if (suggestion) {
-            broadcast({ type: 'suggestion', suggestion });
-          }
-        }
-
-        for (const flow of extracted.flows) {
-          const suggestion = await createSuggestion(
-            session.projectId,
-            'flow',
-            {
-              feature_name: flow.feature_name,
-              name: flow.name,
-              steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
-              checkpoints: [],
-              criticality: flow.criticality,
-            },
-            session.sessionId
-          );
-          if (suggestion) {
-            broadcast({ type: 'suggestion', suggestion });
-          }
-        }
-
-        const total = extracted.features.length + extracted.flows.length;
-        if (total > 0) {
-          broadcast({ type: 'thought', content: `Discovered ${extracted.features.length} feature(s) and ${extracted.flows.length} flow(s).` });
+    // Create suggestions for each extracted feature
+    if (session.projectId && session.sessionId) {
+      for (const feature of extracted.features) {
+        const suggestion = await createSuggestion(
+          session.projectId,
+          'feature',
+          {
+            name: feature.name,
+            description: feature.description,
+            criticality: feature.criticality,
+            expected_behaviors: feature.expected_behaviors,
+          },
+          session.sessionId
+        );
+        if (suggestion) {
+          broadcast({ type: 'suggestion', suggestion });
         }
       }
-    } catch (extractErr) {
-      const errMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
-      console.error('[EXPLORE] Feature extraction failed:', errMsg);
-      broadcast({ type: 'thought', content: `Feature extraction encountered an issue: ${errMsg.slice(0, 200)}` });
-      // Non-fatal — exploration itself succeeded
+
+      for (const flow of extracted.flows) {
+        const suggestion = await createSuggestion(
+          session.projectId,
+          'flow',
+          {
+            feature_name: flow.feature_name,
+            name: flow.name,
+            steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
+            checkpoints: [],
+            criticality: flow.criticality,
+          },
+          session.sessionId
+        );
+        if (suggestion) {
+          broadcast({ type: 'suggestion', suggestion });
+        }
+      }
+
+      const total = extracted.features.length + extracted.flows.length;
+      broadcast({ type: 'thought', content: total > 0
+        ? `Discovered ${extracted.features.length} feature(s) and ${extracted.flows.length} flow(s).`
+        : 'No new features discovered on this page.' });
     }
 
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Exploration failed';
-    broadcast({ type: 'error', message });
+    const errMsg = err instanceof Error ? err.message : 'Exploration failed';
+    console.error('[EXPLORE] Failed:', errMsg);
+    broadcast({ type: 'error', message: errMsg });
     broadcast({ type: 'taskComplete', success: false });
   } finally {
     broadcast({ type: 'status', status: 'idle' });
