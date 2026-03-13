@@ -146,26 +146,23 @@ export async function destroySession(projectId: string): Promise<void> {
   const session = pool.get(projectId);
   if (!session) return;
 
+  // Remove from pool FIRST (synchronous) so a racing 'start' won't find it
+  pool.delete(projectId);
   clearIdleTimeout(session);
 
-  // End DB session
+  // Notify remaining clients before cleanup
+  broadcast(session, { type: 'status', status: 'disconnected' });
+  session.clients.clear();
+
+  // Async cleanup (DB + agent close) — safe to run after pool removal
   if (session.dbSessionId) {
     await endSession(session.dbSessionId);
   }
-
-  // Stop agent
   try {
     await session.agentSession.close();
   } catch (err) {
     console.error(`Failed to close agent for project ${projectId}:`, err);
   }
-
-  // Notify remaining clients
-  broadcast(session, { type: 'status', status: 'disconnected' });
-
-  // Clean up
-  session.clients.clear();
-  pool.delete(projectId);
 }
 
 export function listActiveSessions(): string[] {

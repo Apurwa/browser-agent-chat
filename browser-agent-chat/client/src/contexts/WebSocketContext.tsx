@@ -80,15 +80,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         break;
       case 'status':
         setStatus((msg as any).status);
+        // Note: 'disconnected' from server (e.g. idle timeout, error) clears active project
+        // but preserves screenshot/currentUrl/messages so stop→start feels seamless.
         if ((msg as any).status === 'disconnected') {
-          setScreenshot(null);
-          setCurrentUrl(null);
           setActiveProjectId(null);
           activeProjectRef.current = null;
         }
         break;
       case 'nav':
         setCurrentUrl((msg as any).url);
+        lastUrlRef.current = (msg as any).url;
         break;
       case 'error':
         addMessage('system', `Error: ${(msg as any).message}`);
@@ -192,14 +193,17 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Track the last URL so we can resume at the same page after stop→start
+  const lastUrlRef = useRef<string | null>(null);
+
   const startAgent = useCallback((projectId: string) => {
-    console.log('[WS] startAgent called with projectId:', projectId);
-    // Don't clear state — server will reattach to existing session if one exists,
-    // or send fresh state if creating a new one
+    // Keep previous messages, findings, and screenshot — user expects continuity
     setStatus('working');
     setActiveProjectId(projectId);
     activeProjectRef.current = projectId;
-    send({ type: 'start', projectId });
+    // If we have a last-known URL for this project, tell server to navigate there
+    const resumeUrl = lastUrlRef.current || undefined;
+    send({ type: 'start', projectId, resumeUrl });
   }, [send]);
 
   const resumeSession = useCallback((projectId: string) => {
@@ -215,7 +219,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const stopAgent = useCallback(() => {
     send({ type: 'stop' });
-    // Don't clear activeProjectId — session stays alive, just paused
+    setStatus('disconnected');
+    // Keep screenshot and currentUrl visible — user expects to see same screen on restart
+    setActiveProjectId(null);
+    activeProjectRef.current = null;
+    // Keep lastUrlRef — so next start navigates back to where we were
   }, [send]);
 
   const explore = useCallback((projectId: string) => {

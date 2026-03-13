@@ -27,8 +27,9 @@ export default function TestingView() {
         const token = await getAccessToken();
         const res = await apiAuthFetch(`/api/projects/${id}/memory/features`, token);
         if (res.ok) {
-          const features = await res.json();
-          setFeaturesCount(features.length);
+          const body = await res.json();
+          const features = body.features ?? body;
+          setFeaturesCount(Array.isArray(features) ? features.length : 0);
         }
       } catch { /* ignore */ }
     })();

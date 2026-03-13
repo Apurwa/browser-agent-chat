@@ -141,7 +141,7 @@ export interface BehaviorSuggestionData {
 // === WebSocket Messages ===
 
 export type ClientMessage =
-  | { type: 'start'; projectId: string }
+  | { type: 'start'; projectId: string; resumeUrl?: string }
   | { type: 'resume'; projectId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; projectId: string }

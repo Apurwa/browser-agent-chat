@@ -715,6 +715,12 @@ body {
   object-fit: contain;
 }
 
+.browser-screenshot-reconnecting {
+  opacity: 0.5;
+  filter: grayscale(0.3);
+  transition: opacity 0.3s, filter 0.3s;
+}
+
 .browser-placeholder {
   text-align: center;
   color: var(--text-dimmest);

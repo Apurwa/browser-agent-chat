@@ -8,7 +8,7 @@ import projectsRouter from './routes/projects.js';
 import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
 import suggestionsRouter from './routes/suggestions.js';
-import { createAgent, executeTask, executeExplore } from './agent.js';
+import { createAgent, executeTask, executeExplore, executeLogin } from './agent.js';
 import { getProject, createSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
@@ -196,18 +196,28 @@ wss.on('connection', (ws: WebSocket) => {
           sessionPool.broadcast(session, serverMsg);
         };
 
+        // Use resumeUrl if client was previously on a different page
+        const navigateUrl = msg.resumeUrl || project.url;
         const agentSession = await createAgent(
-          project.url, poolBroadcast, dbSessionId, project.id, credentials
+          navigateUrl, poolBroadcast, dbSessionId, project.id
         );
         recordStep('create_agent_total');
 
-        // Log combined startup metrics (orchestration + agent internals)
         const totalMs = Date.now() - startT0;
         console.log('[METRICS] Full startup:', JSON.stringify({ total: totalMs, steps: orchSteps }));
 
+        // Register session BEFORE login so stop/task/etc can find it
         const pooled = sessionPool.registerSession(msg.projectId, agentSession, dbSessionId);
         sessionPool.addClient(pooled, ws);
         clientProjects.set(ws, msg.projectId);
+
+        // Kick off login as fire-and-forget (non-blocking)
+        // Set loginDone so tasks/explore wait for it to complete
+        if (credentials) {
+          agentSession.loginDone = executeLogin(agentSession, credentials, poolBroadcast).catch(err => {
+            console.error('[LOGIN] Background login error:', err);
+          });
+        }
       } catch (err) {
         console.error('[START] Error creating agent:', err);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
@@ -290,13 +300,9 @@ wss.on('connection', (ws: WebSocket) => {
     } else if (msg.type === 'stop') {
       const projectId = clientProjects.get(ws);
       if (projectId) {
-        const session = sessionPool.getSession(projectId);
-        if (session) {
-          // Pause — keep session alive but tell clients agent is idle
-          sessionPool.updateStatus(session, 'idle');
-          sessionPool.broadcast(session, { type: 'status', status: 'idle' });
-          sessionPool.addMessage(session, makeChatMessage('system', 'Agent paused. Send a message to continue.'));
-          sessionPool.broadcast(session, { type: 'taskComplete', success: true });
+        await sessionPool.destroySession(projectId);
+        for (const [client, pid] of clientProjects) {
+          if (pid === projectId) clientProjects.delete(client);
         }
       }
     } else if (msg.type === 'explore') {

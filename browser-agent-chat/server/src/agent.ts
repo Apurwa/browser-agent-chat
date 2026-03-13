@@ -1,4 +1,5 @@
 import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitude-core';
+import { z } from 'zod';
 import type { ServerMessage, MetricStep } from './types.js';
 import { saveMessage, createSuggestion } from './db.js';
 import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
@@ -13,6 +14,8 @@ export interface AgentSession {
   projectId: string | null;
   memoryContext: string;
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
+  /** Resolves when background login finishes (or immediately if no login). */
+  loginDone: Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -36,7 +39,6 @@ export async function createAgent(
   broadcast: (msg: ServerMessage) => void,
   sessionId: string | null = null,
   projectId: string | null = null,
-  credentials: { username: string; password: string } | null = null
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
   const timer = new StepTimer();
@@ -151,100 +153,14 @@ export async function createAgent(
   }
   timer.step('initial_screenshot');
 
-  // Log in with credentials if provided
-  if (credentials) {
-    const page = connector.getHarness().page;
-    broadcast({ type: 'thought', content: 'Logging in...' });
-
-    // Try Playwright direct login (fast path)
-    let playwrightFilled = false;
-    try {
-      const usernameField = page.getByPlaceholder(/username|email|login/i).first();
-      const passwordField = page.getByPlaceholder(/password/i).first();
-
-      await usernameField.waitFor({ state: 'visible', timeout: 3000 });
-      await usernameField.fill(credentials.username);
-      await passwordField.fill(credentials.password);
-
-      const submitBtn = page.locator(
-        'button[type="submit"], input[type="submit"], ' +
-        'button:has-text("Sign In"), button:has-text("Log In"), ' +
-        'button:has-text("Login"), button:has-text("Submit")'
-      ).first();
-      await submitBtn.click();
-      playwrightFilled = true;
-      console.log('[LOGIN] Playwright filled and submitted');
-
-      // Wait for full redirect chain + SPA auth guards to settle
-      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-      // Poll until URL is stable for 2 seconds (catches delayed SPA redirects)
-      let lastUrl = page.url();
-      let stableMs = 0;
-      while (stableMs < 2000) {
-        await page.waitForTimeout(500);
-        const currentUrl = page.url();
-        if (currentUrl === lastUrl) {
-          stableMs += 500;
-        } else {
-          lastUrl = currentUrl;
-          stableMs = 0;
-        }
-        // Safety cap at 10 seconds of polling
-        if (stableMs < 0) break;
-      }
-      console.log('[LOGIN] URL stabilized at:', page.url());
-    } catch (err) {
-      console.warn('[LOGIN] Playwright fill/submit failed:', (err as Error).message);
-    }
-
-    // Check if we're still on a login page after everything settled
-    const stillOnLogin = await page.locator('input[type="password"]').isVisible().catch(() => false);
-    console.log('[LOGIN] After settle — URL:', page.url(), '| Still on login?', stillOnLogin);
-
-    if (stillOnLogin) {
-      // Playwright login didn't stick — use LLM agent as fallback
-      broadcast({ type: 'thought', content: 'Retrying login with AI agent...' });
-      try {
-        await agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
-        // Wait for LLM login to settle
-        await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-        await page.waitForTimeout(2000);
-        console.log('[LOGIN] LLM agent login done, URL:', page.url());
-      } catch (err2) {
-        console.error('[LOGIN] LLM agent login also failed:', err2);
-        broadcast({ type: 'error', message: 'Auto-login failed. You can log in manually via chat.' });
-      }
-    }
-
-    // Final screenshot and status — whatever state we ended up in
-    try {
-      const screenshotBuffer = await page.screenshot({ type: 'png' });
-      const base64 = screenshotBuffer.toString('base64');
-      broadcast({ type: 'screenshot', data: base64 });
-      broadcast({ type: 'nav', url: page.url() });
-
-      const finallyOnLogin = await page.locator('input[type="password"]').isVisible().catch(() => false);
-      if (finallyOnLogin) {
-        console.log('[LOGIN] FAILED — still on login page after all attempts');
-        broadcast({ type: 'thought', content: 'Could not log in automatically. Please log in via chat.' });
-      } else {
-        console.log('[LOGIN] SUCCESS — logged in, URL:', page.url());
-        broadcast({ type: 'thought', content: 'Logged in successfully' });
-      }
-    } catch (err) {
-      console.error('[LOGIN] Failed to capture final screenshot:', err);
-    }
-
-    timer.step('auto_login');
-  }
-
   // Emit startup metrics
   const metrics = { total: timer.total, steps: timer.steps };
   console.log('[METRICS] Agent startup:', JSON.stringify(metrics));
   broadcast({ type: 'metrics', metrics });
 
   broadcast({ type: 'status', status: 'idle' });
-  broadcast({ type: 'nav', url });
+  const currentPageUrl = connector.getHarness().page.url();
+  broadcast({ type: 'nav', url: currentPageUrl });
 
   return {
     agent,
@@ -253,24 +169,143 @@ export async function createAgent(
     projectId,
     memoryContext,
     stepsHistory,
+    loginDone: Promise.resolve(), // Will be replaced by executeLogin
     close: async () => {
       await agent.stop();
     }
   };
 }
 
+export async function executeLogin(
+  session: AgentSession,
+  credentials: { username: string; password: string },
+  broadcast: (msg: ServerMessage) => void
+): Promise<void> {
+  const page = session.connector.getHarness().page;
+  broadcast({ type: 'thought', content: 'Logging in...' });
+
+  try {
+    await session.agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
+    console.log('[LOGIN] Done, URL:', page.url());
+  } catch (err) {
+    console.error('[LOGIN] Failed:', err);
+    broadcast({ type: 'error', message: 'Auto-login failed. You can log in via chat.' });
+    return;
+  }
+
+  // Capture post-login state
+  try {
+    const buf = await page.screenshot({ type: 'png' });
+    broadcast({ type: 'screenshot', data: buf.toString('base64') });
+    broadcast({ type: 'nav', url: page.url() });
+
+    const onLogin = /\/(login|signin|sign-in|auth)\b/i.test(page.url())
+      || await page.locator('input[type="password"]').isVisible().catch(() => false);
+    broadcast({ type: 'thought', content: onLogin
+      ? 'Could not log in. Please log in via chat.'
+      : 'Logged in successfully' });
+  } catch {}
+
+  broadcast({ type: 'status', status: 'idle' });
+}
+
+// Schema for features extracted from the current page
+const ExtractedFeatureSchema = z.object({
+  features: z.array(z.object({
+    name: z.string().describe('Short feature name, e.g. "Login", "User Dashboard", "Settings"'),
+    description: z.string().describe('What this feature does'),
+    criticality: z.enum(['critical', 'high', 'medium', 'low']).describe('How important this feature is'),
+    expected_behaviors: z.array(z.string()).describe('Observable expected behaviors, e.g. "Shows error on invalid password", "Redirects to dashboard after login"'),
+  })),
+  flows: z.array(z.object({
+    feature_name: z.string().describe('Which feature this flow belongs to'),
+    name: z.string().describe('Flow name, e.g. "Login Flow", "Password Reset Flow"'),
+    steps: z.array(z.string()).describe('Ordered steps in this flow'),
+    criticality: z.enum(['critical', 'high', 'medium', 'low']),
+  })),
+});
+
 export async function executeExplore(
   session: AgentSession,
   context: string | null,
   broadcast: (msg: ServerMessage) => void
 ): Promise<void> {
+  console.log('[EXPLORE] Starting explore...');
   broadcast({ type: 'status', status: 'working' });
+
+  // Wait for login to finish before using the agent
+  console.log('[EXPLORE] Waiting for login to complete...');
+  await session.loginDone;
+  console.log('[EXPLORE] Login done, starting exploration...');
 
   const prompt = buildExplorePrompt(context);
   session.stepsHistory.length = 0;
 
   try {
+    // Phase 1: Navigate and discover
+    console.log('[EXPLORE] Phase 1: agent.act() starting...');
     await session.agent.act(prompt);
+    console.log('[EXPLORE] Phase 1: agent.act() complete');
+
+    // Phase 2: Extract features from what the agent observed
+    console.log('[EXPLORE] Phase 2: Extracting features...');
+    broadcast({ type: 'thought', content: 'Analyzing discovered features...' });
+    try {
+      const extracted = await session.agent.extract(
+        'Based on what you can see on this page and what you explored, list all features, their expected behaviors, and any multi-step flows (like login, signup, navigation). Include features from pages you visited earlier.',
+        ExtractedFeatureSchema
+      );
+      console.log('[EXPLORE] Extracted:', JSON.stringify(extracted, null, 2));
+
+      // Create suggestions for each extracted feature
+      if (session.projectId && session.sessionId) {
+        for (const feature of extracted.features) {
+          const suggestion = await createSuggestion(
+            session.projectId,
+            'feature',
+            {
+              name: feature.name,
+              description: feature.description,
+              criticality: feature.criticality,
+              expected_behaviors: feature.expected_behaviors,
+            },
+            session.sessionId
+          );
+          if (suggestion) {
+            broadcast({ type: 'suggestion', suggestion });
+          }
+        }
+
+        for (const flow of extracted.flows) {
+          const suggestion = await createSuggestion(
+            session.projectId,
+            'flow',
+            {
+              feature_name: flow.feature_name,
+              name: flow.name,
+              steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
+              checkpoints: [],
+              criticality: flow.criticality,
+            },
+            session.sessionId
+          );
+          if (suggestion) {
+            broadcast({ type: 'suggestion', suggestion });
+          }
+        }
+
+        const total = extracted.features.length + extracted.flows.length;
+        if (total > 0) {
+          broadcast({ type: 'thought', content: `Discovered ${extracted.features.length} feature(s) and ${extracted.flows.length} flow(s).` });
+        }
+      }
+    } catch (extractErr) {
+      const errMsg = extractErr instanceof Error ? extractErr.message : String(extractErr);
+      console.error('[EXPLORE] Feature extraction failed:', errMsg);
+      broadcast({ type: 'thought', content: `Feature extraction encountered an issue: ${errMsg.slice(0, 200)}` });
+      // Non-fatal — exploration itself succeeded
+    }
+
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Exploration failed';
@@ -287,6 +322,9 @@ export async function executeTask(
   broadcast: (msg: ServerMessage) => void
 ): Promise<void> {
   broadcast({ type: 'status', status: 'working' });
+
+  // Wait for login to finish before using the agent
+  await session.loginDone;
 
   if (session.sessionId) {
     await saveMessage(session.sessionId, 'user', task);

@@ -30,7 +30,7 @@ export function BrowserView({ screenshot, currentUrl, status }: BrowserViewProps
           <img
             src={screenshot}
             alt="Browser view"
-            className="browser-screenshot"
+            className={`browser-screenshot${status === 'working' ? ' browser-screenshot-reconnecting' : ''}`}
           />
         ) : isStarting ? (
           <div className="browser-loading">
