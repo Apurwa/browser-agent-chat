@@ -1,6 +1,17 @@
+import { useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { useWS } from '../contexts/WebSocketContext';
+import {
+  FlaskConical,
+  Bug,
+  BrainCircuit,
+  Settings,
+  Sun,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react';
 
 interface SidebarProps {
   findingsCount?: number;
@@ -13,6 +24,15 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   const { id } = useParams();
   const { theme, toggleTheme } = useTheme();
   const { pendingSuggestionCount } = useWS();
+  const [expanded, setExpanded] = useState(() => {
+    try { return localStorage.getItem('sidebar-expanded') === 'true'; } catch { return false; }
+  });
+
+  const toggle = () => {
+    const next = !expanded;
+    setExpanded(next);
+    try { localStorage.setItem('sidebar-expanded', String(next)); } catch {}
+  };
 
   const isActive = (path: string) => location.pathname.includes(path);
 
@@ -21,50 +41,61 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   };
 
   return (
-    <div className="sidebar">
-      <div className="sidebar-logo" onClick={() => navigate('/projects')}>QA</div>
-      <div
-        className={`sidebar-item ${isActive('testing') ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+    <nav className={`sidebar${expanded ? ' sidebar--expanded' : ''}`}>
+      {/* Logo */}
+      <button className="sidebar-logo" onClick={() => navigate('/projects')}>
+        QA
+      </button>
+
+      {/* Nav items */}
+      <button
+        className={`sidebar-item${isActive('testing') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
         onClick={() => navTo('testing')}
-        title="Testing"
       >
-        <span role="img" aria-label="Testing">&#x1F9EA;</span>
-      </div>
-      <div
-        className={`sidebar-item ${isActive('findings') ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+        <FlaskConical size={18} />
+        {expanded && <span className="sidebar-label">Testing</span>}
+      </button>
+
+      <button
+        className={`sidebar-item${isActive('findings') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
         onClick={() => navTo('findings')}
-        title="Findings"
       >
-        <span role="img" aria-label="Findings">&#x1F41B;</span>
+        <Bug size={18} />
+        {expanded && <span className="sidebar-label">Findings</span>}
         {findingsCount > 0 && <span className="sidebar-badge">{findingsCount}</span>}
-      </div>
-      <div
-        className={`sidebar-item ${isActive('memory') ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+      </button>
+
+      <button
+        className={`sidebar-item${isActive('memory') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
         onClick={() => navTo('memory')}
-        title="Memory"
       >
-        <span role="img" aria-label="Memory">&#x1F9E0;</span>
+        <BrainCircuit size={18} />
+        {expanded && <span className="sidebar-label">Memory</span>}
         {pendingSuggestionCount > 0 && (
-          <span className="sidebar-badge" style={{ background: '#fdcb6e', color: '#000' }}>
-            {pendingSuggestionCount}
-          </span>
+          <span className="sidebar-badge sidebar-badge--warn">{pendingSuggestionCount}</span>
         )}
-      </div>
+      </button>
+
       <div className="sidebar-spacer" />
-      <div
-        className="sidebar-item"
-        onClick={toggleTheme}
-        title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-      >
-        <span role="img" aria-label="Theme">{theme === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19'}</span>
-      </div>
-      <div
-        className={`sidebar-item ${isActive('settings') ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+
+      {/* Bottom items */}
+      <button className="sidebar-item" onClick={toggleTheme}>
+        {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        {expanded && <span className="sidebar-label">{theme === 'dark' ? 'Light' : 'Dark'}</span>}
+      </button>
+
+      <button
+        className={`sidebar-item${isActive('settings') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
         onClick={() => navTo('settings')}
-        title="Settings"
       >
-        <span role="img" aria-label="Settings">&#x2699;&#xFE0F;</span>
-      </div>
-    </div>
+        <Settings size={18} />
+        {expanded && <span className="sidebar-label">Settings</span>}
+      </button>
+
+      {/* Collapse toggle */}
+      <button className="sidebar-toggle" onClick={toggle} title={expanded ? 'Collapse' : 'Expand'}>
+        {expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+      </button>
+    </nav>
   );
 }
