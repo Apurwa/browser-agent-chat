@@ -28,8 +28,6 @@ export default function MemoryViewer() {
 
   useEffect(() => { loadFeatures(); }, [id]);
   useEffect(() => { loadSuggestions(); }, [id]);
-
-  // Re-fetch suggestions when new ones arrive via WebSocket
   useEffect(() => { loadSuggestions(); }, [pendingSuggestionCount]);
 
   const loadSuggestions = async () => {
@@ -128,22 +126,33 @@ export default function MemoryViewer() {
     await loadFeatures();
   };
 
+  const critIcon = (c: Criticality) =>
+    c === 'critical' ? '!!' : c === 'high' ? '!' : c === 'medium' ? '-' : '~';
+
   return (
     <div className="app-layout">
       <Sidebar />
-      <div className="memory-content">
+      <div className="mv">
+        {/* Suggestions banner */}
         {suggestions.length > 0 && (
-          <div className="memory-suggestions-pending" style={{ marginBottom: '1rem', borderLeft: '3px solid #fdcb6e' }}>
-            <div className="memory-list-header">
-              <h2 style={{ color: '#fdcb6e' }}>
-                ⏳ Pending Suggestions <span className="count">({suggestions.length})</span>
-              </h2>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="btn-add" onClick={handleAcceptAll}>Accept All</button>
-                <button onClick={handleDismissAll}>Dismiss All</button>
+          <div className="mv-suggestions">
+            <div className="mv-suggestions-bar">
+              <div className="mv-suggestions-title">
+                <span className="mv-pulse" />
+                <span className="mv-suggestions-label">
+                  {suggestions.length} pending suggestion{suggestions.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+              <div className="mv-suggestions-btns">
+                <button className="mv-btn mv-btn-accept" onClick={handleAcceptAll}>
+                  Accept all
+                </button>
+                <button className="mv-btn mv-btn-ghost" onClick={handleDismissAll}>
+                  Dismiss all
+                </button>
               </div>
             </div>
-            <div className="memory-items">
+            <div className="mv-suggestions-grid">
               {suggestions.map(s => (
                 <SuggestionCard
                   key={s.id}
@@ -156,51 +165,94 @@ export default function MemoryViewer() {
             </div>
           </div>
         )}
-        <div className="memory-list">
-          <div className="memory-list-header">
-            <h2>Features <span className="count">({features.length})</span></h2>
-            <button className="btn-add" onClick={() => setShowAdd(true)}>+ Add</button>
-          </div>
-          {showAdd && (
-            <div className="memory-add-form">
-              <input placeholder="Feature name" value={newName} onChange={e => setNewName(e.target.value)} />
-              <select value={newCriticality} onChange={e => setNewCriticality(e.target.value as Criticality)}>
-                <option value="critical">Critical</option>
-                <option value="high">High</option>
-                <option value="medium">Medium</option>
-                <option value="low">Low</option>
-              </select>
-              <button onClick={handleAddFeature}>Add</button>
-              <button onClick={() => setShowAdd(false)}>Cancel</button>
+
+        {/* Main content: feature list + detail */}
+        <div className="mv-body">
+          <div className="mv-list">
+            <div className="mv-list-top">
+              <h2 className="mv-list-title">
+                Features
+                <span className="mv-count">{features.length}</span>
+              </h2>
+              <button className="mv-btn mv-btn-outline" onClick={() => setShowAdd(true)}>
+                + New
+              </button>
             </div>
-          )}
-          <div className="memory-items">
-            {features.map(f => (
-              <div
-                key={f.id}
-                className={`memory-item ${selected?.id === f.id ? 'active' : ''}`}
-                onClick={() => setSelected(f)}
-              >
-                <div className="memory-item-header">
-                  <span className="memory-item-name">{f.name}</span>
-                  <span className={`severity-badge severity-${f.criticality}`}>{f.criticality.toUpperCase()}</span>
-                </div>
-                <div className="memory-item-meta">
-                  {f.flows?.length ?? 0} flows · {f.expected_behaviors.length} behaviors
+
+            {showAdd && (
+              <div className="mv-add-form">
+                <input
+                  className="mv-input"
+                  placeholder="Feature name"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddFeature()}
+                  autoFocus
+                />
+                <select
+                  className="mv-select"
+                  value={newCriticality}
+                  onChange={e => setNewCriticality(e.target.value as Criticality)}
+                >
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+                <div className="mv-add-form-btns">
+                  <button className="mv-btn mv-btn-accept" onClick={handleAddFeature}>Add</button>
+                  <button className="mv-btn mv-btn-ghost" onClick={() => { setShowAdd(false); setNewName(''); }}>Cancel</button>
                 </div>
               </div>
-            ))}
+            )}
+
+            <div className="mv-items">
+              {features.length === 0 && (
+                <div className="mv-empty">
+                  <div className="mv-empty-icon">{ }</div>
+                  <p>No features yet</p>
+                  <span>Use Explore or add manually</span>
+                </div>
+              )}
+              {features.map(f => (
+                <button
+                  key={f.id}
+                  className={`mv-feature-row${selected?.id === f.id ? ' mv-feature-row--active' : ''}`}
+                  onClick={() => setSelected(f)}
+                >
+                  <span className={`mv-crit mv-crit--${f.criticality}`}>
+                    {critIcon(f.criticality)}
+                  </span>
+                  <div className="mv-feature-row-body">
+                    <span className="mv-feature-row-name">{f.name}</span>
+                    <span className="mv-feature-row-meta">
+                      {f.flows?.length ?? 0} flow{(f.flows?.length ?? 0) !== 1 ? 's' : ''}
+                      {' \u00B7 '}
+                      {f.expected_behaviors.length} behavior{f.expected_behaviors.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <span className={`mv-crit-label mv-crit-label--${f.criticality}`}>
+                    {f.criticality}
+                  </span>
+                </button>
+              ))}
+            </div>
           </div>
+
+          {selected ? (
+            <FeatureDetail
+              feature={selected}
+              projectId={id!}
+              onUpdate={handleUpdateFeature}
+              onDelete={handleDeleteFeature}
+              onReload={loadFeatures}
+            />
+          ) : features.length > 0 ? (
+            <div className="mv-detail-empty">
+              <p>Select a feature</p>
+            </div>
+          ) : null}
         </div>
-        {selected && (
-          <FeatureDetail
-            feature={selected}
-            projectId={id!}
-            onUpdate={handleUpdateFeature}
-            onDelete={handleDeleteFeature}
-            onReload={loadFeatures}
-          />
-        )}
       </div>
     </div>
   );

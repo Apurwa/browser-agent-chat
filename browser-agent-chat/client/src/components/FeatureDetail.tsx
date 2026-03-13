@@ -15,6 +15,7 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
   const [newBehavior, setNewBehavior] = useState('');
   const [newFlowName, setNewFlowName] = useState('');
   const [newFlowCriticality, setNewFlowCriticality] = useState<Criticality>('medium');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const addBehavior = () => {
     if (!newBehavior) return;
@@ -52,65 +53,121 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
   };
 
   return (
-    <div className="feature-detail">
-      <div className="feature-detail-header">
-        <h2>{feature.name}</h2>
-        <span className={`severity-badge severity-${feature.criticality}`}>{feature.criticality.toUpperCase()}</span>
-        <button className="btn-danger btn-sm" onClick={() => onDelete(feature.id)}>Delete</button>
+    <div className="mv-detail">
+      {/* Header */}
+      <div className="mv-detail-head">
+        <div className="mv-detail-head-left">
+          <h2 className="mv-detail-title">{feature.name}</h2>
+          <span className={`mv-crit-label mv-crit-label--${feature.criticality}`}>
+            {feature.criticality}
+          </span>
+        </div>
+        {!confirmDelete ? (
+          <button
+            className="mv-btn mv-btn-dismiss mv-btn-sm"
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete
+          </button>
+        ) : (
+          <div className="mv-detail-confirm-delete">
+            <span>Delete this feature?</span>
+            <button className="mv-btn mv-btn-dismiss mv-btn-sm" onClick={() => onDelete(feature.id)}>Yes</button>
+            <button className="mv-btn mv-btn-ghost mv-btn-sm" onClick={() => setConfirmDelete(false)}>No</button>
+          </div>
+        )}
       </div>
-      {feature.description && <p className="feature-description">{feature.description}</p>}
 
-      <section className="feature-section">
-        <h3>Expected Behaviors</h3>
-        <div className="behavior-list">
+      {feature.description && (
+        <p className="mv-detail-desc">{feature.description}</p>
+      )}
+
+      {/* Expected Behaviors */}
+      <section className="mv-section">
+        <h3 className="mv-section-title">Expected Behaviors</h3>
+        <div className="mv-behaviors">
           {feature.expected_behaviors.map((b, i) => (
-            <div key={i} className="behavior-item">
-              <span>{b}</span>
-              <button className="btn-icon" onClick={() => removeBehavior(i)}>x</button>
+            <div key={i} className="mv-behavior">
+              <span className="mv-behavior-bullet" />
+              <span className="mv-behavior-text">{b}</span>
+              <button className="mv-behavior-remove" onClick={() => removeBehavior(i)} title="Remove">&times;</button>
             </div>
           ))}
+          {feature.expected_behaviors.length === 0 && (
+            <p className="mv-muted">No behaviors defined yet.</p>
+          )}
         </div>
-        <div className="behavior-add">
+        <div className="mv-inline-add">
           <input
+            className="mv-input"
             placeholder="Add expected behavior..."
             value={newBehavior}
             onChange={e => setNewBehavior(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && addBehavior()}
           />
-          <button onClick={addBehavior}>Add</button>
+          <button className="mv-btn mv-btn-outline" onClick={addBehavior}>Add</button>
         </div>
       </section>
 
-      <section className="feature-section">
-        <h3>Flows</h3>
-        {feature.flows?.map(flow => (
-          <div key={flow.id} className="flow-card">
-            <div className="flow-card-header">
-              <span className="flow-name">{flow.name}</span>
-              <span className={`severity-badge severity-${flow.criticality}`}>{flow.criticality.toUpperCase()}</span>
-              <button className="btn-icon" onClick={() => deleteFlow(flow.id)}>x</button>
-            </div>
-            {flow.steps.length > 0 && (
-              <div className="flow-steps">
-                {flow.steps.map((s, i) => (
-                  <span key={i} className="flow-step-pill">
-                    {i > 0 && <span className="flow-arrow">{'→'}</span>}
-                    {s.description}
-                  </span>
-                ))}
+      {/* Flows */}
+      <section className="mv-section">
+        <h3 className="mv-section-title">Flows</h3>
+        <div className="mv-flows">
+          {feature.flows?.map(flow => (
+            <div key={flow.id} className="mv-flow">
+              <div className="mv-flow-head">
+                <span className="mv-flow-name">{flow.name}</span>
+                <span className={`mv-crit-label mv-crit-label--${flow.criticality}`}>
+                  {flow.criticality}
+                </span>
+                <button className="mv-behavior-remove" onClick={() => deleteFlow(flow.id)} title="Delete flow">&times;</button>
               </div>
-            )}
-          </div>
-        ))}
-        <div className="flow-add">
-          <input placeholder="Flow name" value={newFlowName} onChange={e => setNewFlowName(e.target.value)} />
-          <select value={newFlowCriticality} onChange={e => setNewFlowCriticality(e.target.value as Criticality)}>
+              {flow.steps.length > 0 && (
+                <div className="mv-flow-steps">
+                  {flow.steps.map((s, i) => (
+                    <span key={i} className="mv-flow-step">
+                      {i > 0 && <span className="mv-flow-arrow">&rarr;</span>}
+                      {s.description}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {flow.checkpoints.length > 0 && (
+                <div className="mv-flow-checkpoints">
+                  {flow.checkpoints.map((cp, i) => (
+                    <div key={i} className="mv-checkpoint">
+                      <span className="mv-checkpoint-icon">&#9670;</span>
+                      <span>{cp.description}</span>
+                      <span className="mv-checkpoint-expected">expect: {cp.expected}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {(!feature.flows || feature.flows.length === 0) && (
+            <p className="mv-muted">No flows defined yet.</p>
+          )}
+        </div>
+        <div className="mv-inline-add">
+          <input
+            className="mv-input"
+            placeholder="Flow name"
+            value={newFlowName}
+            onChange={e => setNewFlowName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addFlow()}
+          />
+          <select
+            className="mv-select"
+            value={newFlowCriticality}
+            onChange={e => setNewFlowCriticality(e.target.value as Criticality)}
+          >
             <option value="critical">Critical</option>
             <option value="high">High</option>
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
-          <button onClick={addFlow}>Add Flow</button>
+          <button className="mv-btn mv-btn-outline" onClick={addFlow}>Add Flow</button>
         </div>
       </section>
     </div>
