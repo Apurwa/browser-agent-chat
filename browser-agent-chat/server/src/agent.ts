@@ -242,10 +242,23 @@ export async function executeExplore(
   session.stepsHistory.length = 0;
 
   try {
-    // Phase 1: Navigate and discover
+    // Phase 1: Navigate and discover (with 90s timeout to prevent runaway exploration)
     console.log('[EXPLORE] Phase 1: agent.act() starting...');
-    await session.agent.act(prompt);
-    console.log('[EXPLORE] Phase 1: agent.act() complete');
+    const EXPLORE_TIMEOUT_MS = 90_000;
+    await Promise.race([
+      session.agent.act(prompt),
+      new Promise<void>((_, reject) =>
+        setTimeout(() => reject(new Error('EXPLORE_TIMEOUT')), EXPLORE_TIMEOUT_MS)
+      ),
+    ]).catch(err => {
+      if (err.message === 'EXPLORE_TIMEOUT') {
+        console.log('[EXPLORE] Phase 1: timed out after 90s, proceeding to extraction');
+        broadcast({ type: 'thought', content: 'Exploration time limit reached, analyzing what was found...' });
+      } else {
+        throw err; // Re-throw real errors
+      }
+    });
+    console.log('[EXPLORE] Phase 1: complete');
 
     // Phase 2: Extract features from what the agent observed
     console.log('[EXPLORE] Phase 2: Extracting features...');
