@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
@@ -12,13 +12,28 @@ export default function TestingView() {
   const ws = useWS();
   const { getAccessToken } = useAuth();
   const [featuresCount, setFeaturesCount] = useState(0);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const isAutoStart = location.state?.autoStart === true;
 
   // On mount: try to resume an existing session for this project
+  // Skip if autoStart — we'll start a fresh agent instead
   useEffect(() => {
-    if (id && ws.activeProjectId !== id) {
+    if (id && ws.activeProjectId !== id && !isAutoStart) {
       ws.resumeSession(id);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Auto-start agent when navigating from Home with autoStart flag
+  useEffect(() => {
+    if (id && isAutoStart) {
+      ws.startAgent(id);
+      // Clear the state to prevent re-triggering on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, isAutoStart]);
 
   useEffect(() => {
     if (!id) return;
