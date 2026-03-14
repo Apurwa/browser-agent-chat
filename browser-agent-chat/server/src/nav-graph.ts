@@ -182,6 +182,32 @@ export async function linkFeatureToNode(nodeId: string, featureId: string): Prom
   }
 }
 
+/**
+ * High-level helper: record a navigation from one URL to another.
+ * Creates/updates nodes and edge. Fire-and-forget — errors are logged, never thrown.
+ */
+export async function recordNavigation(
+  projectId: string,
+  fromUrl: string | null,
+  toUrl: string,
+  action?: string,
+  selector?: string,
+): Promise<void> {
+  try {
+    const toNode = await upsertNode(projectId, toUrl);
+    if (!toNode) return;
+
+    if (fromUrl) {
+      const fromNode = await upsertNode(projectId, fromUrl);
+      if (fromNode && fromNode.id !== toNode.id) {
+        await upsertEdge(projectId, fromNode.id, toNode.id, action || '', selector);
+      }
+    }
+  } catch (err) {
+    console.error('[NAV-GRAPH] recordNavigation error:', err);
+  }
+}
+
 export async function getGraph(projectId: string): Promise<NavGraph> {
   if (!isSupabaseEnabled()) return { nodes: [], edges: [] };
 

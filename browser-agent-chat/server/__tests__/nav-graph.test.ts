@@ -8,7 +8,7 @@ vi.mock('../src/supabase.js', () => ({
 }));
 
 // Single merged import
-import { normalizeUrl, serializeGraph, upsertNode, upsertEdge, linkFeatureToNode, getGraph } from '../src/nav-graph.js';
+import { normalizeUrl, serializeGraph, upsertNode, upsertEdge, linkFeatureToNode, getGraph, recordNavigation } from '../src/nav-graph.js';
 import type { NavGraph } from '../src/types.js';
 
 describe('normalizeUrl', () => {
@@ -329,5 +329,73 @@ describe('getGraph', () => {
       });
     const graph = await getGraph('p1');
     expect(graph).toEqual({ nodes: [], edges: [] });
+  });
+});
+
+describe('recordNavigation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('upserts to-node and creates edge from from-node', async () => {
+    const toNodeRow = { id: 'n2', project_id: 'p1', url_pattern: '/settings', page_title: '', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' };
+    const fromNodeRow = { id: 'n1', project_id: 'p1', url_pattern: '/dashboard', page_title: '', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' };
+    const edgeRow = { id: 'e1', project_id: 'p1', from_node_id: 'n1', to_node_id: 'n2', action_label: 'click: Settings', selector: null, discovered_at: '2026-01-01' };
+
+    const mockUpsertChain = (row: any) => ({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: row, error: null }),
+        }),
+      }),
+    });
+
+    mockFrom
+      .mockReturnValueOnce(mockUpsertChain(toNodeRow))   // upsertNode(toUrl)
+      .mockReturnValueOnce(mockUpsertChain(fromNodeRow)) // upsertNode(fromUrl)
+      .mockReturnValueOnce(mockUpsertChain(edgeRow));    // upsertEdge
+
+    await recordNavigation('p1', 'https://app.com/dashboard', 'https://app.com/settings', 'click: Settings');
+
+    expect(mockFrom).toHaveBeenCalledTimes(3);
+  });
+
+  it('upserts only to-node when fromUrl is null', async () => {
+    const toNodeRow = { id: 'n1', project_id: 'p1', url_pattern: '/home', page_title: '', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' };
+
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: toNodeRow, error: null }),
+        }),
+      }),
+    });
+
+    await recordNavigation('p1', null, 'https://app.com/home');
+
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not create edge when from and to normalize to same pattern', async () => {
+    const nodeRow = { id: 'n1', project_id: 'p1', url_pattern: '/users/:id', page_title: '', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' };
+
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: nodeRow, error: null }),
+        }),
+      }),
+    });
+
+    await recordNavigation('p1', 'https://app.com/users/1', 'https://app.com/users/2');
+
+    // Two upsertNode calls (both return same node), no edge call
+    expect(mockFrom).toHaveBeenCalledTimes(2);
+  });
+
+  it('swallows errors without throwing', async () => {
+    mockFrom.mockImplementation(() => { throw new Error('DB down'); });
+
+    await expect(recordNavigation('p1', null, 'https://app.com/page')).resolves.toBeUndefined();
   });
 });
