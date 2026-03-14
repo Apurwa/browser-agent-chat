@@ -55,7 +55,7 @@ export default function ProjectSettings() {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
-    navigate('/projects');
+    navigate('/');
   };
 
   return (

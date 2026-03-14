@@ -43,7 +43,7 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   return (
     <nav className={`sidebar${expanded ? ' sidebar--expanded' : ''}`}>
       {/* Logo */}
-      <button className="sidebar-logo" onClick={() => navigate('/projects')}>
+      <button className="sidebar-logo" onClick={() => navigate('/')}>
         QA
       </button>
 
