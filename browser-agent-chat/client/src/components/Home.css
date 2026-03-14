@@ -129,7 +129,7 @@
   display: flex;
   align-items: center;
   background: var(--bg-card);
-  border: none;
+  border: 1px solid var(--border-primary);
   border-radius: 12px;
   padding: 4px 4px 4px 16px;
   width: 520px;
@@ -144,12 +144,15 @@
 
 .home-url-input {
   flex: 1;
-  border: none;
-  background: none;
+  border: none !important;
+  background: transparent;
   color: var(--text-primary);
   font-size: 15px;
   outline: none;
   padding: 8px 0;
+  box-shadow: none;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .home-url-input::placeholder {
