@@ -11,6 +11,11 @@
     "dev": "npm run dev --workspaces --if-present",
     "dev:server": "npm run dev -w server",
     "dev:client": "npm run dev -w client",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "lint:css": "stylelint 'client/src/**/*.css'"
+  },
+  "devDependencies": {
+    "stylelint": "^17.4.0",
+    "stylelint-declaration-strict-value": "^1.11.1"
   }
 }

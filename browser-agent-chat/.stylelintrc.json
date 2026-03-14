@@ -1,0 +1,48 @@
+{
+  "plugins": ["stylelint-declaration-strict-value"],
+  "rules": {
+    "scale-unlimited/declaration-strict-value": [
+      [
+        "color",
+        "background-color",
+        "border-color",
+        "border-top-color",
+        "border-right-color",
+        "border-bottom-color",
+        "border-left-color",
+        "outline-color",
+        "fill",
+        "stroke"
+      ],
+      {
+        "ignoreValues": [
+          "transparent",
+          "inherit",
+          "initial",
+          "unset",
+          "currentColor",
+          "none",
+          "white",
+          "black",
+          "#fff",
+          "#ef4444",
+          "#C25040"
+        ],
+        "ignoreFunctions": false,
+        "expandShorthand": false,
+        "recurseLonghand": false,
+        "severity": "error",
+        "message": "Use CSS custom properties (var(--...)) instead of hardcoded colors. See App.css for available theme variables."
+      }
+    ]
+  },
+  "ignoreFiles": ["**/node_modules/**"],
+  "overrides": [
+    {
+      "files": ["**/App.css"],
+      "rules": {
+        "scale-unlimited/declaration-strict-value": null
+      }
+    }
+  ]
+}
