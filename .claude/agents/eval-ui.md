@@ -1,0 +1,13 @@
+## Agent: Eval UI Components (Tasks 11-15)
+- **Started:** 2026-03-14
+- **Status:** complete
+- **Task:** Creating client UI components for the eval framework
+- **Files modified:**
+  - client/src/types/eval.ts (new)
+  - client/src/components/EvalDashboard.tsx (new)
+  - client/src/components/EvalRunDetail.tsx (new)
+  - client/src/components/EvalResultDetail.tsx (new)
+  - client/src/components/EvalCaseEditor.tsx (new)
+  - client/src/App.css (appended eval extended styles)
+  - client/src/App.tsx (added /evals route — done by linter)
+- **Depends on:** nothing from other agents
