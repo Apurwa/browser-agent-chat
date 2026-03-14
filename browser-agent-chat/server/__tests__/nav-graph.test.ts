@@ -1,5 +1,14 @@
-import { describe, it, expect } from 'vitest';
-import { normalizeUrl, serializeGraph } from '../src/nav-graph.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// vi.mock is hoisted — use vi.hoisted() so mockFrom is available in the factory
+const { mockFrom } = vi.hoisted(() => ({ mockFrom: vi.fn() }));
+vi.mock('../src/supabase.js', () => ({
+  isSupabaseEnabled: vi.fn().mockReturnValue(true),
+  supabase: { from: mockFrom },
+}));
+
+// Single merged import
+import { normalizeUrl, serializeGraph, upsertNode, upsertEdge, linkFeatureToNode, getGraph } from '../src/nav-graph.js';
 import type { NavGraph } from '../src/types.js';
 
 describe('normalizeUrl', () => {
@@ -151,5 +160,141 @@ describe('serializeGraph', () => {
     const result = serializeGraph(graph);
     expect(result).toContain('/a');
     expect(result).not.toContain('broken');
+  });
+});
+
+describe('upsertNode', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('upserts a nav_node and returns mapped NavNode', async () => {
+    const row = {
+      id: 'n1', project_id: 'p1', url_pattern: '/users/:id',
+      page_title: 'Users', description: '',
+      first_seen_at: '2026-01-01T00:00:00Z', last_seen_at: '2026-01-01T00:00:00Z',
+    };
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: row, error: null }),
+        }),
+      }),
+    });
+
+    const result = await upsertNode('p1', 'https://app.com/users/123', 'Users');
+
+    expect(mockFrom).toHaveBeenCalledWith('nav_nodes');
+    expect(result).toEqual(expect.objectContaining({
+      id: 'n1', projectId: 'p1', urlPattern: '/users/:id', pageTitle: 'Users',
+    }));
+  });
+
+  it('returns null when supabase is disabled', async () => {
+    const { isSupabaseEnabled } = await import('../src/supabase.js');
+    (isSupabaseEnabled as any).mockReturnValueOnce(false);
+    const result = await upsertNode('p1', 'https://app.com/page');
+    expect(result).toBeNull();
+  });
+
+  it('returns null on supabase error', async () => {
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: null, error: { message: 'fail' } }),
+        }),
+      }),
+    });
+    const result = await upsertNode('p1', 'https://app.com/page');
+    expect(result).toBeNull();
+  });
+});
+
+describe('upsertEdge', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('upserts a nav_edge and returns mapped NavEdge', async () => {
+    const row = {
+      id: 'e1', project_id: 'p1', from_node_id: 'n1', to_node_id: 'n2',
+      action_label: 'click: Settings', selector: null,
+      discovered_at: '2026-01-01T00:00:00Z',
+    };
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: row, error: null }),
+        }),
+      }),
+    });
+
+    const result = await upsertEdge('p1', 'n1', 'n2', 'click: Settings');
+
+    expect(mockFrom).toHaveBeenCalledWith('nav_edges');
+    expect(result).toEqual(expect.objectContaining({
+      id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', actionLabel: 'click: Settings',
+    }));
+  });
+});
+
+describe('linkFeatureToNode', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('inserts into nav_node_features', async () => {
+    const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+    mockFrom.mockReturnValue({ upsert: mockUpsert });
+
+    await linkFeatureToNode('n1', 'f1');
+
+    expect(mockFrom).toHaveBeenCalledWith('nav_node_features');
+    expect(mockUpsert).toHaveBeenCalledWith(
+      { nav_node_id: 'n1', feature_id: 'f1' },
+      { onConflict: 'nav_node_id,feature_id', ignoreDuplicates: true }
+    );
+  });
+});
+
+describe('getGraph', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('loads nodes, edges, and feature names', async () => {
+    const nodeRows = [
+      { id: 'n1', project_id: 'p1', url_pattern: '/dashboard', page_title: 'Dashboard', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' },
+    ];
+    const edgeRows = [
+      { id: 'e1', project_id: 'p1', from_node_id: 'n1', to_node_id: 'n2', action_label: 'click', selector: null, discovered_at: '2026-01-01' },
+    ];
+    const featureLinks = [
+      { nav_node_id: 'n1', memory_features: { name: 'Search' } },
+    ];
+
+    mockFrom
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: nodeRows, error: null }),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: edgeRows, error: null }),
+        }),
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({ data: featureLinks, error: null }),
+        }),
+      });
+
+    const graph = await getGraph('p1');
+
+    expect(graph.nodes).toHaveLength(1);
+    expect(graph.nodes[0].features).toEqual(['Search']);
+    expect(graph.edges).toHaveLength(1);
+  });
+
+  it('returns empty graph when supabase is disabled', async () => {
+    const { isSupabaseEnabled } = await import('../src/supabase.js');
+    (isSupabaseEnabled as any).mockReturnValueOnce(false);
+    const graph = await getGraph('p1');
+    expect(graph).toEqual({ nodes: [], edges: [] });
   });
 });
