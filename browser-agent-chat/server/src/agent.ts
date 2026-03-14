@@ -517,6 +517,58 @@ export async function executeTask(
   }) ?? null;
   session.currentTrace = trace;
 
+  // Try navigation shortcut if project has nav graph data
+  if (session.projectId && session.currentUrl) {
+    try {
+      const graph = await getGraph(session.projectId);
+
+      if (graph.nodes.length > 0) {
+        // Check if task mentions a known page title or URL segment
+        const targetNode = findNodeByUrlOrTitle(graph.nodes, task);
+
+        if (targetNode) {
+          const navSpan = trace?.span({ name: 'muscle-memory-nav-shortcut' });
+          broadcast({ type: 'thought', content: `Navigating to ${targetNode.pageTitle || targetNode.urlPattern} via shortcut...` });
+
+          const navSuccess = await replayNavigation(
+            session.connector.getHarness().page,
+            session.projectId,
+            session.currentUrl,
+            task,
+          );
+
+          if (navSuccess) {
+            navSpan?.end({ output: { success: true, target: targetNode.urlPattern } });
+            broadcast({ type: 'thought', content: `Navigated to ${targetNode.pageTitle || targetNode.urlPattern} via shortcut` });
+
+            // Capture screenshot after navigation
+            try {
+              const buf = await session.connector.getHarness().page.screenshot({ type: 'png' });
+              broadcast({ type: 'screenshot', data: buf.toString('base64') });
+              broadcast({ type: 'nav', url: session.connector.getHarness().page.url() });
+            } catch {}
+
+            // If the task was just navigation, we're done
+            const isNavOnly = /^(go to|navigate to|open)\s/i.test(task);
+            if (isNavOnly) {
+              trace?.update({ output: { success: true, method: 'nav-shortcut' } });
+              broadcast({ type: 'taskComplete', success: true });
+              session.currentTrace = null;
+              broadcast({ type: 'status', status: 'idle' });
+              return;
+            }
+            // Otherwise continue with the task (now on the right page)
+          } else {
+            navSpan?.end({ output: { success: false } });
+          }
+        }
+      }
+    } catch (err) {
+      // Nav shortcut failed silently — fall through to LLM
+      console.error('[TASK] Nav shortcut error:', err);
+    }
+  }
+
   try {
     const span = trace?.span({ name: 'agent-act', input: { prompt } });
     await session.agent.act(prompt);
