@@ -50,7 +50,7 @@ export async function markSuccess(patternId: string): Promise<void> {
   if (error) console.error('[MUSCLE-MEMORY] markSuccess error:', error);
 
   // Atomically increment use_count
-  await supabase!.rpc('increment_pattern_use_count', { pattern_uuid: patternId }).catch(() => {});
+  await supabase!.rpc('increment_pattern_use_count', { pattern_uuid: patternId }).then(undefined, () => {});
 }
 
 /** Increment consecutive_failures; mark stale if >= 3. */

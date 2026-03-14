@@ -5,7 +5,9 @@ import { saveMessage, createSuggestion } from './db.js';
 import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
-import { recordNavigation } from './nav-graph.js';
+import { recordNavigation, getGraph } from './nav-graph.js';
+import type { LearnedPattern } from './types.js';
+import { loadPatterns, replayLogin, replayNavigation, recordLoginPattern, markSuccess, incrementFailures, findNodeByUrlOrTitle } from './muscle-memory.js';
 import { getLangfuse } from './langfuse.js';
 import type { LangfuseTraceClient } from 'langfuse';
 
@@ -15,6 +17,7 @@ export interface AgentSession {
   sessionId: string | null;
   projectId: string | null;
   memoryContext: string;
+  patterns: LearnedPattern[];
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
   /** Resolves when background login finishes (or immediately if no login). */
   loginDone: Promise<void>;
@@ -55,6 +58,9 @@ export async function createAgent(
   // Load memory context for prompt injection
   const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
   timer.step('load_memory');
+
+  const patterns = projectId ? await loadPatterns(projectId) : [];
+  timer.step('load_patterns');
 
   timer.step('acquire_browser');
   broadcast({ type: 'thought', content: 'Connecting to browser via CDP...' });
@@ -111,6 +117,7 @@ export async function createAgent(
     sessionId,
     projectId,
     memoryContext,
+    patterns,
     stepsHistory,
     loginDone: Promise.resolve(),
     lastAction: null,
