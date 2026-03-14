@@ -5,7 +5,6 @@ import { saveMessage, createSuggestion } from './db.js';
 import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
-import * as browserPool from './browserPool.js';
 
 export interface AgentSession {
   agent: BrowserAgent;
@@ -35,10 +34,11 @@ class StepTimer {
 }
 
 export async function createAgent(
-  url: string,
   broadcast: (msg: ServerMessage) => void,
+  cdpEndpoint: string,
   sessionId: string | null = null,
   projectId: string | null = null,
+  url?: string,
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
   const timer = new StepTimer();
@@ -47,13 +47,11 @@ export async function createAgent(
   const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
   timer.step('load_memory');
 
-  // Acquire a pre-warmed browser for fast startup
-  const browser = await browserPool.acquire();
   timer.step('acquire_browser');
-  broadcast({ type: 'thought', content: 'Browser ready, loading page...' });
+  broadcast({ type: 'thought', content: 'Connecting to browser via CDP...' });
 
   const agent = await startBrowserAgent({
-    url,
+    ...(url ? { url } : {}),
     narrate: false,
     llm: {
       provider: 'claude-code',
@@ -62,7 +60,7 @@ export async function createAgent(
       }
     },
     browser: {
-      instance: browser,
+      cdp: cdpEndpoint,
     },
   });
 
@@ -171,7 +169,11 @@ export async function createAgent(
     stepsHistory,
     loginDone: Promise.resolve(), // Will be replaced by executeLogin
     close: async () => {
-      await agent.stop();
+      // Do NOT call agent.stop() — it closes the browser context.
+      // Browser lifecycle is managed by browserManager.killBrowser().
+      // Just drop event listeners to prevent memory leaks.
+      agent.events.removeAllListeners();
+      agent.browserAgentEvents.removeAllListeners();
     }
   };
 }
