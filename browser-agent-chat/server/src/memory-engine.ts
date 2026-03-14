@@ -62,22 +62,6 @@ As you perform this task:
 }
 
 /**
- * Build an exploration prompt for Explore & Learn mode.
- */
-export function buildExplorePrompt(context: string | null): string {
-  return `Quickly explore this application. Look at the current page and navigate to 3-5 main sections visible in the navigation/sidebar. Spend no more than a few clicks per section. Note what features and pages you find.
-
-Context about this app: ${context || 'No context provided, discover freely.'}
-
-Guidelines:
-- Click through the main navigation items (sidebar, top menu)
-- Visit each main section briefly — just see what's there
-- Do NOT fill out forms or interact deeply
-- Do NOT navigate more than 2 levels deep
-- Stop after visiting 3-5 sections`;
-}
-
-/**
  * Load memory for a project and build the serialized context.
  */
 export async function loadMemoryContext(projectId: string): Promise<string> {
