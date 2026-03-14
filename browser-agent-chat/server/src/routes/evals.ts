@@ -9,7 +9,7 @@ import {
   getEvalRun,
   listEvalResults,
   updateEvalRun,
-  updateProjectEvalSchedule,
+  updateAgentEvalSchedule,
 } from '../db.js';
 import { CheckArraySchema } from '../eval/checks.js';
 import { startEvalRun, cancelRun } from '../eval/eval-runner.js';
@@ -27,20 +27,20 @@ const broadcast: (msg: ServerMessage) => void = (msg) => {
 
 // GET /api/projects/:id/evals/cases — list eval cases
 router.get('/cases', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const filters: { status?: 'active' | 'disabled'; tags?: string[] } = {};
   if (req.query.status) filters.status = req.query.status as 'active' | 'disabled';
   if (req.query.tags) {
     const raw = req.query.tags as string;
     filters.tags = raw.split(',').map(t => t.trim()).filter(Boolean);
   }
-  const cases = await listEvalCases(projectId, filters);
+  const cases = await listEvalCases(agentId, filters);
   res.json({ cases });
 });
 
 // POST /api/projects/:id/evals/cases — create eval case
 router.post('/cases', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const { name, task_prompt, source_type, source_id, checks, llm_judge_criteria, tags, status } = req.body;
 
   if (!name || !task_prompt || !source_type) {
@@ -56,7 +56,7 @@ router.post('/cases', requireAuth, async (req, res) => {
   }
 
   const evalCase = await createEvalCase({
-    project_id: projectId,
+    agent_id: agentId,
     name,
     task_prompt,
     source_type: source_type ?? 'manual',
@@ -107,7 +107,7 @@ router.delete('/cases/:caseId', requireAuth, async (req, res) => {
 
 // POST /api/projects/:id/evals/run — trigger a new eval run
 router.post('/run', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const { trigger = 'manual', tags } = req.body;
 
   const validTriggers = ['manual', 'scheduled', 'ci'];
@@ -118,16 +118,16 @@ router.post('/run', requireAuth, async (req, res) => {
 
   const parsedTags = Array.isArray(tags) ? tags as string[] : undefined;
 
-  const run = await startEvalRun(projectId, trigger, broadcast, parsedTags);
+  const run = await startEvalRun(agentId, trigger, broadcast, parsedTags);
   if (!run) { res.status(500).json({ error: 'Failed to start eval run' }); return; }
   res.status(201).json({ run });
 });
 
 // GET /api/projects/:id/evals/runs — list eval runs
 router.get('/runs', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const limit = parseInt(req.query.limit as string) || 20;
-  const runs = await listEvalRuns(projectId, limit);
+  const runs = await listEvalRuns(agentId, limit);
   res.json({ runs });
 });
 
@@ -140,7 +140,7 @@ router.get('/runs/:runId', requireAuth, async (req, res) => {
   const results = await listEvalResults(runId);
 
   // Enrich results with case names and source types
-  const cases = await listEvalCases(run.project_id);
+  const cases = await listEvalCases(run.agent_id);
   const caseMap = new Map(cases.map(c => [c.id, c]));
   const enrichedResults = results.map(r => ({
     ...r,
@@ -176,14 +176,14 @@ router.post('/runs/:runId/cancel', requireAuth, async (req, res) => {
 
 // POST /api/projects/:id/evals/seed — seed eval cases from features/flows/findings
 router.post('/seed', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
-  const result = await seedEvalCases(projectId);
+  const agentId = req.params.id as string;
+  const result = await seedEvalCases(agentId);
   res.json(result);
 });
 
 // POST /api/projects/:id/evals/schedule — set cron schedule
 router.post('/schedule', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const { cron_schedule } = req.body;
 
   // Allow null to clear the schedule
@@ -192,7 +192,7 @@ router.post('/schedule', requireAuth, async (req, res) => {
     return;
   }
 
-  const success = await updateProjectEvalSchedule(projectId, cron_schedule ?? null);
+  const success = await updateAgentEvalSchedule(agentId, cron_schedule ?? null);
   if (!success) { res.status(500).json({ error: 'Failed to update eval schedule' }); return; }
   res.json({ success: true, cron_schedule: cron_schedule ?? null });
 });

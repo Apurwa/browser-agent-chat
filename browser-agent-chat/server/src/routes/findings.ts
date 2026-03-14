@@ -7,7 +7,7 @@ const router = Router({ mergeParams: true });
 
 // List findings with filters
 router.get('/', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
+  const agentId = req.params.id as string;
   const filters: { type?: FindingType; severity?: Criticality; status?: FindingStatus } = {};
   if (req.query.type) filters.type = req.query.type as FindingType;
   if (req.query.severity) filters.severity = req.query.severity as Criticality;
@@ -16,7 +16,7 @@ router.get('/', requireAuth, async (req, res) => {
   const limit = parseInt(req.query.limit as string) || 50;
   const offset = parseInt(req.query.offset as string) || 0;
 
-  const result = await listFindings(projectId, filters, limit, offset);
+  const result = await listFindings(agentId, filters, limit, offset);
   res.json(result);
 });
 

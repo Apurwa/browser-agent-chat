@@ -14,15 +14,15 @@ const router = Router({ mergeParams: true });
 
 // GET /api/projects/:id/suggestions
 router.get('/', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
-  const suggestions = await listPendingSuggestions(projectId);
+  const agentId = req.params.id as string;
+  const suggestions = await listPendingSuggestions(agentId);
   res.json(suggestions);
 });
 
 // GET /api/projects/:id/suggestions/count
 router.get('/count', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
-  const count = await getPendingSuggestionCount(projectId);
+  const agentId = req.params.id as string;
+  const count = await getPendingSuggestionCount(agentId);
   res.json({ count });
 });
 
@@ -54,15 +54,15 @@ router.put('/:suggestionId', requireAuth, async (req, res) => {
 
 // POST /api/projects/:id/suggestions/accept-all
 router.post('/accept-all', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
-  const count = await bulkAcceptSuggestions(projectId);
+  const agentId = req.params.id as string;
+  const count = await bulkAcceptSuggestions(agentId);
   res.json({ accepted: count });
 });
 
 // POST /api/projects/:id/suggestions/dismiss-all
 router.post('/dismiss-all', requireAuth, async (req, res) => {
-  const projectId = req.params.id as string;
-  const ok = await bulkDismissSuggestions(projectId);
+  const agentId = req.params.id as string;
+  const ok = await bulkDismissSuggestions(agentId);
   res.json({ success: ok });
 });
 
