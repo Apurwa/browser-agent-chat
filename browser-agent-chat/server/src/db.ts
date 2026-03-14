@@ -1,4 +1,5 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
+import { normalizeUrl } from './nav-graph.js';
 import type {
   Project, Feature, Flow, Finding, Session, Message,
   EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
@@ -431,7 +432,33 @@ export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
   // Process by type
   if (type === 'feature') {
     const fd = suggData as FeatureSuggestionData;
-    await createFeature(projectId, fd.name, fd.description, fd.criticality, fd.expected_behaviors);
+    const created = await createFeature(projectId, fd.name, fd.description, fd.criticality, fd.expected_behaviors);
+
+    // Link feature to nav node if discovery URL is known
+    if (created && fd.discovered_at_url) {
+      try {
+        const urlPattern = normalizeUrl(fd.discovered_at_url);
+        const { data: node } = await supabase!
+          .from('nav_nodes')
+          .select('id')
+          .eq('project_id', projectId)
+          .eq('url_pattern', urlPattern)
+          .maybeSingle();
+
+        if (node) {
+          await supabase!
+            .from('nav_node_features')
+            .upsert(
+              { nav_node_id: node.id, feature_id: created.id },
+              { onConflict: 'nav_node_id,feature_id', ignoreDuplicates: true }
+            );
+        } else {
+          console.warn(`[DB] No nav_node found for URL pattern "${urlPattern}" — skipping feature link`);
+        }
+      } catch (err) {
+        console.warn('[DB] Failed to link feature to nav node:', err);
+      }
+    }
   } else if (type === 'flow') {
     const fd = suggData as FlowSuggestionData;
     let feature = await findFeatureByName(projectId, fd.feature_name);
