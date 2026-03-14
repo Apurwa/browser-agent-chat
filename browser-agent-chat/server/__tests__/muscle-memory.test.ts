@@ -198,9 +198,31 @@ describe('findNodeByUrlOrTitle', () => {
     expect(result).toBeNull();
   });
 
-  it('prefers exact title match over URL match', () => {
+  it('prefers longer title match over shorter', () => {
     const result = findNodeByUrlOrTitle(nodes, 'Account Settings');
     expect(result?.id).toBe('n3');
+  });
+
+  it('matches when query is a natural language task containing a page title', () => {
+    expect(findNodeByUrlOrTitle(nodes, 'go to pipelines')?.id).toBe('n2');
+    expect(findNodeByUrlOrTitle(nodes, 'navigate to the dashboard')?.id).toBe('n1');
+    expect(findNodeByUrlOrTitle(nodes, 'open Account Settings page')?.id).toBe('n3');
+  });
+
+  it('matches by URL segment when title does not match', () => {
+    const noTitleNodes = [
+      { id: 'n4', projectId: 'p1', urlPattern: '/reports/analytics', pageTitle: '', description: '', firstSeenAt: '', lastSeenAt: '', features: [] as string[] },
+    ];
+    const result = findNodeByUrlOrTitle(noTitleNodes, 'check the analytics');
+    expect(result?.id).toBe('n4');
+  });
+
+  it('ignores short URL segments to avoid false matches', () => {
+    const shortSegmentNodes = [
+      { id: 'n5', projectId: 'p1', urlPattern: '/a/b', pageTitle: '', description: '', firstSeenAt: '', lastSeenAt: '', features: [] as string[] },
+    ];
+    const result = findNodeByUrlOrTitle(shortSegmentNodes, 'a task about b');
+    expect(result).toBeNull();
   });
 });
 

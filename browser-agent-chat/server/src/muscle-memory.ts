@@ -97,27 +97,48 @@ export function stripActionPrefix(label: string): string {
   return label.replace(/^\w+:\s*/, '').trim();
 }
 
-/** Find a nav node by page title or URL path segment. */
+/** Escape special regex characters in a string. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Find a nav node whose page title or URL path segment appears in the query.
+ * Designed to handle both direct queries ("pipelines") and natural language
+ * tasks ("go to the pipelines page"). Prefers longer (more specific) matches.
+ */
 export function findNodeByUrlOrTitle(nodes: NavNode[], query: string): NavNode | null {
   const q = query.toLowerCase();
 
-  // 1. Exact page_title match (strongest signal)
-  const exactTitle = nodes.find(n =>
-    n.pageTitle && n.pageTitle.toLowerCase() === q
-  );
-  if (exactTitle) return exactTitle;
-
-  // 2. Word-boundary match on URL path segments
-  const byUrl = nodes.find(n => {
-    const segments = n.urlPattern.split('/').filter(Boolean);
-    return segments.some(seg => seg.toLowerCase() === q);
+  // 1. Check if query contains a page title (word-boundary match, longest first)
+  const titleMatches = nodes.filter(n => {
+    if (!n.pageTitle || n.pageTitle.length < 2) return false;
+    const title = escapeRegex(n.pageTitle.toLowerCase());
+    return new RegExp(`\\b${title}\\b`).test(q);
   });
-  if (byUrl) return byUrl;
 
-  // 3. Substring match on page_title (weakest)
-  return nodes.find(n =>
-    n.pageTitle && n.pageTitle.toLowerCase().includes(q)
-  ) || null;
+  if (titleMatches.length > 0) {
+    // Prefer the longest title match (most specific)
+    titleMatches.sort((a, b) => (b.pageTitle?.length || 0) - (a.pageTitle?.length || 0));
+    return titleMatches[0];
+  }
+
+  // 2. Check if query contains a URL path segment (word-boundary match)
+  const urlMatches = nodes.filter(n => {
+    const segments = n.urlPattern.split('/').filter(s => s.length >= 3);
+    return segments.some(seg => {
+      const escaped = escapeRegex(seg.toLowerCase());
+      return new RegExp(`\\b${escaped}\\b`).test(q);
+    });
+  });
+
+  if (urlMatches.length > 0) {
+    // Prefer the longest URL segment match
+    urlMatches.sort((a, b) => b.urlPattern.length - a.urlPattern.length);
+    return urlMatches[0];
+  }
+
+  return null;
 }
 
 /** BFS shortest path through nav edges. Operates on in-memory graph. */
@@ -267,7 +288,7 @@ export async function upsertLoginPattern(
   if (existing) {
     const { error } = await supabase!
       .from('learned_patterns')
-      .update(payload)
+      .update({ ...payload, use_count: 0 })
       .eq('id', existing.id);
     if (error) console.error('[MUSCLE-MEMORY] upsertLoginPattern update error:', error);
   } else {
