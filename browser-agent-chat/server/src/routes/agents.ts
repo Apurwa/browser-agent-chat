@@ -133,7 +133,7 @@ router.get('/:id/sessions', requireAuth, async (req, res) => {
 // GET tasks for session
 router.get('/:id/sessions/:sid/tasks', requireAuth, async (req, res) => {
   try {
-    const tasks = await getTasksBySession(req.params.sid);
+    const tasks = await getTasksBySession(req.params.sid as string);
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch tasks' });
@@ -143,7 +143,7 @@ router.get('/:id/sessions/:sid/tasks', requireAuth, async (req, res) => {
 // GET steps for task
 router.get('/:id/tasks/:tid/steps', requireAuth, async (req, res) => {
   try {
-    const steps = await getStepsByTask(req.params.tid);
+    const steps = await getStepsByTask(req.params.tid as string);
     res.json(steps);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch steps' });
