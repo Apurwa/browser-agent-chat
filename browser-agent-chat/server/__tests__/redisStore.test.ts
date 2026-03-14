@@ -25,10 +25,12 @@ const mockRedis = {
 };
 
 vi.mock('ioredis', () => {
+  function MockRedis() {
+    return mockRedis;
+  }
   return {
-    default: function MockRedis() {
-      return mockRedis;
-    },
+    default: MockRedis,
+    Redis: MockRedis,
   };
 });
 

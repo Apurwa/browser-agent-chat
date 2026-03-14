@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis } from 'ioredis';
 import type { ChatMessage, RedisSession, RedisSessionStatus } from './types.js';
 
 let redis: Redis;
@@ -76,7 +76,7 @@ export async function pushMessage(projectId: string, msg: ChatMessage): Promise<
 
 export async function getMessages(projectId: string): Promise<ChatMessage[]> {
   const raw = await redis.lrange(`messages:${projectId}`, 0, -1);
-  return raw.map(r => JSON.parse(r));
+  return raw.map((r: string) => JSON.parse(r));
 }
 
 // -- Screenshot --
