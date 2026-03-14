@@ -4,7 +4,8 @@ import type {
   Project, Feature, Flow, Finding, Session, Message,
   EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
   Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint,
-  ChatMessage
+  ChatMessage,
+  EvalCase, EvalRun, EvalResult, EvalRunTrigger, EvalRunStatus
 } from './types.js';
 
 // === Projects ===
@@ -577,4 +578,175 @@ export async function bulkDismissSuggestions(projectId: string): Promise<boolean
     .eq('project_id', projectId)
     .eq('status', 'pending');
   return !error;
+}
+
+// === Eval Cases ===
+
+export async function createEvalCase(evalCase: Omit<EvalCase, 'id' | 'created_at' | 'updated_at'>): Promise<EvalCase | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_cases')
+    .insert(evalCase)
+    .select()
+    .single();
+  if (error) { console.error('createEvalCase error:', error); return null; }
+  return data;
+}
+
+export async function listEvalCases(
+  projectId: string,
+  filters?: { status?: EvalCase['status']; tags?: string[] }
+): Promise<EvalCase[]> {
+  if (!isSupabaseEnabled()) return [];
+  let query = supabase!
+    .from('eval_cases')
+    .select('*')
+    .eq('project_id', projectId);
+
+  if (filters?.status) query = query.eq('status', filters.status);
+  if (filters?.tags && filters.tags.length > 0) query = query.overlaps('tags', filters.tags);
+
+  const { data, error } = await query.order('created_at', { ascending: true });
+  if (error) { console.error('listEvalCases error:', error); return []; }
+  return data ?? [];
+}
+
+export async function getEvalCase(caseId: string): Promise<EvalCase | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_cases')
+    .select('*')
+    .eq('id', caseId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+export async function updateEvalCase(
+  caseId: string,
+  updates: Partial<Pick<EvalCase, 'name' | 'task_prompt' | 'checks' | 'llm_judge_criteria' | 'tags' | 'status'>>
+): Promise<EvalCase | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_cases')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', caseId)
+    .select()
+    .single();
+  if (error) { console.error('updateEvalCase error:', error); return null; }
+  return data;
+}
+
+export async function deleteEvalCase(caseId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!.from('eval_cases').delete().eq('id', caseId);
+  return !error;
+}
+
+// === Eval Runs ===
+
+export async function createEvalRun(projectId: string, trigger: EvalRunTrigger): Promise<EvalRun | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_runs')
+    .insert({ project_id: projectId, trigger, status: 'running' as EvalRunStatus })
+    .select()
+    .single();
+  if (error) { console.error('createEvalRun error:', error); return null; }
+  return data;
+}
+
+export async function getEvalRun(runId: string): Promise<EvalRun | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_runs')
+    .select('*')
+    .eq('id', runId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+export async function listEvalRuns(projectId: string, limit = 20): Promise<EvalRun[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('eval_runs')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('started_at', { ascending: false })
+    .limit(limit);
+  if (error) { console.error('listEvalRuns error:', error); return []; }
+  return data ?? [];
+}
+
+export async function updateEvalRun(
+  runId: string,
+  updates: Partial<Pick<EvalRun, 'status' | 'summary' | 'completed_at'>>
+): Promise<EvalRun | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_runs')
+    .update(updates)
+    .eq('id', runId)
+    .select()
+    .single();
+  if (error) { console.error('updateEvalRun error:', error); return null; }
+  return data;
+}
+
+export async function getEvalRunStatus(runId: string): Promise<EvalRunStatus | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_runs')
+    .select('status')
+    .eq('id', runId)
+    .single();
+  if (error) return null;
+  return data?.status ?? null;
+}
+
+// === Eval Results ===
+
+export async function createEvalResult(result: Omit<EvalResult, 'id'>): Promise<EvalResult | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('eval_results')
+    .insert(result)
+    .select()
+    .single();
+  if (error) { console.error('createEvalResult error:', error); return null; }
+  return data;
+}
+
+export async function listEvalResults(runId: string): Promise<EvalResult[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('eval_results')
+    .select('*')
+    .eq('run_id', runId)
+    .order('case_id', { ascending: true });
+  if (error) { console.error('listEvalResults error:', error); return []; }
+  return data ?? [];
+}
+
+// === Project Eval Schedule ===
+
+export async function updateProjectEvalSchedule(projectId: string, cronSchedule: string | null): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!
+    .from('projects')
+    .update({ eval_cron_schedule: cronSchedule, updated_at: new Date().toISOString() })
+    .eq('id', projectId);
+  if (error) { console.error('updateProjectEvalSchedule error:', error); return false; }
+  return true;
+}
+
+export async function getProjectsWithEvalSchedule(): Promise<Project[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('projects')
+    .select('*')
+    .not('eval_cron_schedule', 'is', null);
+  if (error) { console.error('getProjectsWithEvalSchedule error:', error); return []; }
+  return data ?? [];
 }
