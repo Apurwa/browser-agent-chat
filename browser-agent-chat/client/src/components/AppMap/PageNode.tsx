@@ -1,11 +1,12 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
+import type { MapFeature, MapSuggestion } from './useAppMap';
 
 export interface PageNodeData {
   pageTitle: string;
   urlPattern: string;
-  features: Array<{ criticality: string; [key: string]: unknown }>;
-  pendingSuggestions: unknown[];
+  features: MapFeature[];
+  pendingSuggestions: MapSuggestion[];
   isNew?: boolean;
   isSelected?: boolean;
   [key: string]: unknown;

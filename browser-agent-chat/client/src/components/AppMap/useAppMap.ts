@@ -3,33 +3,53 @@ import { useAuth } from '../../hooks/useAuth';
 import { useWS } from '../../contexts/WebSocketContext';
 import { apiAuthFetch } from '../../lib/api';
 
+export interface MapFlowStep {
+  order: number;
+  description: string;
+  url?: string;
+}
+
+export interface MapCheckpoint {
+  description: string;
+  expected: string;
+}
+
+export interface MapFlow {
+  id: string;
+  name: string;
+  steps: MapFlowStep[];
+  checkpoints: MapCheckpoint[];
+  criticality: string;
+}
+
+export interface MapFeature {
+  id: string;
+  name: string;
+  description: string | null;
+  criticality: string;
+  expected_behaviors: string[];
+  flows?: MapFlow[];
+}
+
+export interface MapSuggestion {
+  id: string;
+  type: string;
+  status: string;
+  data: Record<string, unknown>;
+  project_id: string;
+  source_session: string | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
 export interface MapNode {
   id: string;
   urlPattern: string;
   pageTitle: string;
   firstSeenAt: string;
   lastSeenAt: string;
-  features: Array<{
-    id: string;
-    name: string;
-    description: string | null;
-    criticality: string;
-    expected_behaviors: string[];
-    flows: Array<{
-      id: string;
-      name: string;
-      steps: Array<{ action: string; target?: string }>;
-      checkpoints: string[];
-      criticality: string;
-    }>;
-  }>;
-  pendingSuggestions: Array<{
-    id: string;
-    type: string;
-    status: string;
-    data: Record<string, unknown>;
-    project_id: string;
-  }>;
+  features: MapFeature[];
+  pendingSuggestions: MapSuggestion[];
   isNew?: boolean;
 }
 

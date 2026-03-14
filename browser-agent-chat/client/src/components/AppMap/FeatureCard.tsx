@@ -1,28 +1,14 @@
 import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { apiAuthFetch } from '../../lib/api';
+import type { MapFeature } from './useAppMap';
 
 const CRITICALITY_COLORS: Record<string, string> = {
   critical: '#ef4444', high: '#f59e0b', medium: '#a78bfa', low: '#22c55e',
 };
 
-interface FeatureForCard {
-  id: string;
-  name: string;
-  description: string | null;
-  criticality: string;
-  expected_behaviors: string[];
-  flows: Array<{
-    id: string;
-    name: string;
-    steps: Array<{ action: string; target?: string }>;
-    checkpoints: string[];
-    criticality: string;
-  }>;
-}
-
 interface FeatureCardProps {
-  feature: FeatureForCard;
+  feature: MapFeature;
   projectId: string;
   pageTitle: string;
   urlPattern: string;
