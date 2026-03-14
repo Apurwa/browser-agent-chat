@@ -252,7 +252,8 @@ export async function executeLogin(
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
     name: 'login',
-    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    sessionId: session.sessionId ?? undefined,
+    metadata: { projectId: session.projectId },
     input: { username: credentials.username },
   }) ?? null;
   session.currentTrace = trace;
@@ -367,7 +368,8 @@ export async function executeExplore(
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
     name: 'explore',
-    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    sessionId: session.sessionId ?? undefined,
+    metadata: { projectId: session.projectId },
     input: { context },
   }) ?? null;
   session.currentTrace = trace;
@@ -512,7 +514,8 @@ export async function executeTask(
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
     name: 'user-task',
-    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    sessionId: session.sessionId ?? undefined,
+    metadata: { projectId: session.projectId },
     input: { task },
   }) ?? null;
   session.currentTrace = trace;

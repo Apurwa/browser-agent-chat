@@ -12,6 +12,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px 32px;
+  position: relative;
+  z-index: 10;
 }
 
 .home-logo {
@@ -126,13 +128,13 @@
 .home-url-form {
   display: flex;
   align-items: center;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-primary);
+  background: var(--bg-card);
+  border: none;
   border-radius: 12px;
   padding: 4px 4px 4px 16px;
   width: 520px;
   max-width: 90%;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .home-url-form:focus-within {
