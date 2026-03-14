@@ -4,13 +4,13 @@ import { WebSocketServer, WebSocket } from 'ws';
 import http from 'node:http';
 import 'dotenv/config';
 
-import projectsRouter from './routes/projects.js';
+import agentsRouter from './routes/agents.js';
 import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
 import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
 import { executeTask, executeExplore, executeLogin } from './agent.js';
-import { getProject, createSession } from './db.js';
+import { getAgent, createSession, createTask, updateTask } from './db.js';
 import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
@@ -55,23 +55,26 @@ app.post('/api/heygen/token', async (_req, res) => {
 });
 
 // REST API routes
-app.use('/api/projects', projectsRouter);
-app.use('/api/projects/:id/findings', findingsRouter);
-app.use('/api/projects/:id/memory', memoryRouter);
-app.use('/api/projects/:id/suggestions', suggestionsRouter);
-app.use('/api/projects/:id/evals', evalsRouter);
+app.use('/api/agents', agentsRouter);
+app.use('/api/agents/:id/findings', findingsRouter);
+app.use('/api/agents/:id/memory', memoryRouter);
+app.use('/api/agents/:id/suggestions', suggestionsRouter);
+app.use('/api/agents/:id/evals', evalsRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
 
-// Track which project each client is associated with
-const clientProjects = new Map<WebSocket, string>();
+// Track which agent each client is associated with
+const clientAgents = new Map<WebSocket, string>();
 
-// Broadcast a ServerMessage to all WebSocket clients connected to a project.
+// Track active tasks per agent
+const activeTasks = new Map<string, { taskId: string; stepCount: number }>();
+
+// Broadcast a ServerMessage to all WebSocket clients connected to an agent.
 // Used by eval routes and any future server-initiated push.
-export function broadcastToProject(projectId: string, msg: ServerMessage): void {
-  for (const [client, pid] of clientProjects) {
-    if (pid === projectId && client.readyState === WebSocket.OPEN) {
+export function broadcastToAgent(agentId: string, msg: ServerMessage): void {
+  for (const [client, aid] of clientAgents) {
+    if (aid === agentId && client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify(msg));
     }
   }
@@ -102,147 +105,185 @@ wss.on('connection', (ws: WebSocket) => {
     }
 
     if (msg.type === 'start') {
-      console.log('[START] Starting agent for project:', msg.projectId);
+      console.log('[START] Starting agent for:', msg.agentId);
 
-      const prevProjectId = clientProjects.get(ws);
-      if (prevProjectId) {
-        sessionManager.removeClient(prevProjectId, ws);
-        clientProjects.delete(ws);
+      const prevAgentId = clientAgents.get(ws);
+      if (prevAgentId) {
+        sessionManager.removeClient(prevAgentId, ws);
+        clientAgents.delete(ws);
       }
 
-      const hasExisting = await sessionManager.hasSession(msg.projectId);
-      if (hasExisting && sessionManager.getAgent(msg.projectId)) {
+      const hasExisting = await sessionManager.hasSession(msg.agentId);
+      if (hasExisting && sessionManager.getAgent(msg.agentId)) {
         console.log('[START] Reattaching to existing session');
-        sessionManager.addClient(msg.projectId, ws);
-        clientProjects.set(ws, msg.projectId);
-        await sessionManager.sendSnapshot(msg.projectId, ws);
+        sessionManager.addClient(msg.agentId, ws);
+        clientAgents.set(ws, msg.agentId);
+        await sessionManager.sendSnapshot(msg.agentId, ws);
         return;
       }
 
       ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
 
-      // Register client→project mapping early so viewport messages
-      // arriving during async agent creation can find the project.
-      clientProjects.set(ws, msg.projectId);
+      // Register client→agent mapping early so viewport messages
+      // arriving during async agent creation can find the agent.
+      clientAgents.set(ws, msg.agentId);
 
       try {
-        const project = await getProject(msg.projectId);
-        if (!project) {
-          clientProjects.delete(ws);
-          ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
+        const agent = await getAgent(msg.agentId);
+        if (!agent) {
+          clientAgents.delete(ws);
+          ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
           ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
           return;
         }
 
         let credentials: { username: string; password: string } | null = null;
-        if (project.credentials) {
-          try { credentials = decryptCredentials(project.credentials); } catch {}
+        if (agent.credentials) {
+          try { credentials = decryptCredentials(agent.credentials); } catch {}
         }
 
-        const dbSessionId = await createSession(project.id);
+        const dbSessionId = await createSession(agent.id);
 
         const agentSession = await sessionManager.createSession(
-          msg.projectId, msg.resumeUrl || project.url, dbSessionId
+          msg.agentId, msg.resumeUrl || agent.url, dbSessionId
         );
 
-        sessionManager.addClient(msg.projectId, ws);
+        sessionManager.addClient(msg.agentId, ws);
+
+        // Tell client the agent is ready
+        ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
         if (credentials) {
-          const loginBroadcast = sessionManager.makeBroadcast(msg.projectId);
+          const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
           agentSession.loginDone = executeLogin(agentSession, credentials, loginBroadcast).catch(err => {
             console.error('[LOGIN] Background login error:', err);
           });
         }
       } catch (err) {
         console.error('[START] Error creating agent:', err);
-        clientProjects.delete(ws);
+        clientAgents.delete(ws);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       }
 
     } else if (msg.type === 'resume') {
-      const prevProjectId = clientProjects.get(ws);
-      if (prevProjectId && prevProjectId !== msg.projectId) {
-        sessionManager.removeClient(prevProjectId, ws);
+      const prevAgentId = clientAgents.get(ws);
+      if (prevAgentId && prevAgentId !== msg.agentId) {
+        sessionManager.removeClient(prevAgentId, ws);
       }
 
-      const exists = await sessionManager.hasSession(msg.projectId);
+      const exists = await sessionManager.hasSession(msg.agentId);
       if (exists) {
-        sessionManager.addClient(msg.projectId, ws);
-        clientProjects.set(ws, msg.projectId);
-        await sessionManager.sendSnapshot(msg.projectId, ws);
+        sessionManager.addClient(msg.agentId, ws);
+        clientAgents.set(ws, msg.agentId);
+        await sessionManager.sendSnapshot(msg.agentId, ws);
       } else {
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       }
 
     } else if (msg.type === 'task') {
-      const projectId = clientProjects.get(ws);
-      if (!projectId) {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) {
         ws.send(JSON.stringify({ type: 'error', message: 'No active session. Start an agent first.' } as ServerMessage));
         return;
       }
 
-      const agentSession = sessionManager.getAgent(projectId);
+      const agentSession = sessionManager.getAgent(agentId);
       if (!agentSession) {
         ws.send(JSON.stringify({ type: 'error', message: 'Session expired. Please restart the agent.' } as ServerMessage));
         return;
       }
 
       const userMsg = makeChatMessage('user', msg.content);
-      redisStore.pushMessage(projectId, userMsg).catch(() => {});
+      redisStore.pushMessage(agentId, userMsg).catch(() => {});
 
-      redisStore.setSession(projectId, { lastTask: msg.content }).catch(() => {});
+      redisStore.setSession(agentId, { lastTask: msg.content }).catch(() => {});
 
-      const taskBroadcast = sessionManager.makeBroadcast(projectId);
+      // Create task record
+      if (agentSession.sessionId) {
+        try {
+          const taskId = await createTask(agentSession.sessionId, agentId, msg.content);
+          activeTasks.set(agentId, { taskId, stepCount: 0 });
+          broadcastToAgent(agentId, { type: 'taskStarted', taskId });
+        } catch (err) {
+          console.error('[TASK] Failed to create task:', err);
+        }
+      }
+
+      const baseBroadcast = sessionManager.makeBroadcast(agentId);
+      const taskBroadcast = (broadcastMsg: ServerMessage) => {
+        // Intercept taskComplete to update task record
+        if (broadcastMsg.type === 'taskComplete') {
+          const activeTask = activeTasks.get(agentId);
+          if (activeTask) {
+            const success = broadcastMsg.success;
+            updateTask(activeTask.taskId, {
+              status: success ? 'completed' : 'failed',
+              success,
+              completed_at: new Date().toISOString(),
+            }).catch(err => console.error('[TASK] Failed to update task:', err));
+            activeTasks.delete(agentId);
+          }
+        }
+        baseBroadcast(broadcastMsg);
+      };
       executeTask(agentSession, msg.content, taskBroadcast);
 
     } else if (msg.type === 'stop') {
-      const projectId = clientProjects.get(ws);
-      if (projectId) {
-        await sessionManager.destroySession(projectId);
-        for (const [client, pid] of clientProjects) {
-          if (pid === projectId) clientProjects.delete(client);
+      const agentId = clientAgents.get(ws);
+      if (agentId) {
+        // Cancel any active task
+        const activeTask = activeTasks.get(agentId);
+        if (activeTask) {
+          updateTask(activeTask.taskId, { status: 'cancelled', completed_at: new Date().toISOString() })
+            .catch(err => console.error('[TASK] Failed to cancel task:', err));
+          activeTasks.delete(agentId);
+        }
+
+        await sessionManager.destroySession(agentId);
+        for (const [client, aid] of clientAgents) {
+          if (aid === agentId) clientAgents.delete(client);
         }
       }
     } else if (msg.type === 'explore') {
-      const projectId = clientProjects.get(ws);
-      if (!projectId) {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) {
         ws.send(JSON.stringify({ type: 'error', message: 'No active session. Send start first.' } as ServerMessage));
         return;
       }
-      if (projectId !== msg.projectId) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Project ID mismatch with active session.' } as ServerMessage));
+      if (agentId !== msg.agentId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent ID mismatch with active session.' } as ServerMessage));
         return;
       }
 
-      const agentSession = sessionManager.getAgent(projectId);
+      const agentSession = sessionManager.getAgent(agentId);
       if (!agentSession) {
         ws.send(JSON.stringify({ type: 'error', message: 'Session expired.' } as ServerMessage));
         return;
       }
 
-      const project = await getProject(msg.projectId);
-      if (!project) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Project not found.' } as ServerMessage));
+      const agent = await getAgent(msg.agentId);
+      if (!agent) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent not found.' } as ServerMessage));
         return;
       }
 
       const exploreMsg = makeChatMessage('system', 'Explore & Learn started...');
-      redisStore.pushMessage(projectId, exploreMsg).catch(() => {});
+      redisStore.pushMessage(agentId, exploreMsg).catch(() => {});
 
-      const exploreBroadcast = sessionManager.makeBroadcast(projectId);
-      executeExplore(agentSession, project?.context || null, exploreBroadcast);
+      const exploreBroadcast = sessionManager.makeBroadcast(agentId);
+      executeExplore(agentSession, agent?.context || null, exploreBroadcast);
 
     }
   });
 
   ws.on('close', () => {
     console.log('Client disconnected');
-    const projectId = clientProjects.get(ws);
-    if (projectId) {
-      sessionManager.removeClient(projectId, ws);
-      clientProjects.delete(ws);
+    const agentId = clientAgents.get(ws);
+    if (agentId) {
+      sessionManager.removeClient(agentId, ws);
+      clientAgents.delete(ws);
     }
   });
 });

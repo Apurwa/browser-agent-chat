@@ -231,7 +231,7 @@ export type ServerMessage =
   | { type: 'nav'; url: string }
   | { type: 'error'; message: string }
   | { type: 'taskStarted'; taskId: string }
-  | { type: 'taskComplete'; success: boolean; taskId: string }
+  | { type: 'taskComplete'; success: boolean; taskId?: string }
   | { type: 'finding'; finding: Finding }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
