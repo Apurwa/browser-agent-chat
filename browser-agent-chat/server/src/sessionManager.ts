@@ -176,7 +176,7 @@ export async function recoverSession(projectId: string): Promise<boolean> {
   const serverId = String(process.pid);
 
   // Distributed lock
-  const locked = await redis.set(`session:lock:${projectId}`, serverId, 'NX', 'EX', 30);
+  const locked = await redis.set(`session:lock:${projectId}`, serverId, 'EX', 30, 'NX');
   if (!locked) return false;
 
   try {
