@@ -172,7 +172,7 @@ describe('upsertNode', () => {
 
   it('upserts a nav_node and returns mapped NavNode', async () => {
     const row = {
-      id: 'n1', project_id: 'p1', url_pattern: '/users/:id',
+      id: 'n1', agent_id: 'p1', url_pattern: '/users/:id',
       page_title: 'Users', description: '',
       first_seen_at: '2026-01-01T00:00:00Z', last_seen_at: '2026-01-01T00:00:00Z',
     };
@@ -188,7 +188,7 @@ describe('upsertNode', () => {
 
     expect(mockFrom).toHaveBeenCalledWith('nav_nodes');
     expect(result).toEqual(expect.objectContaining({
-      id: 'n1', projectId: 'p1', urlPattern: '/users/:id', pageTitle: 'Users',
+      id: 'n1', agentId: 'p1', urlPattern: '/users/:id', pageTitle: 'Users',
     }));
   });
 

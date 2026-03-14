@@ -3,6 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
+import AppMap from './AppMap/AppMap';
 import { useWS } from '../contexts/WebSocketContext';
 import { useAuth } from '../hooks/useAuth';
 import { apiAuthFetch } from '../lib/api';
@@ -11,6 +12,7 @@ export default function TestingView() {
   const { id } = useParams();
   const ws = useWS();
   const { getAccessToken } = useAuth();
+  const [activeTab, setActiveTab] = useState<'chat' | 'map'>('chat');
   const [featuresCount, setFeaturesCount] = useState(0);
   const [hasCredentials, setHasCredentials] = useState(false);
   const location = useLocation();
@@ -81,24 +83,46 @@ export default function TestingView() {
     <div className="app-layout">
       <Sidebar findingsCount={ws.findingsCount} />
       <div className="testing-content">
-        <ChatPanel
-          agentId={id!}
-          messages={ws.messages}
-          status={ws.status}
-          currentUrl={ws.currentUrl}
-          hasCredentials={hasCredentials}
-          showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
-          onExplore={() => id && ws.explore(id)}
-          onStartAgent={() => ws.startAgent(id!)}
-          onSendTask={ws.sendTask}
-          onStopAgent={ws.stopAgent}
-          onSaveCredentials={handleSaveCredentials}
-        />
-        <BrowserView
-          screenshot={ws.screenshot}
-          currentUrl={ws.currentUrl}
-          status={ws.status}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <div className="testing-tabs">
+            <button
+              className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
+              onClick={() => setActiveTab('chat')}
+            >
+              Chat
+            </button>
+            <button
+              className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
+              onClick={() => setActiveTab('map')}
+            >
+              App Map
+            </button>
+          </div>
+          {activeTab === 'chat' ? (
+            <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
+              <ChatPanel
+                agentId={id!}
+                messages={ws.messages}
+                status={ws.status}
+                currentUrl={ws.currentUrl}
+                hasCredentials={hasCredentials}
+                showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
+                onExplore={() => id && ws.explore(id)}
+                onStartAgent={() => ws.startAgent(id!)}
+                onSendTask={ws.sendTask}
+                onStopAgent={ws.stopAgent}
+                onSaveCredentials={handleSaveCredentials}
+              />
+              <BrowserView
+                screenshot={ws.screenshot}
+                currentUrl={ws.currentUrl}
+                status={ws.status}
+              />
+            </div>
+          ) : (
+            <AppMap projectId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
+          )}
+        </div>
       </div>
     </div>
   );

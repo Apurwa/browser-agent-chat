@@ -1,0 +1,377 @@
+/* client/src/components/AppMap/AppMap.css */
+
+/* Layout */
+.app-map {
+  display: flex;
+  height: 100%;
+  background: #050510;
+  color: #e2e8f0;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.app-map-graph {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+.app-map-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid #1e293b;
+  background: #0a0a1a;
+  font-size: 11px;
+}
+
+.app-map-stats {
+  color: #64748b;
+}
+
+/* Loading / Error / Empty states */
+.app-map-loading,
+.app-map-error,
+.app-map-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #64748b;
+  font-size: 14px;
+  gap: 8px;
+}
+
+/* React Flow overrides */
+.app-map .react-flow__background {
+  background: radial-gradient(circle at 50% 50%, #0a0a2a 0%, #050510 70%);
+}
+
+.app-map .react-flow__controls {
+  background: #0a0a1a;
+  border: 1px solid #1e293b;
+  border-radius: 6px;
+}
+
+.app-map .react-flow__controls button {
+  background: #0a0a1a;
+  border-color: #1e293b;
+  color: #94a3b8;
+  fill: #94a3b8;
+}
+
+.app-map .react-flow__controls button:hover {
+  background: #1e293b;
+}
+
+/* Page Node */
+.page-node {
+  position: relative;
+  cursor: pointer;
+}
+
+.page-node-handle {
+  opacity: 0;
+  width: 6px;
+  height: 6px;
+}
+
+.page-node--new svg circle:first-of-type {
+  animation: node-pulse 2s ease-in-out 5;
+}
+
+@keyframes node-pulse {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.3)); }
+  50% { filter: drop-shadow(0 0 12px rgba(245, 158, 11, 0.6)); }
+}
+
+.page-node--unexplored {
+  opacity: 0.6;
+}
+
+.page-node-pending {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  background: #f59e0b;
+  color: #0a0a1a;
+  font-size: 8px;
+  font-weight: bold;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Detail Panel */
+.detail-panel {
+  width: 300px;
+  background: #0a0a1a;
+  border-left: 1px solid #1e293b;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.detail-panel--empty {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+
+.detail-panel-hint {
+  color: #475569;
+  font-size: 13px;
+  text-align: center;
+  margin-top: 40px;
+}
+
+.detail-panel-header {
+  padding: 12px 14px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.detail-panel-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.detail-panel-title {
+  color: #22d3ee;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.detail-panel-url {
+  color: #64748b;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.detail-panel-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.detail-action {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #a78bfa;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.detail-action:hover {
+  background: #334155;
+}
+
+.detail-panel-section {
+  padding: 8px 14px;
+  border-top: 1px solid #1e293b;
+}
+
+.detail-panel-label {
+  color: #64748b;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.detail-panel-label--pending {
+  color: #f59e0b;
+}
+
+.detail-panel-empty-features {
+  color: #475569;
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Feature Card */
+.feature-card {
+  background: #111827;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.feature-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.feature-card-name {
+  font-size: 11px;
+  font-weight: bold;
+  color: #e2e8f0;
+}
+
+.feature-card-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.feature-action {
+  background: none;
+  border: none;
+  font-size: 9px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.feature-action--test {
+  color: #22d3ee;
+  font-weight: bold;
+}
+
+.feature-action--test:hover {
+  text-decoration: underline;
+}
+
+.feature-action--remove {
+  color: #475569;
+}
+
+.feature-action--remove:hover {
+  color: #ef4444;
+}
+
+.feature-action--confirm {
+  color: #ef4444;
+  font-weight: bold;
+}
+
+.feature-card-desc {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-top: 3px;
+}
+
+.feature-card-behaviors {
+  display: flex;
+  gap: 3px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+.behavior-chip {
+  background: #0f172a;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  color: #6ee7b7;
+}
+
+.feature-card-flows {
+  margin-top: 4px;
+}
+
+.flow-chip {
+  color: #a78bfa;
+  font-size: 9px;
+}
+
+/* Suggestion Item */
+.suggestion-item {
+  background: rgba(245, 158, 11, 0.05);
+  border: 1px dashed #f59e0b;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.suggestion-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.suggestion-item-name {
+  color: #f59e0b;
+  font-size: 11px;
+}
+
+.suggestion-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.suggestion-accept {
+  background: none;
+  border: none;
+  color: #22c55e;
+  font-size: 11px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.suggestion-dismiss {
+  background: none;
+  border: none;
+  color: #ef4444;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.suggestion-item-desc {
+  color: #94a3b8;
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* Connected page chips */
+.connected-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.connected-chip {
+  border: 1px solid #a78bfa;
+  background: none;
+  color: #a78bfa;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.connected-chip:hover {
+  background: rgba(167, 139, 250, 0.1);
+}
+
+/* Tab bar */
+.testing-tabs {
+  display: flex;
+  border-bottom: 1px solid #1e293b;
+  background: #0a0a1a;
+}
+
+.testing-tab {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: #64748b;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.testing-tab:hover {
+  color: #94a3b8;
+}
+
+.testing-tab--active {
+  color: #22d3ee;
+  border-bottom-color: #22d3ee;
+  font-weight: bold;
+}
