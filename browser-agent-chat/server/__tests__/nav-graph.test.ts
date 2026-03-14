@@ -393,6 +393,21 @@ describe('recordNavigation', () => {
     expect(mockFrom).toHaveBeenCalledTimes(2);
   });
 
+  it('returns early when toNode upsert fails', async () => {
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: null, error: { message: 'fail' } }),
+        }),
+      }),
+    });
+
+    await recordNavigation('p1', 'https://app.com/from', 'https://app.com/to');
+
+    // Only 1 call for toNode — fromNode never attempted
+    expect(mockFrom).toHaveBeenCalledTimes(1);
+  });
+
   it('swallows errors without throwing', async () => {
     mockFrom.mockImplementation(() => { throw new Error('DB down'); });
 
