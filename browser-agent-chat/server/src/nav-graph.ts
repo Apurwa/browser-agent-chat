@@ -31,3 +31,45 @@ export function normalizeUrl(url: string): string {
 
   return path || '/';
 }
+
+export interface SerializeOptions {
+  maxNodes?: number;
+}
+
+/**
+ * Serialize a navigation graph into a prompt-friendly text block.
+ */
+export function serializeGraph(graph: NavGraph, options?: SerializeOptions): string {
+  if (graph.nodes.length === 0) return '';
+
+  const nodeMap = new Map(graph.nodes.map(n => [n.id, n]));
+  const edgesByFrom = new Map<string, NavEdge[]>();
+  for (const edge of graph.edges) {
+    const list = edgesByFrom.get(edge.fromNodeId) || [];
+    list.push(edge);
+    edgesByFrom.set(edge.fromNodeId, list);
+  }
+
+  const nodes = options?.maxNodes
+    ? graph.nodes.slice(0, options.maxNodes)
+    : graph.nodes;
+
+  const lines: string[] = ['SITE MAP:'];
+  for (const node of nodes) {
+    const featurePart = node.features.length > 0
+      ? ` [features: ${node.features.join(', ')}]`
+      : '';
+    lines.push(`${node.urlPattern} → "${node.pageTitle}"${featurePart}`);
+
+    const edges = edgesByFrom.get(node.id) || [];
+    for (const edge of edges) {
+      const target = nodeMap.get(edge.toNodeId);
+      if (target) {
+        const actionPart = edge.actionLabel ? ` (${edge.actionLabel})` : '';
+        lines.push(`  → ${target.urlPattern}${actionPart}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}

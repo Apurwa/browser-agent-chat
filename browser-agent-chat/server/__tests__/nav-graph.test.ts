@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeUrl } from '../src/nav-graph.js';
+import { normalizeUrl, serializeGraph } from '../src/nav-graph.js';
+import type { NavGraph } from '../src/types.js';
 
 describe('normalizeUrl', () => {
   it('strips query parameters', () => {
@@ -43,5 +44,81 @@ describe('normalizeUrl', () => {
 
   it('handles mixed numeric and text segments', () => {
     expect(normalizeUrl('https://app.com/projects/42/settings')).toBe('/projects/:id/settings');
+  });
+});
+
+describe('serializeGraph', () => {
+  it('returns empty string for empty graph', () => {
+    expect(serializeGraph({ nodes: [], edges: [] })).toBe('');
+  });
+
+  it('serializes nodes with titles', () => {
+    const graph: NavGraph = {
+      nodes: [{
+        id: 'n1', projectId: 'p1', urlPattern: '/dashboard',
+        pageTitle: 'Dashboard', description: '', firstSeenAt: '', lastSeenAt: '',
+        features: [],
+      }],
+      edges: [],
+    };
+    const result = serializeGraph(graph);
+    expect(result).toContain('SITE MAP:');
+    expect(result).toContain('/dashboard');
+    expect(result).toContain('Dashboard');
+  });
+
+  it('includes feature names in brackets', () => {
+    const graph: NavGraph = {
+      nodes: [{
+        id: 'n1', projectId: 'p1', urlPattern: '/dashboard',
+        pageTitle: 'Dashboard', description: '', firstSeenAt: '', lastSeenAt: '',
+        features: ['Analytics Overview', 'Quick Actions'],
+      }],
+      edges: [],
+    };
+    const result = serializeGraph(graph);
+    expect(result).toContain('[features: Analytics Overview, Quick Actions]');
+  });
+
+  it('serializes edges as indented transitions under source node', () => {
+    const graph: NavGraph = {
+      nodes: [
+        { id: 'n1', projectId: 'p1', urlPattern: '/dashboard', pageTitle: 'Dashboard', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+        { id: 'n2', projectId: 'p1', urlPattern: '/settings', pageTitle: 'Settings', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+      ],
+      edges: [{
+        id: 'e1', projectId: 'p1', fromNodeId: 'n1', toNodeId: 'n2',
+        actionLabel: 'click "Settings" in sidebar', selector: null, discoveredAt: '',
+      }],
+    };
+    const result = serializeGraph(graph);
+    expect(result).toContain('  → /settings (click "Settings" in sidebar)');
+  });
+
+  it('omits action label parenthetical when action is empty', () => {
+    const graph: NavGraph = {
+      nodes: [
+        { id: 'n1', projectId: 'p1', urlPattern: '/a', pageTitle: 'A', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+        { id: 'n2', projectId: 'p1', urlPattern: '/b', pageTitle: 'B', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+      ],
+      edges: [{
+        id: 'e1', projectId: 'p1', fromNodeId: 'n1', toNodeId: 'n2',
+        actionLabel: '', selector: null, discoveredAt: '',
+      }],
+    };
+    const result = serializeGraph(graph);
+    expect(result).toContain('  → /b');
+    expect(result).not.toContain('()');
+  });
+
+  it('respects maxNodes option', () => {
+    const nodes = Array.from({ length: 10 }, (_, i) => ({
+      id: `n${i}`, projectId: 'p1', urlPattern: `/page-${i}`,
+      pageTitle: `Page ${i}`, description: '', firstSeenAt: '', lastSeenAt: '',
+      features: [],
+    }));
+    const graph: NavGraph = { nodes, edges: [] };
+    const result = serializeGraph(graph, { maxNodes: 3 });
+    expect(result.match(/\/page-/g)?.length).toBe(3);
   });
 });
