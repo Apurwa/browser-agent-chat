@@ -8,6 +8,7 @@ import projectsRouter from './routes/projects.js';
 import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
 import suggestionsRouter from './routes/suggestions.js';
+import evalsRouter from './routes/evals.js';
 import { executeTask, executeExplore, executeLogin } from './agent.js';
 import { getProject, createSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
@@ -58,12 +59,23 @@ app.use('/api/projects', projectsRouter);
 app.use('/api/projects/:id/findings', findingsRouter);
 app.use('/api/projects/:id/memory', memoryRouter);
 app.use('/api/projects/:id/suggestions', suggestionsRouter);
+app.use('/api/projects/:id/evals', evalsRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
 
 // Track which project each client is associated with
 const clientProjects = new Map<WebSocket, string>();
+
+// Broadcast a ServerMessage to all WebSocket clients connected to a project.
+// Used by eval routes and any future server-initiated push.
+export function broadcastToProject(projectId: string, msg: ServerMessage): void {
+  for (const [client, pid] of clientProjects) {
+    if (pid === projectId && client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify(msg));
+    }
+  }
+}
 
 function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessage {
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
