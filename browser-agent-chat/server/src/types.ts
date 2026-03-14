@@ -142,12 +142,41 @@ export interface NavEdge {
   toNodeId: string;
   actionLabel: string;
   selector: string | null;
+  rawTarget: string | null;
   discoveredAt: string;
 }
 
 export interface NavGraph {
   nodes: NavNode[];
   edges: NavEdge[];
+}
+
+// === Muscle Memory ===
+
+export interface LearnedPattern {
+  id: string;
+  project_id: string;
+  pattern_type: 'login' | 'navigation';
+  trigger: LoginTrigger;
+  steps: PlaywrightStep[];
+  consecutive_failures: number;
+  status: 'active' | 'stale';
+  use_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LoginTrigger {
+  type: 'login';
+  url_pattern: string;
+}
+
+export interface PlaywrightStep {
+  action: 'fill' | 'click' | 'type' | 'press';
+  selector: string;
+  value?: string;
+  waitAfter?: number;
 }
 
 // === Suggestions ===
