@@ -20,6 +20,18 @@ export default function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isActive = status === 'idle' || status === 'working';
 
+  const hasShownTip = useRef(false);
+  const prevStatus = useRef<AgentStatus>(status);
+  const [tipMessage, setTipMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (prevStatus.current === 'working' && status === 'idle' && !hasShownTip.current) {
+      setTipMessage("Tip: Try 'Explore this app' or describe a flow to test.");
+      hasShownTip.current = true;
+    }
+    prevStatus.current = status;
+  }, [status]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -57,6 +69,11 @@ export default function ChatPanel({
             )}
           </div>
         ))}
+        {tipMessage && (
+          <div className="chat-message chat-message-system chat-tip">
+            <p>{tipMessage}</p>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

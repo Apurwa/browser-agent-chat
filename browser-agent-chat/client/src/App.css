@@ -670,6 +670,15 @@ body {
   margin: 4px 0;
 }
 
+.chat-tip {
+  background: rgba(253, 203, 110, 0.1);
+  border: 1px solid rgba(253, 203, 110, 0.3);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .chat-input {
   display: flex;
   gap: 8px;
