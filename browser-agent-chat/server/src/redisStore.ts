@@ -70,27 +70,39 @@ export async function listSessions(): Promise<string[]> {
 // -- Messages --
 
 export async function pushMessage(projectId: string, msg: ChatMessage): Promise<void> {
-  throw new Error('Not implemented');
+  await redis.rpush(`messages:${projectId}`, JSON.stringify(msg));
+  await redis.ltrim(`messages:${projectId}`, -200, -1);
 }
 
 export async function getMessages(projectId: string): Promise<ChatMessage[]> {
-  throw new Error('Not implemented');
+  const raw = await redis.lrange(`messages:${projectId}`, 0, -1);
+  return raw.map(r => JSON.parse(r));
 }
 
 // -- Screenshot --
 
 export async function setScreenshot(projectId: string, base64: string): Promise<void> {
-  throw new Error('Not implemented');
+  await redis.set(`screenshot:${projectId}`, base64);
 }
 
 export async function getScreenshot(projectId: string): Promise<string | null> {
-  throw new Error('Not implemented');
+  return redis.get(`screenshot:${projectId}`);
 }
 
 // -- Port allocation --
 
+const PORT_START = () => parseInt(process.env.CDP_PORT_START || '19300', 10);
+const PORT_RANGE = () => parseInt(process.env.CDP_PORT_RANGE || '100', 10);
+
 export async function allocatePort(projectId: string): Promise<number> {
-  throw new Error('Not implemented');
+  const start = PORT_START();
+  const range = PORT_RANGE();
+  for (let offset = 0; offset < range; offset++) {
+    const port = start + offset;
+    const result = await redis.set(`browser:port:${port}`, projectId, 'NX');
+    if (result === 'OK') return port;
+  }
+  throw new Error('No available CDP ports — max concurrent browsers reached');
 }
 
 export async function freePort(port: number): Promise<void> {

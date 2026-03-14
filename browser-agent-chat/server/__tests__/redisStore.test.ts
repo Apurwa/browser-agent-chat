@@ -38,6 +38,12 @@ import {
   setSession,
   deleteSession,
   listSessions,
+  pushMessage,
+  getMessages,
+  setScreenshot,
+  getScreenshot,
+  allocatePort,
+  freePort,
 } from '../src/redisStore.js';
 
 describe('redisStore — session CRUD', () => {
@@ -102,5 +108,80 @@ describe('redisStore — session CRUD', () => {
     const result = await listSessions();
     expect(result).toEqual(['proj-1', 'proj-2']);
     expect(mockRedis.zrange).toHaveBeenCalledWith('session:expiry', 0, -1);
+  });
+});
+
+describe('redisStore — messages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connect('redis://localhost:6379');
+  });
+
+  it('pushMessage appends JSON to list and trims to 200', async () => {
+    const msg = { id: '1', type: 'user' as const, content: 'hello', timestamp: 1000 };
+    await pushMessage('proj-1', msg);
+    expect(mockRedis.rpush).toHaveBeenCalledWith('messages:proj-1', JSON.stringify(msg));
+    expect(mockRedis.ltrim).toHaveBeenCalledWith('messages:proj-1', -200, -1);
+  });
+
+  it('getMessages returns parsed ChatMessage array', async () => {
+    const msg1 = { id: '1', type: 'user', content: 'hi', timestamp: 1000 };
+    const msg2 = { id: '2', type: 'agent', content: 'hello', timestamp: 2000 };
+    mockRedis.lrange.mockResolvedValueOnce([JSON.stringify(msg1), JSON.stringify(msg2)]);
+
+    const result = await getMessages('proj-1');
+    expect(result).toEqual([msg1, msg2]);
+    expect(mockRedis.lrange).toHaveBeenCalledWith('messages:proj-1', 0, -1);
+  });
+});
+
+describe('redisStore — screenshots', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connect('redis://localhost:6379');
+  });
+
+  it('setScreenshot stores base64 string', async () => {
+    await setScreenshot('proj-1', 'base64data');
+    expect(mockRedis.set).toHaveBeenCalledWith('screenshot:proj-1', 'base64data');
+  });
+
+  it('getScreenshot returns stored value or null', async () => {
+    mockRedis.get.mockResolvedValueOnce('base64data');
+    const result = await getScreenshot('proj-1');
+    expect(result).toBe('base64data');
+  });
+});
+
+describe('redisStore — port allocation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connect('redis://localhost:6379');
+  });
+
+  it('allocatePort returns first available port via SET NX', async () => {
+    mockRedis.set.mockResolvedValueOnce('OK');
+    const port = await allocatePort('proj-1');
+    expect(port).toBe(19300);
+    expect(mockRedis.set).toHaveBeenCalledWith('browser:port:19300', 'proj-1', 'NX');
+  });
+
+  it('allocatePort skips occupied ports', async () => {
+    mockRedis.set
+      .mockResolvedValueOnce(null)  // port 19300 taken
+      .mockResolvedValueOnce(null)  // port 19301 taken
+      .mockResolvedValueOnce('OK'); // port 19302 free
+    const port = await allocatePort('proj-1');
+    expect(port).toBe(19302);
+  });
+
+  it('allocatePort throws when all ports exhausted', async () => {
+    mockRedis.set.mockResolvedValue(null); // all ports taken
+    await expect(allocatePort('proj-1')).rejects.toThrow('No available CDP ports');
+  });
+
+  it('freePort deletes the port key', async () => {
+    await freePort(19300);
+    expect(mockRedis.del).toHaveBeenCalledWith('browser:port:19300');
   });
 });
