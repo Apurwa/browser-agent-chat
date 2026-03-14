@@ -96,14 +96,19 @@ Three new Supabase tables:
 
 **Modified `executeExplore` behavior:**
 
-1. `executeExplore` uses `agent.act(explorePrompt)` instead of `agent.extract()` to drive actual navigation across pages.
-2. As the agent navigates between pages, each `nav` event creates/updates a `nav_node`. Each `actionDone` → `nav` pair creates a `nav_edge` from the previous page, with the action label from `actionDone`.
-3. After navigating, the existing vision-based feature extraction runs via `agent.extract()` on the current page (same as today, but now happens per-page during exploration).
+1. `executeExplore` runs a loop of `agent.act()` → `agent.extract()` cycles. Each cycle navigates to a section (via `act()`) then extracts features from that page (via `extract()`). The loop iterates over the main navigation items (3-5 sections, as defined by the explore prompt).
+2. Graph writes happen automatically via the `createAgent()` listeners (see Action-to-navigation correlation below) — `executeExplore` does NOT call `recordNavigation` directly.
+3. Feature extraction via `agent.extract()` happens once per cycle, on whatever page the agent lands on after `act()` completes.
 4. Extracted features go through the suggestion queue (human-gated, unchanged).
 5. When a suggestion is accepted, a `nav_node_features` link is created connecting the feature to the page(s) where it was discovered.
 6. Nodes and edges are **auto-committed** — no suggestion queue. The agent visited the URL; it exists.
 
-**Action-to-navigation correlation:** Both Explore and Task modes need to correlate `actionDone` events with subsequent `nav` events. The agent maintains a `lastAction: { label: string, selector?: string } | null` buffer. On each `actionDone`, store the action description. On each `nav`, consume `lastAction` as the edge's action label, then reset to null. If `nav` fires with no preceding `actionDone` (e.g., redirect), the edge gets an empty action label.
+**Action-to-navigation correlation:** Both Explore and Task modes need to correlate `actionDone` events with subsequent `nav` events. The `AgentSession` object gets a new `lastAction: { label: string, selector?: string } | null` field. The existing `actionDone` and `nav` listeners in `createAgent()` are extended (not duplicated) to maintain this buffer:
+
+- On `actionDone`: store `"${action.variant}: ${action.target || action.content}"` as the label (e.g., `"click: Settings"`, `"type: search query"`). This matches the existing formatting at agent.ts line 121.
+- On `nav`: consume `session.lastAction` as the edge's action label, then reset to null. If `nav` fires with no preceding `actionDone` (e.g., redirect), the edge gets an empty action label.
+
+The graph write logic (calling `navGraph.recordNavigation`) lives in the existing `createAgent()` listeners — it is NOT duplicated in `executeExplore`/`executeTask`.
 
 #### 2. Task Execution (Passive Updates)
 
@@ -207,8 +212,9 @@ interface NavGraph {
 
 ### `agent.ts`
 
-- **`executeExplore`**: Rewrite to use `agent.act(explorePrompt)` for actual multi-page navigation (currently only uses `agent.extract()` on the current page). Add `lastAction` buffer. On each `actionDone`, store action description. On each `nav`, call `navGraph.recordNavigation()` with `lastAction`. After navigation completes, run `agent.extract()` per-page for feature extraction. Associate extracted features with the current node via `navGraph.linkFeatureToNode()`.
-- **`executeTask`**: Add `lastAction` buffer (same pattern as Explore). On each `actionDone`, store action description. On each `nav`, call `navGraph.recordNavigation()` with `lastAction` (fire-and-forget). The `lastAction` buffer is local to the event listener closure.
+- **`createAgent`**: Extend existing `actionDone` listener to update `session.lastAction` buffer. Extend existing `nav` listener to call `navGraph.recordNavigation()` with `session.lastAction` (fire-and-forget). This handles graph writes for BOTH Explore and Task modes from a single place.
+- **`executeExplore`**: Rewrite to loop `agent.act()` → `agent.extract()` for multi-page navigation + per-page feature extraction. Associate extracted features with the current nav node via `navGraph.linkFeatureToNode()`.
+- **`executeTask`**: No graph-specific changes needed — the `createAgent()` listeners handle passive updates automatically.
 
 ### `db.ts`
 
