@@ -19,7 +19,7 @@ export interface AgentSession {
   /** Resolves when background login finishes (or immediately if no login). */
   loginDone: Promise<void>;
   /** Last action performed — consumed by nav listener for edge labels. */
-  lastAction: { label: string; selector?: string } | null;
+  lastAction: { label: string; selector?: string; rawTarget?: string } | null;
   /** Current page URL — updated on every nav event. */
   currentUrl: string | null;
   /** Active Langfuse trace — set during task/explore/login execution. */
@@ -89,7 +89,7 @@ export async function createAgent(
   let stepOrder = 0;
 
   // Session-scoped state for nav graph writes
-  let lastAction: { label: string; selector?: string } | null = null;
+  let lastAction: { label: string; selector?: string; rawTarget?: string } | null = null;
 
   // Get initial page URL for graph tracking
   const currentPageUrl = connector.getHarness().page.url();
@@ -164,7 +164,7 @@ export async function createAgent(
 
     // Update lastAction buffer for nav graph edge labels
     const actionLabel = target ? `${actionName}: ${target}` : actionName;
-    lastAction = { label: actionLabel };
+    lastAction = { label: actionLabel, rawTarget: target as string | undefined };
 
     // Log to Langfuse trace
     session.currentTrace?.event({ name: 'action', input: { action: actionName, target } });
@@ -189,15 +189,23 @@ export async function createAgent(
   });
 
   // Listen for navigation events — update graph + broadcast
-  agent.browserAgentEvents.on('nav', (navUrl: string) => {
+  agent.browserAgentEvents.on('nav', async (navUrl: string) => {
     broadcast({ type: 'nav', url: navUrl });
 
     // Fire-and-forget graph update
     if (projectId) {
       const action = lastAction?.label;
       const selector = lastAction?.selector;
+      const rawTarget = lastAction?.rawTarget;
       lastAction = null; // Consume the action
-      recordNavigation(projectId, previousUrl, navUrl, action, selector).catch(() => {});
+
+      // Get page title for nav node
+      let title = '';
+      try {
+        title = await connector.getHarness().page.title();
+      } catch {}
+
+      recordNavigation(projectId, previousUrl, navUrl, action, selector, title, rawTarget).catch(() => {});
     }
     previousUrl = navUrl;
     session.currentUrl = navUrl;
