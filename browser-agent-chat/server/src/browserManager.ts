@@ -101,13 +101,72 @@ export async function isAlive(pid: number, port: number): Promise<boolean> {
 }
 
 export async function claimWarm(projectId: string): Promise<{ pid: number; port: number; cdpEndpoint: string } | null> {
-  throw new Error('Not implemented');
+  const redis = redisStore.getRedis();
+  const member = await redis.spop('browser:warm:pids');
+  if (!member) return null;
+
+  const [pidStr, portStr] = (member as string).split(':');
+  const pid = parseInt(pidStr, 10);
+  const port = parseInt(portStr, 10);
+
+  if (await isAlive(pid, port)) {
+    // Reassign port from warm to this project.
+    // Uses bare SET (not NX) to overwrite the __warm_* allocation from warmUp().
+    // This is intentionally different from allocatePort() which uses SET NX.
+    await redis.set(`browser:port:${port}`, projectId);
+    return { pid, port, cdpEndpoint: `http://localhost:${port}` };
+  }
+
+  // Dead warm browser
+  await redisStore.freePort(port);
+  return null;
 }
 
 export async function warmUp(count?: number): Promise<void> {
-  throw new Error('Not implemented');
+  const target = count ?? parseInt(process.env.WARM_BROWSERS || '1', 10);
+  const redis = redisStore.getRedis();
+  const currentWarm = await redis.scard('browser:warm:pids');
+
+  for (let i = currentWarm; i < target; i++) {
+    try {
+      const warmId = `__warm_${Date.now()}_${i}`;
+      const port = await redisStore.allocatePort(warmId);
+      const chromePath = getChromiumPath();
+
+      const child = spawn(chromePath, buildArgs(port), {
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.unref();
+
+      if (!child.pid) {
+        await redisStore.freePort(port);
+        throw new Error('Failed to spawn warm Chromium — no PID');
+      }
+
+      await waitForCDP(port, 10_000);
+      await redis.sadd('browser:warm:pids', `${child.pid}:${port}`);
+      console.log(`[BrowserManager] Warm browser ready pid=${child.pid} port=${port}`);
+    } catch (err) {
+      console.error('[BrowserManager] Failed to warm browser:', err);
+    }
+  }
 }
 
 export async function cleanupOrphanedWarm(): Promise<void> {
-  throw new Error('Not implemented');
+  const redis = redisStore.getRedis();
+  const members = await redis.smembers('browser:warm:pids');
+
+  for (const member of members) {
+    const [pidStr, portStr] = member.split(':');
+    const pid = parseInt(pidStr, 10);
+    const port = parseInt(portStr, 10);
+
+    if (!await isAlive(pid, port)) {
+      await redis.srem('browser:warm:pids', member);
+      await redisStore.freePort(port);
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+      console.log(`[BrowserManager] Cleaned orphaned warm browser pid=${pid} port=${port}`);
+    }
+  }
 }
