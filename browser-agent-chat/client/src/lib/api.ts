@@ -16,31 +16,31 @@ export async function apiAuthFetch(path: string, token: string | null, options: 
   });
 }
 
-export async function fetchPendingSuggestions(projectId: string, token: string | null): Promise<Suggestion[]> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions`, token);
+export async function fetchPendingSuggestions(agentId: string, token: string | null): Promise<Suggestion[]> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions`, token);
   if (!res.ok) throw new Error('Failed to fetch suggestions');
   return res.json();
 }
 
-export async function fetchSuggestionCount(projectId: string, token: string | null): Promise<number> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/count`, token);
+export async function fetchSuggestionCount(agentId: string, token: string | null): Promise<number> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/count`, token);
   if (!res.ok) return 0;
   const data = await res.json();
   return data.count;
 }
 
-export async function acceptSuggestionApi(projectId: string, suggestionId: string, token: string | null): Promise<boolean> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/${suggestionId}/accept`, token, { method: 'PUT' });
+export async function acceptSuggestionApi(agentId: string, suggestionId: string, token: string | null): Promise<boolean> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/${suggestionId}/accept`, token, { method: 'PUT' });
   return res.ok;
 }
 
-export async function dismissSuggestionApi(projectId: string, suggestionId: string, token: string | null): Promise<boolean> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/${suggestionId}/dismiss`, token, { method: 'PUT' });
+export async function dismissSuggestionApi(agentId: string, suggestionId: string, token: string | null): Promise<boolean> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/${suggestionId}/dismiss`, token, { method: 'PUT' });
   return res.ok;
 }
 
-export async function updateSuggestionApi(projectId: string, suggestionId: string, data: unknown, token: string | null): Promise<Suggestion | null> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/${suggestionId}`, token, {
+export async function updateSuggestionApi(agentId: string, suggestionId: string, data: unknown, token: string | null): Promise<Suggestion | null> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/${suggestionId}`, token, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data }),
@@ -49,14 +49,14 @@ export async function updateSuggestionApi(projectId: string, suggestionId: strin
   return res.json();
 }
 
-export async function bulkAcceptSuggestionsApi(projectId: string, token: string | null): Promise<number> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/accept-all`, token, { method: 'POST' });
+export async function bulkAcceptSuggestionsApi(agentId: string, token: string | null): Promise<number> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/accept-all`, token, { method: 'POST' });
   if (!res.ok) return 0;
   const data = await res.json();
   return data.accepted;
 }
 
-export async function bulkDismissSuggestionsApi(projectId: string, token: string | null): Promise<boolean> {
-  const res = await apiAuthFetch(`/api/projects/${projectId}/suggestions/dismiss-all`, token, { method: 'POST' });
+export async function bulkDismissSuggestionsApi(agentId: string, token: string | null): Promise<boolean> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/dismiss-all`, token, { method: 'POST' });
   return res.ok;
 }

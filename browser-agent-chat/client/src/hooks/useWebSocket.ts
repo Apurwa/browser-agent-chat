@@ -94,11 +94,11 @@ export function useWebSocket() {
     }
   }, []);
 
-  const startAgent = useCallback((projectId: string) => {
+  const startAgent = useCallback((agentId: string) => {
     setMessages([]);
     setFindings([]);
     setStartupMetrics(null);
-    send({ type: 'start', projectId });
+    send({ type: 'start', agentId });
   }, [send]);
 
   const sendTask = useCallback((content: string) => {

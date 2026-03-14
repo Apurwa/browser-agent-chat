@@ -13,12 +13,12 @@ interface WebSocketState {
   findings: Finding[];
   findingsCount: number;
   pendingSuggestionCount: number;
-  activeProjectId: string | null;
-  startAgent: (projectId: string) => void;
-  resumeSession: (projectId: string) => void;
+  activeAgentId: string | null;
+  startAgent: (agentId: string) => void;
+  resumeSession: (agentId: string) => void;
   sendTask: (content: string) => void;
   stopAgent: () => void;
-  explore: (projectId: string) => void;
+  explore: (agentId: string) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
 }
@@ -42,11 +42,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
 
-  // Stable ref for the active project so message handlers don't get stale closures
-  const activeProjectRef = useRef<string | null>(null);
+  // Stable ref for the active agent so message handlers don't get stale closures
+  const activeAgentRef = useRef<string | null>(null);
 
   const addMessage = useCallback((type: ChatMessage['type'], content: string, finding?: Finding) => {
     setMessages(prev => [...prev, {
@@ -80,11 +80,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         break;
       case 'status':
         setStatus((msg as any).status);
-        // Note: 'disconnected' from server (e.g. idle timeout, error) clears active project
+        // Note: 'disconnected' from server (e.g. idle timeout, error) clears active agent
         // but preserves screenshot/currentUrl/messages so stop→start feels seamless.
         if ((msg as any).status === 'disconnected') {
-          setActiveProjectId(null);
-          activeProjectRef.current = null;
+          setActiveAgentId(null);
+          activeAgentRef.current = null;
         }
         break;
       case 'nav':
@@ -138,8 +138,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
           timestamp: Date.now(),
         }]);
         setStatus('disconnected');
-        activeProjectRef.current = null;
-        setActiveProjectId(null);
+        activeAgentRef.current = null;
+        setActiveAgentId(null);
         break;
       case 'taskInterrupted':
         setMessages(prev => [...prev, {
@@ -169,9 +169,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         }
       }, HEARTBEAT_INTERVAL);
 
-      // If we had an active project, try to resume
-      if (activeProjectRef.current) {
-        ws.send(JSON.stringify({ type: 'resume', projectId: activeProjectRef.current }));
+      // If we had an active agent, try to resume
+      if (activeAgentRef.current) {
+        ws.send(JSON.stringify({ type: 'resume', agentId: activeAgentRef.current }));
       }
     };
 
@@ -216,20 +216,37 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   // Track the last URL so we can resume at the same page after stop→start
   const lastUrlRef = useRef<string | null>(null);
 
-  const startAgent = useCallback((projectId: string) => {
-    // Keep previous messages, findings, and screenshot — user expects continuity
+  const startAgent = useCallback((agentId: string) => {
+    // If switching to a different agent, clear stale state from the previous one
+    if (activeAgentRef.current !== agentId) {
+      setMessages([]);
+      setFindings([]);
+      setScreenshot(null);
+      setCurrentUrl(null);
+      setPendingSuggestionCount(0);
+      lastUrlRef.current = null;
+    }
     setStatus('working');
-    setActiveProjectId(projectId);
-    activeProjectRef.current = projectId;
-    // If we have a last-known URL for this project, tell server to navigate there
+    setActiveAgentId(agentId);
+    activeAgentRef.current = agentId;
+    // If we have a last-known URL for this agent, tell server to navigate there
     const resumeUrl = lastUrlRef.current || undefined;
-    send({ type: 'start', projectId, resumeUrl });
+    send({ type: 'start', agentId, resumeUrl });
   }, [send]);
 
-  const resumeSession = useCallback((projectId: string) => {
-    setActiveProjectId(projectId);
-    activeProjectRef.current = projectId;
-    send({ type: 'resume', projectId });
+  const resumeSession = useCallback((agentId: string) => {
+    // If switching to a different agent, clear stale state from the previous one
+    if (activeAgentRef.current !== agentId) {
+      setMessages([]);
+      setFindings([]);
+      setScreenshot(null);
+      setCurrentUrl(null);
+      setPendingSuggestionCount(0);
+      lastUrlRef.current = null;
+    }
+    setActiveAgentId(agentId);
+    activeAgentRef.current = agentId;
+    send({ type: 'resume', agentId });
   }, [send]);
 
   const sendTask = useCallback((content: string) => {
@@ -241,13 +258,13 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     send({ type: 'stop' });
     setStatus('disconnected');
     // Keep screenshot and currentUrl visible — user expects to see same screen on restart
-    setActiveProjectId(null);
-    activeProjectRef.current = null;
+    setActiveAgentId(null);
+    activeAgentRef.current = null;
     // Keep lastUrlRef — so next start navigates back to where we were
   }, [send]);
 
-  const explore = useCallback((projectId: string) => {
-    send({ type: 'explore', projectId });
+  const explore = useCallback((agentId: string) => {
+    send({ type: 'explore', agentId });
   }, [send]);
 
   const resetSuggestionCount = useCallback(() => {
@@ -267,7 +284,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     findings,
     findingsCount: findings.length,
     pendingSuggestionCount,
-    activeProjectId,
+    activeAgentId,
     startAgent,
     resumeSession,
     sendTask,
