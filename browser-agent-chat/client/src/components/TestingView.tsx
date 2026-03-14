@@ -68,11 +68,12 @@ export default function TestingView() {
 
   const handleSaveCredentials = async (username: string, password: string) => {
     const token = await getAccessToken();
-    await apiAuthFetch(`/api/projects/${id}`, token, {
+    const res = await apiAuthFetch(`/api/projects/${id}`, token, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ credentials: { username, password } }),
     });
+    if (!res.ok) throw new Error('Failed to save credentials');
     setHasCredentials(true);
   };
 

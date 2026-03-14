@@ -15,6 +15,18 @@ export default function Home() {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest('.home-avatar-wrapper')) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showMenu]);
+
   const navigate = useNavigate();
   const { user, getAccessToken, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();

@@ -54,10 +54,15 @@ export default function ChatPanel({
   const handleCredSubmit = async () => {
     if (!credUsername || !credPassword) return;
     setCredSaving(true);
-    await onSaveCredentials(credUsername, credPassword);
-    setCredSaving(false);
-    setShowCredForm(false);
-    setCredPromptMsgId(null);
+    try {
+      await onSaveCredentials(credUsername, credPassword);
+      setShowCredForm(false);
+      setCredPromptMsgId(null);
+    } catch {
+      // Credentials save failed — form stays open for retry
+    } finally {
+      setCredSaving(false);
+    }
   };
 
   const handleCredSkip = () => {
