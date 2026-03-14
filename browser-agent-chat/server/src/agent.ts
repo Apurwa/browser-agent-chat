@@ -248,6 +248,14 @@ const ExtractedFeatureSchema = z.object({
   })),
 });
 
+// Schema for navigation items visible on the page
+const NavItemsSchema = z.object({
+  items: z.array(z.object({
+    label: z.string().describe('The clickable text label of the navigation item'),
+    description: z.string().describe('Brief description of what section this leads to'),
+  })),
+});
+
 export async function executeExplore(
   session: AgentSession,
   context: string | null,
@@ -256,68 +264,52 @@ export async function executeExplore(
   console.log('[EXPLORE] Starting explore...');
   broadcast({ type: 'status', status: 'working' });
 
-  // Wait for login to finish before using the agent
-  console.log('[EXPLORE] Waiting for login to complete...');
   await session.loginDone;
   console.log('[EXPLORE] Login done, starting exploration...');
 
-  const prompt = buildExplorePrompt(context);
   session.stepsHistory.length = 0;
 
   try {
-    // Extract features from the current page using vision
-    console.log('[EXPLORE] Extracting features from current page...');
-    broadcast({ type: 'thought', content: 'Analyzing the application...' });
+    // Step 1: Identify navigation items on the current page
+    const contextHint = context ? `\nContext about this app: ${context}` : '';
+    broadcast({ type: 'thought', content: 'Scanning navigation structure...' });
+    const navItems = await session.agent.extract(
+      `List the main navigation items visible on this page (sidebar, top menu, tabs). For each, provide the exact clickable text label and a brief description of what section it leads to. Only include top-level navigation — not sub-items or dropdowns.${contextHint}`,
+      NavItemsSchema
+    );
+    console.log('[EXPLORE] Found nav items:', navItems.items.map(i => i.label));
 
-    const extracted = await session.agent.extract(
-      'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows (like login, signup, settings changes). Be thorough — include features from the navigation/sidebar even if you can only see their names.',
+    // Step 2: Extract features from the current page first
+    broadcast({ type: 'thought', content: 'Analyzing current page...' });
+    const currentFeatures = await session.agent.extract(
+      'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows. Be thorough.',
       ExtractedFeatureSchema
     );
-    console.log('[EXPLORE] Extracted:', JSON.stringify(extracted, null, 2));
+    await createSuggestionsFromExtraction(session, currentFeatures, broadcast);
 
-    // Create suggestions for each extracted feature
-    if (session.projectId && session.sessionId) {
-      for (const feature of extracted.features) {
-        const suggestion = await createSuggestion(
-          session.projectId,
-          'feature',
-          {
-            name: feature.name,
-            description: feature.description,
-            criticality: feature.criticality,
-            expected_behaviors: feature.expected_behaviors,
-          },
-          session.sessionId
+    // Step 3: Navigate to each section and extract features
+    const maxSections = Math.min(navItems.items.length, 5);
+    for (let i = 0; i < maxSections; i++) {
+      const item = navItems.items[i];
+      broadcast({ type: 'thought', content: `Navigating to ${item.label}...` });
+
+      try {
+        await session.agent.act(`Click on "${item.label}" in the navigation`);
+
+        broadcast({ type: 'thought', content: `Analyzing ${item.label}...` });
+        const pageFeatures = await session.agent.extract(
+          'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows. Be thorough.',
+          ExtractedFeatureSchema
         );
-        if (suggestion) {
-          broadcast({ type: 'suggestion', suggestion });
-        }
+        await createSuggestionsFromExtraction(session, pageFeatures, broadcast);
+      } catch (navErr) {
+        console.error(`[EXPLORE] Failed to explore "${item.label}":`, navErr);
+        broadcast({ type: 'thought', content: `Could not explore ${item.label}, continuing...` });
       }
-
-      for (const flow of extracted.flows) {
-        const suggestion = await createSuggestion(
-          session.projectId,
-          'flow',
-          {
-            feature_name: flow.feature_name,
-            name: flow.name,
-            steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
-            checkpoints: [],
-            criticality: flow.criticality,
-          },
-          session.sessionId
-        );
-        if (suggestion) {
-          broadcast({ type: 'suggestion', suggestion });
-        }
-      }
-
-      const total = extracted.features.length + extracted.flows.length;
-      broadcast({ type: 'thought', content: total > 0
-        ? `Discovered ${extracted.features.length} feature(s) and ${extracted.flows.length} flow(s).`
-        : 'No new features discovered on this page.' });
     }
 
+    const context_str = context ? ` Context: ${context}` : '';
+    broadcast({ type: 'thought', content: `Exploration complete.${context_str}` });
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Exploration failed';
@@ -326,6 +318,58 @@ export async function executeExplore(
     broadcast({ type: 'taskComplete', success: false });
   } finally {
     broadcast({ type: 'status', status: 'idle' });
+  }
+}
+
+/**
+ * Helper: create feature/flow suggestions from extracted data, including discovered_at_url.
+ */
+async function createSuggestionsFromExtraction(
+  session: AgentSession,
+  extracted: z.infer<typeof ExtractedFeatureSchema>,
+  broadcast: (msg: ServerMessage) => void
+): Promise<void> {
+  if (!session.projectId || !session.sessionId) return;
+
+  for (const feature of extracted.features) {
+    const suggestion = await createSuggestion(
+      session.projectId,
+      'feature',
+      {
+        name: feature.name,
+        description: feature.description,
+        criticality: feature.criticality,
+        expected_behaviors: feature.expected_behaviors,
+        discovered_at_url: session.currentUrl || undefined,
+      },
+      session.sessionId
+    );
+    if (suggestion) {
+      broadcast({ type: 'suggestion', suggestion });
+    }
+  }
+
+  for (const flow of extracted.flows) {
+    const suggestion = await createSuggestion(
+      session.projectId,
+      'flow',
+      {
+        feature_name: flow.feature_name,
+        name: flow.name,
+        steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
+        checkpoints: [],
+        criticality: flow.criticality,
+      },
+      session.sessionId
+    );
+    if (suggestion) {
+      broadcast({ type: 'suggestion', suggestion });
+    }
+  }
+
+  const total = extracted.features.length + extracted.flows.length;
+  if (total > 0) {
+    broadcast({ type: 'thought', content: `Discovered ${extracted.features.length} feature(s) and ${extracted.flows.length} flow(s).` });
   }
 }
 
