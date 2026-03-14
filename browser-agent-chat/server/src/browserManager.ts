@@ -11,6 +11,8 @@ function getChromiumPath(): string {
 function buildArgs(port: number): string[] {
   return [
     `--remote-debugging-port=${port}`,
+    '--window-size=1440,900',
+    '--force-device-scale-factor=2',
     ...(HEADLESS() ? ['--headless'] : []),
     '--no-sandbox',
     '--disable-gpu',

@@ -781,23 +781,23 @@ body {
 
 .browser-content {
   flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-primary);
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: var(--bg-card);
+  flex-direction: column;
 }
 
 .browser-screenshot {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  width: 100%;
+  flex-shrink: 0;
+  display: block;
 }
 
 .browser-screenshot-reconnecting {
-  opacity: 0.5;
-  filter: grayscale(0.3);
-  transition: opacity 0.3s, filter 0.3s;
+  opacity: 0.92;
+  transition: opacity 0.3s;
 }
 
 .browser-placeholder {

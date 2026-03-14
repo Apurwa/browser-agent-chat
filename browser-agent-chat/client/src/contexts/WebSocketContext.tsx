@@ -19,6 +19,7 @@ interface WebSocketState {
   sendTask: (content: string) => void;
   stopAgent: () => void;
   explore: (projectId: string) => void;
+  sendViewport: (width: number, height: number) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
 }
@@ -250,6 +251,10 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     send({ type: 'explore', projectId });
   }, [send]);
 
+  const sendViewport = useCallback((width: number, height: number) => {
+    send({ type: 'viewport', width, height });
+  }, [send]);
+
   const resetSuggestionCount = useCallback(() => {
     setPendingSuggestionCount(0);
   }, []);
@@ -273,6 +278,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     sendTask,
     stopAgent,
     explore,
+    sendViewport,
     resetSuggestionCount,
     decrementSuggestionCount,
   };

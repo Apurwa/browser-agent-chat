@@ -75,6 +75,16 @@ export async function createAgent(
 
   timer.step('start_browser_agent');
   const connector = agent.require(BrowserConnector);
+
+  // Set a sensible default viewport before any page interaction.
+  // The client overrides this with actual panel dimensions via the 'viewport' message.
+  try {
+    await connector.getHarness().page.setViewportSize({ width: 1440, height: 900 });
+    console.log('[AGENT] Default viewport set to 1440x900');
+  } catch (err) {
+    console.warn('[AGENT] Failed to set default viewport:', err);
+  }
+
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
 

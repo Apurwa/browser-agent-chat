@@ -65,6 +65,9 @@ const wss = new WebSocketServer({ server });
 // Track which project each client is associated with
 const clientProjects = new Map<WebSocket, string>();
 
+// Pending viewport: stored when viewport message arrives before agent is ready
+const pendingViewports = new Map<string, { width: number; height: number }>();
+
 function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessage {
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
 }
@@ -109,9 +112,14 @@ wss.on('connection', (ws: WebSocket) => {
 
       ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
 
+      // Register client→project mapping early so viewport messages
+      // arriving during async agent creation can find the project.
+      clientProjects.set(ws, msg.projectId);
+
       try {
         const project = await getProject(msg.projectId);
         if (!project) {
+          clientProjects.delete(ws);
           ws.send(JSON.stringify({ type: 'error', message: 'Project not found' } as ServerMessage));
           ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
           return;
@@ -129,7 +137,19 @@ wss.on('connection', (ws: WebSocket) => {
         );
 
         sessionManager.addClient(msg.projectId, ws);
-        clientProjects.set(ws, msg.projectId);
+
+        // Apply any viewport that arrived while agent was being created
+        const pending = pendingViewports.get(msg.projectId);
+        if (pending) {
+          pendingViewports.delete(msg.projectId);
+          try {
+            const page = agentSession.connector.getHarness().page;
+            await page.setViewportSize(pending);
+            console.log(`[VIEWPORT] Applied queued ${pending.width}x${pending.height} for project ${msg.projectId}`);
+          } catch (err) {
+            console.error('[VIEWPORT] Failed to apply queued viewport:', err);
+          }
+        }
 
         if (credentials) {
           const loginBroadcast = sessionManager.makeBroadcast(msg.projectId);
@@ -139,6 +159,7 @@ wss.on('connection', (ws: WebSocket) => {
         }
       } catch (err) {
         console.error('[START] Error creating agent:', err);
+        clientProjects.delete(ws);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
@@ -216,6 +237,30 @@ wss.on('connection', (ws: WebSocket) => {
 
       const exploreBroadcast = sessionManager.makeBroadcast(projectId);
       executeExplore(agentSession, project?.context || null, exploreBroadcast);
+
+    } else if (msg.type === 'viewport') {
+      const projectId = clientProjects.get(ws);
+      if (!projectId) return;
+
+      const width = Math.round(msg.width);
+      const height = Math.round(msg.height);
+      if (width <= 0 || height <= 0) return;
+
+      const agentSession = sessionManager.getAgent(projectId);
+      if (!agentSession) {
+        // Agent still being created — store for later application
+        pendingViewports.set(projectId, { width, height });
+        console.log(`[VIEWPORT] Queued ${width}x${height} for project ${projectId} (agent not ready)`);
+        return;
+      }
+
+      try {
+        const page = agentSession.connector.getHarness().page;
+        await page.setViewportSize({ width, height });
+        console.log(`[VIEWPORT] Set to ${width}x${height} for project ${projectId}`);
+      } catch (err) {
+        console.error('[VIEWPORT] Failed to set viewport:', err);
+      }
     }
   });
 
