@@ -6,6 +6,8 @@ import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
 import { recordNavigation } from './nav-graph.js';
+import { getLangfuse } from './langfuse.js';
+import type { LangfuseTraceClient } from 'langfuse';
 
 export interface AgentSession {
   agent: BrowserAgent;
@@ -20,6 +22,8 @@ export interface AgentSession {
   lastAction: { label: string; selector?: string } | null;
   /** Current page URL — updated on every nav event. */
   currentUrl: string | null;
+  /** Active Langfuse trace — set during task/explore/login execution. */
+  currentTrace: LangfuseTraceClient | null;
   close: () => Promise<void>;
 }
 
@@ -101,6 +105,7 @@ export async function createAgent(
     loginDone: Promise.resolve(),
     lastAction: null,
     currentUrl: currentPageUrl,
+    currentTrace: null,
     close: async () => {
       agent.events.removeAllListeners();
       agent.browserAgentEvents.removeAllListeners();
@@ -111,6 +116,9 @@ export async function createAgent(
   agent.events.on('thought', async (thought: string) => {
     broadcast({ type: 'thought', content: thought });
     if (sessionId) await saveMessage(sessionId, 'thought', thought);
+
+    // Log to Langfuse trace
+    session.currentTrace?.event({ name: 'thought', input: { content: thought } });
 
     // Check for findings in thought text
     if (projectId && sessionId) {
@@ -147,6 +155,9 @@ export async function createAgent(
     // Update lastAction buffer for nav graph edge labels
     const actionLabel = target ? `${actionName}: ${target}` : actionName;
     lastAction = { label: actionLabel };
+
+    // Log to Langfuse trace
+    session.currentTrace?.event({ name: 'action', input: { action: actionName, target } });
 
     broadcast({ type: 'action', action: actionName, target: target as string | undefined });
     if (sessionId) {
@@ -213,11 +224,23 @@ export async function executeLogin(
   const page = session.connector.getHarness().page;
   broadcast({ type: 'thought', content: 'Logging in...' });
 
+  const langfuse = getLangfuse();
+  const trace = langfuse?.trace({
+    name: 'login',
+    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    input: { username: credentials.username },
+  }) ?? null;
+  session.currentTrace = trace;
+
   try {
+    const span = trace?.span({ name: 'agent-act-login' });
     await session.agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
+    span?.end({ output: { success: true } });
     console.log('[LOGIN] Done, URL:', page.url());
   } catch (err) {
     console.error('[LOGIN] Failed:', err);
+    trace?.update({ output: { success: false, error: String(err) }, level: 'ERROR' });
+    session.currentTrace = null;
     broadcast({ type: 'error', message: 'Auto-login failed. You can log in via chat.' });
     return;
   }
@@ -233,7 +256,9 @@ export async function executeLogin(
     broadcast({ type: 'thought', content: onLogin
       ? 'Could not log in. Please log in via chat.'
       : 'Logged in successfully' });
+    trace?.update({ output: { success: !onLogin, url: page.url() } });
   } catch {}
+  session.currentTrace = null;
 }
 
 // Schema for features extracted from the current page
@@ -273,22 +298,34 @@ export async function executeExplore(
 
   session.stepsHistory.length = 0;
 
+  const langfuse = getLangfuse();
+  const trace = langfuse?.trace({
+    name: 'explore',
+    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    input: { context },
+  }) ?? null;
+  session.currentTrace = trace;
+
   try {
     // Step 1: Identify navigation items on the current page
     const contextHint = context ? `\nContext about this app: ${context}` : '';
     broadcast({ type: 'thought', content: 'Scanning navigation structure...' });
+    const navSpan = trace?.span({ name: 'extract-nav-items' });
     const navItems = await session.agent.extract(
       `List the main navigation items visible on this page (sidebar, top menu, tabs). For each, provide the exact clickable text label and a brief description of what section it leads to. Only include top-level navigation — not sub-items or dropdowns.${contextHint}`,
       NavItemsSchema
     );
+    navSpan?.end({ output: { items: navItems.items.map(i => i.label) } });
     console.log('[EXPLORE] Found nav items:', navItems.items.map(i => i.label));
 
     // Step 2: Extract features from the current page first
     broadcast({ type: 'thought', content: 'Analyzing current page...' });
+    const homeSpan = trace?.span({ name: 'extract-features-home' });
     const currentFeatures = await session.agent.extract(
       'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows. Be thorough.',
       ExtractedFeatureSchema
     );
+    homeSpan?.end({ output: { features: currentFeatures.features.length, flows: currentFeatures.flows.length } });
     await createSuggestionsFromExtraction(session, currentFeatures, broadcast);
 
     // Step 3: Navigate to each section and extract features
@@ -297,6 +334,7 @@ export async function executeExplore(
       const item = navItems.items[i];
       broadcast({ type: 'thought', content: `Navigating to ${item.label}...` });
 
+      const sectionSpan = trace?.span({ name: `explore-section-${item.label}` });
       try {
         await session.agent.act(`Click on "${item.label}" in the navigation`);
 
@@ -305,8 +343,10 @@ export async function executeExplore(
           'Look at this application page carefully. Identify ALL features visible in the navigation, sidebar, main content, and any menus. For each feature, describe what it does and list expected behaviors. Also identify any multi-step flows. Be thorough.',
           ExtractedFeatureSchema
         );
+        sectionSpan?.end({ output: { features: pageFeatures.features.length, flows: pageFeatures.flows.length } });
         await createSuggestionsFromExtraction(session, pageFeatures, broadcast);
       } catch (navErr) {
+        sectionSpan?.end({ output: { error: String(navErr) }, level: 'ERROR' });
         console.error(`[EXPLORE] Failed to explore "${item.label}":`, navErr);
         broadcast({ type: 'thought', content: `Could not explore ${item.label}, continuing...` });
       }
@@ -314,13 +354,16 @@ export async function executeExplore(
 
     const context_str = context ? ` Context: ${context}` : '';
     broadcast({ type: 'thought', content: `Exploration complete.${context_str}` });
+    trace?.update({ output: { success: true, steps: session.stepsHistory.length } });
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Exploration failed';
     console.error('[EXPLORE] Failed:', errMsg);
+    trace?.update({ output: { success: false, error: errMsg }, level: 'ERROR' });
     broadcast({ type: 'error', message: errMsg });
     broadcast({ type: 'taskComplete', success: false });
   } finally {
+    session.currentTrace = null;
     broadcast({ type: 'status', status: 'idle' });
   }
 }
@@ -399,17 +442,31 @@ export async function executeTask(
   // Reset step counter for this task
   session.stepsHistory.length = 0;
 
+  // Create Langfuse trace for this task
+  const langfuse = getLangfuse();
+  const trace = langfuse?.trace({
+    name: 'user-task',
+    metadata: { projectId: session.projectId, sessionId: session.sessionId },
+    input: { task },
+  }) ?? null;
+  session.currentTrace = trace;
+
   try {
+    const span = trace?.span({ name: 'agent-act', input: { prompt } });
     await session.agent.act(prompt);
+    span?.end({ output: { success: true, steps: session.stepsHistory.length } });
+    trace?.update({ output: { success: true, stepsCount: session.stepsHistory.length } });
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    trace?.update({ output: { success: false, error: message }, level: 'ERROR' });
     broadcast({ type: 'error', message });
     broadcast({ type: 'taskComplete', success: false });
     if (session.sessionId) {
       await saveMessage(session.sessionId, 'system', `Error: ${message}`);
     }
   } finally {
+    session.currentTrace = null;
     broadcast({ type: 'status', status: 'idle' });
   }
 }

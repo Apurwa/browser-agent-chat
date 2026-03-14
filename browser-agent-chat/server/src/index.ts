@@ -16,6 +16,7 @@ import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
+import { initLangfuse, shutdownLangfuse } from './langfuse.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 
 const app = express();
@@ -239,6 +240,9 @@ async function shutdown(signal: string): Promise<void> {
   // Mark sessions disconnected (browsers survive)
   await sessionManager.shutdownAll();
 
+  // Flush Langfuse traces
+  await shutdownLangfuse();
+
   // Close Redis
   await redisStore.shutdown();
 
@@ -250,6 +254,9 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 async function startup(): Promise<void> {
+  console.log('[STARTUP] Initializing Langfuse...');
+  initLangfuse();
+
   console.log('[STARTUP] Connecting to Redis...');
   redisStore.connect();
 
