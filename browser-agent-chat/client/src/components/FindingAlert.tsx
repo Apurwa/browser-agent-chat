@@ -13,7 +13,7 @@ export default function FindingAlert({ finding }: { finding: Finding }) {
       </div>
       <p className="finding-alert-title">{finding.title}</p>
       {finding.feature && <p className="finding-alert-meta">{finding.feature}{finding.flow ? ` → ${finding.flow}` : ''}</p>}
-      <button className="finding-alert-link" onClick={() => navigate(`/projects/${id}/findings`)}>
+      <button className="finding-alert-link" onClick={() => navigate(`/agents/${id}/findings`)}>
         View in Findings →
       </button>
     </div>

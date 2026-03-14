@@ -100,7 +100,7 @@ export default function MemoryViewer() {
 
   const loadFeatures = async () => {
     const token = await getAccessToken();
-    const res = await fetch(`/api/projects/${id}/memory/features`, {
+    const res = await fetch(`/api/agents/${id}/memory/features`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
@@ -113,7 +113,7 @@ export default function MemoryViewer() {
   const handleAddFeature = async () => {
     if (!newName) return;
     const token = await getAccessToken();
-    const res = await fetch(`/api/projects/${id}/memory/features`, {
+    const res = await fetch(`/api/agents/${id}/memory/features`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name: newName, criticality: newCriticality }),
@@ -127,7 +127,7 @@ export default function MemoryViewer() {
 
   const handleUpdateFeature = async (featureId: string, updates: Partial<Feature>) => {
     const token = await getAccessToken();
-    await fetch(`/api/projects/${id}/memory/features/${featureId}`, {
+    await fetch(`/api/agents/${id}/memory/features/${featureId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(updates),
@@ -137,7 +137,7 @@ export default function MemoryViewer() {
 
   const handleDeleteFeature = async (featureId: string) => {
     const token = await getAccessToken();
-    await fetch(`/api/projects/${id}/memory/features/${featureId}`, {
+    await fetch(`/api/agents/${id}/memory/features/${featureId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -259,7 +259,7 @@ export default function MemoryViewer() {
           {selected ? (
             <FeatureDetail
               feature={selected}
-              projectId={id!}
+              agentId={id!}
               onUpdate={handleUpdateFeature}
               onDelete={handleDeleteFeature}
               onReload={loadFeatures}

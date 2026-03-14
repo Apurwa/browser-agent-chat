@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import Sidebar from './Sidebar';
 
-export default function ProjectSettings() {
+export default function AgentSettings() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getAccessToken } = useAuth();
@@ -16,12 +16,12 @@ export default function ProjectSettings() {
   const [showDelete, setShowDelete] = useState(false);
 
   useEffect(() => {
-    loadProject();
+    loadAgent();
   }, [id]);
 
-  const loadProject = async () => {
+  const loadAgent = async () => {
     const token = await getAccessToken();
-    const res = await fetch(`/api/projects/${id}`, {
+    const res = await fetch(`/api/agents/${id}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
@@ -39,7 +39,7 @@ export default function ProjectSettings() {
     if (newUsername && newPassword) {
       body.credentials = { username: newUsername, password: newPassword };
     }
-    await fetch(`/api/projects/${id}`, {
+    await fetch(`/api/agents/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
@@ -51,7 +51,7 @@ export default function ProjectSettings() {
 
   const handleDelete = async () => {
     const token = await getAccessToken();
-    await fetch(`/api/projects/${id}`, {
+    await fetch(`/api/agents/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -62,7 +62,7 @@ export default function ProjectSettings() {
     <div className="app-layout">
       <Sidebar />
       <div className="settings-page">
-        <h1>Project Settings</h1>
+        <h1>Agent Settings</h1>
 
         <section className="settings-section">
           <h2>Details</h2>
@@ -87,7 +87,7 @@ export default function ProjectSettings() {
         <section className="settings-danger">
           <h2>Danger Zone</h2>
           {!showDelete ? (
-            <button className="btn-danger" onClick={() => setShowDelete(true)}>Delete Project</button>
+            <button className="btn-danger" onClick={() => setShowDelete(true)}>Delete Agent</button>
           ) : (
             <div>
               <p>Are you sure? This deletes all findings, memory, and sessions.</p>

@@ -4,12 +4,12 @@ import { apiAuthFetch } from '../lib/api';
 import { X } from 'lucide-react';
 
 interface EvalCaseEditorProps {
-  projectId: string;
+  agentId: string;
   onSaved: () => void;
   onCancel: () => void;
 }
 
-export default function EvalCaseEditor({ projectId, onSaved, onCancel }: EvalCaseEditorProps) {
+export default function EvalCaseEditor({ agentId, onSaved, onCancel }: EvalCaseEditorProps) {
   const { getAccessToken } = useAuth();
   const [name, setName] = useState('');
   const [taskPrompt, setTaskPrompt] = useState('');
@@ -47,7 +47,7 @@ export default function EvalCaseEditor({ projectId, onSaved, onCancel }: EvalCas
     setSaving(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${projectId}/evals/cases`, token, {
+      const res = await apiAuthFetch(`/api/agents/${agentId}/evals/cases`, token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

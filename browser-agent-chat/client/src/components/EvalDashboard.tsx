@@ -45,7 +45,7 @@ export default function EvalDashboard() {
     setLoadingRuns(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${id}/evals/runs`, token);
+      const res = await apiAuthFetch(`/api/agents/${id}/evals/runs`, token);
       if (res.ok) {
         const data = await res.json();
         setRuns(data.runs ?? []);
@@ -60,7 +60,7 @@ export default function EvalDashboard() {
     setLoadingCases(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${id}/evals/cases`, token);
+      const res = await apiAuthFetch(`/api/agents/${id}/evals/cases`, token);
       if (res.ok) {
         const data = await res.json();
         setCases(data.cases ?? []);
@@ -75,7 +75,7 @@ export default function EvalDashboard() {
     setRunning(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${id}/evals/run`, token, { method: 'POST' });
+      const res = await apiAuthFetch(`/api/agents/${id}/evals/run`, token, { method: 'POST' });
       if (res.ok) {
         // Switch to runs tab and reload
         setTab('runs');
@@ -91,7 +91,7 @@ export default function EvalDashboard() {
     setSeeding(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${id}/evals/seed`, token, { method: 'POST' });
+      const res = await apiAuthFetch(`/api/agents/${id}/evals/seed`, token, { method: 'POST' });
       if (res.ok) {
         await loadCases();
         setTab('cases');
@@ -115,7 +115,7 @@ export default function EvalDashboard() {
         <div className="eval-content">
           <EvalRunDetail
             run={selectedRun}
-            projectId={id!}
+            agentId={id!}
             onBack={() => setSelectedRun(null)}
           />
         </div>
@@ -130,7 +130,7 @@ export default function EvalDashboard() {
         <Sidebar />
         <div className="eval-content">
           <EvalCaseEditor
-            projectId={id!}
+            agentId={id!}
             onSaved={handleCaseSaved}
             onCancel={() => setShowCaseEditor(false)}
           />

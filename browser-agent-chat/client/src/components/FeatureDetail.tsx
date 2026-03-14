@@ -14,13 +14,13 @@ import {
 
 interface FeatureDetailProps {
   feature: Feature;
-  projectId: string;
+  agentId: string;
   onUpdate: (featureId: string, updates: Partial<Feature>) => void;
   onDelete: (featureId: string) => void;
   onReload: () => void;
 }
 
-export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, onReload }: FeatureDetailProps) {
+export default function FeatureDetail({ feature, agentId, onUpdate, onDelete, onReload }: FeatureDetailProps) {
   const { getAccessToken } = useAuth();
   const [newBehavior, setNewBehavior] = useState('');
   const [newFlowName, setNewFlowName] = useState('');
@@ -44,7 +44,7 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
   const addFlow = async () => {
     if (!newFlowName) return;
     const token = await getAccessToken();
-    await fetch(`/api/projects/${projectId}/memory/features/${feature.id}/flows`, {
+    await fetch(`/api/agents/${agentId}/memory/features/${feature.id}/flows`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ name: newFlowName, steps: [], criticality: newFlowCriticality }),
@@ -55,7 +55,7 @@ export default function FeatureDetail({ feature, projectId, onUpdate, onDelete, 
 
   const deleteFlow = async (flowId: string) => {
     const token = await getAccessToken();
-    await fetch(`/api/projects/${projectId}/memory/flows/${flowId}`, {
+    await fetch(`/api/agents/${agentId}/memory/flows/${flowId}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });

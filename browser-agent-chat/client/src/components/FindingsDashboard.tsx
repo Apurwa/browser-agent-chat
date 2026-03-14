@@ -24,7 +24,7 @@ export default function FindingsDashboard() {
     if (filterSeverity) params.set('severity', filterSeverity);
     if (filterStatus) params.set('status', filterStatus);
 
-    const res = await fetch(`/api/projects/${id}/findings?${params}`, {
+    const res = await fetch(`/api/agents/${id}/findings?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (res.ok) {
@@ -37,7 +37,7 @@ export default function FindingsDashboard() {
 
   const handleStatusUpdate = async (findingId: string, status: FindingStatus) => {
     const token = await getAccessToken();
-    const res = await fetch(`/api/projects/${id}/findings/${findingId}`, {
+    const res = await fetch(`/api/agents/${id}/findings/${findingId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ status }),

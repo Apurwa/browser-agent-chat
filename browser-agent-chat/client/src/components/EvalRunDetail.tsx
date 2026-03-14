@@ -13,7 +13,7 @@ import {
 
 interface EvalRunDetailProps {
   run: EvalRun;
-  projectId: string;
+  agentId: string;
   onBack: () => void;
 }
 
@@ -32,7 +32,7 @@ function topErrorType(run: EvalRun): string | null {
   return entries.sort((a, b) => b[1] - a[1])[0][0];
 }
 
-export default function EvalRunDetail({ run, projectId, onBack }: EvalRunDetailProps) {
+export default function EvalRunDetail({ run, agentId, onBack }: EvalRunDetailProps) {
   const { getAccessToken } = useAuth();
   const [results, setResults] = useState<EvalResult[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +46,7 @@ export default function EvalRunDetail({ run, projectId, onBack }: EvalRunDetailP
     setLoading(true);
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/projects/${projectId}/evals/runs/${run.id}`, token);
+      const res = await apiAuthFetch(`/api/agents/${agentId}/evals/runs/${run.id}`, token);
       if (res.ok) {
         const data = await res.json();
         setResults(data.results ?? []);

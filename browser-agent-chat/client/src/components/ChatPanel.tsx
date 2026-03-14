@@ -6,11 +6,13 @@ const LOGIN_KEYWORDS = ['login', 'sign in', 'sign-in', 'log in', 'authentication
 const INTENT_KEYWORDS = ['need', 'require', 'see', 'found', 'ask', 'provide', 'enter'];
 
 interface ChatPanelProps {
-  projectId: string;
+  agentId: string;
   messages: ChatMessage[];
   status: AgentStatus;
   currentUrl: string | null;
   hasCredentials: boolean;
+  showExplore: boolean;
+  onExplore: () => void;
   onStartAgent: () => void;
   onSendTask: (content: string) => void;
   onStopAgent: () => void;
@@ -18,17 +20,16 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({
-  projectId: _projectId, messages, status, currentUrl,
-  hasCredentials,
+  agentId: _agentId, messages, status, currentUrl,
+  hasCredentials, showExplore, onExplore,
   onStartAgent, onSendTask, onStopAgent, onSaveCredentials,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isActive = status === 'idle' || status === 'working';
 
-  const hasShownTip = useRef(false);
   const prevStatus = useRef<AgentStatus>(status);
-  const [tipMessage, setTipMessage] = useState<string | null>(null);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const credentialPromptShown = useRef(false);
   const [showCredForm, setShowCredForm] = useState(false);
@@ -70,9 +71,11 @@ export default function ChatPanel({
   };
 
   useEffect(() => {
-    if (prevStatus.current === 'working' && status === 'idle' && !hasShownTip.current) {
-      setTipMessage("Tip: Try 'Explore this app' or describe a flow to test.");
-      hasShownTip.current = true;
+    if (prevStatus.current === 'working' && status === 'idle') {
+      setShowSuggestions(true);
+    }
+    if (status === 'working') {
+      setShowSuggestions(false);
     }
     prevStatus.current = status;
   }, [status]);
@@ -129,13 +132,27 @@ export default function ChatPanel({
             )}
           </div>
         ))}
-        {tipMessage && (
-          <div className="chat-message chat-message-system chat-tip">
-            <p>{tipMessage}</p>
-          </div>
-        )}
         <div ref={messagesEndRef} />
       </div>
+
+      {(showSuggestions || showExplore) && status === 'idle' && (
+        <div className="chat-suggestions">
+          {showExplore && (
+            <button className="chat-suggestion-chip" onClick={() => { onExplore(); setShowSuggestions(false); }}>
+              Explore this app
+            </button>
+          )}
+          <button className="chat-suggestion-chip" onClick={() => { onSendTask('Test the login flow'); setShowSuggestions(false); }}>
+            Test login flow
+          </button>
+          <button className="chat-suggestion-chip" onClick={() => { onSendTask('Check all links on this page'); setShowSuggestions(false); }}>
+            Check all links
+          </button>
+          <button className="chat-suggestion-chip" onClick={() => { onSendTask('Test form validation'); setShowSuggestions(false); }}>
+            Test form validation
+          </button>
+        </div>
+      )}
 
       <form className="chat-input" onSubmit={handleSubmit}>
         <input

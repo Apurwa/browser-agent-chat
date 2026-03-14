@@ -5,14 +5,14 @@ import { useTheme } from '../contexts/ThemeContext';
 import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
 import { Sun, Moon, LogOut } from 'lucide-react';
-import type { ProjectListItem } from '../types';
+import type { AgentListItem } from '../types';
 import './Home.css';
 
 export default function Home() {
   const [url, setUrl] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
+  const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
 
@@ -34,15 +34,15 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       const token = await getAccessToken();
-      const res = await apiAuthFetch('/api/projects', token);
+      const res = await apiAuthFetch('/api/agents', token);
       if (res.ok) {
         const data = await res.json();
-        const sorted = (data.projects as ProjectListItem[]).sort((a, b) => {
+        const sorted = (data.agents as AgentListItem[]).sort((a, b) => {
           const aTime = a.last_session_at ?? a.created_at;
           const bTime = b.last_session_at ?? b.created_at;
           return new Date(bTime).getTime() - new Date(aTime).getTime();
         });
-        setProjects(sorted);
+        setAgents(sorted);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -63,17 +63,17 @@ export default function Home() {
     try {
       const token = await getAccessToken();
       const name = deriveProjectName(normalizedUrl);
-      const res = await apiAuthFetch('/api/projects', token, {
+      const res = await apiAuthFetch('/api/agents', token, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, url: normalizedUrl }),
       });
 
       if (res.ok) {
-        const project = await res.json();
-        navigate(`/projects/${project.id}/testing`, { state: { autoStart: true } });
+        const agent = await res.json();
+        navigate(`/agents/${agent.id}/testing`, { state: { autoStart: true } });
       } else {
-        setError('Failed to create project. Please try again.');
+        setError('Failed to create agent. Please try again.');
         setIsCreating(false);
       }
     } catch {
@@ -94,7 +94,7 @@ export default function Home() {
   };
 
   const avatarUrl = user?.user_metadata?.avatar_url;
-  const displayProjects = showAll ? projects : projects.slice(0, 5);
+  const displayAgents = showAll ? agents : agents.slice(0, 5);
 
   return (
     <div className="home-page">
@@ -149,7 +149,7 @@ export default function Home() {
         </form>
 
         {isCreating && (
-          <p className="home-status-text">Creating project &amp; launching agent...</p>
+          <p className="home-status-text">Creating agent &amp; launching browser...</p>
         )}
 
         {error && (
@@ -164,27 +164,27 @@ export default function Home() {
               <span className="home-chip">Find bugs</span>
             </div>
 
-            {projects.length === 0 && (
+            {agents.length === 0 && (
               <p className="home-hint">Paste any web app URL to get started</p>
             )}
           </>
         )}
       </div>
 
-      {/* Recent Projects */}
-      {projects.length > 0 && (
+      {/* Recent Agents */}
+      {agents.length > 0 && (
         <div className="home-projects">
           <div className="home-projects-header">
-            <span className="home-projects-label">Recent Projects</span>
-            {projects.length > 5 && (
+            <span className="home-projects-label">Recent Agents</span>
+            {agents.length > 5 && (
               <button className="home-projects-viewall" onClick={() => setShowAll(prev => !prev)}>
                 {showAll ? 'Show less' : 'View all →'}
               </button>
             )}
           </div>
           <div className={`home-projects-grid${showAll ? ' home-projects-grid--expanded' : ''}`}>
-            {displayProjects.map(p => (
-              <button key={p.id} className="home-project-card" onClick={() => navigate(`/projects/${p.id}/testing`)}>
+            {displayAgents.map(p => (
+              <button key={p.id} className="home-project-card" onClick={() => navigate(`/agents/${p.id}/testing`)}>
                 <div className="home-project-name">{p.name}</div>
                 <div className="home-project-url">{p.url}</div>
                 <div className="home-project-meta">

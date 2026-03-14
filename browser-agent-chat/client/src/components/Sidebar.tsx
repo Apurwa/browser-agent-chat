@@ -38,7 +38,7 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   const isActive = (path: string) => location.pathname.includes(path);
 
   const navTo = (path: string) => {
-    if (!disabled && id) navigate(`/projects/${id}/${path}`);
+    if (!disabled && id) navigate(`/agents/${id}/${path}`);
   };
 
   return (

@@ -17,10 +17,10 @@ export default function TestingView() {
   const navigate = useNavigate();
   const isAutoStart = location.state?.autoStart === true;
 
-  // On mount: try to resume an existing session for this project
+  // On mount: try to resume an existing session for this agent
   // Skip if autoStart — we'll start a fresh agent instead
   useEffect(() => {
-    if (id && ws.activeProjectId !== id && !isAutoStart) {
+    if (id && ws.activeAgentId !== id && !isAutoStart) {
       ws.resumeSession(id);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -41,7 +41,7 @@ export default function TestingView() {
     (async () => {
       try {
         const token = await getAccessToken();
-        const res = await apiAuthFetch(`/api/projects/${id}/memory/features`, token);
+        const res = await apiAuthFetch(`/api/agents/${id}/memory/features`, token);
         if (res.ok) {
           const body = await res.json();
           const features = body.features ?? body;
@@ -56,10 +56,10 @@ export default function TestingView() {
     (async () => {
       try {
         const token = await getAccessToken();
-        const res = await apiAuthFetch(`/api/projects/${id}`, token);
+        const res = await apiAuthFetch(`/api/agents/${id}`, token);
         if (res.ok) {
-          const project = await res.json();
-          setHasCredentials(project.hasCredentials);
+          const agent = await res.json();
+          setHasCredentials(agent.hasCredentials);
         }
       } catch { /* ignore */ }
     })();
@@ -68,7 +68,7 @@ export default function TestingView() {
 
   const handleSaveCredentials = async (username: string, password: string) => {
     const token = await getAccessToken();
-    const res = await apiAuthFetch(`/api/projects/${id}`, token, {
+    const res = await apiAuthFetch(`/api/agents/${id}`, token, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ credentials: { username, password } }),
@@ -81,22 +81,14 @@ export default function TestingView() {
     <div className="app-layout">
       <Sidebar findingsCount={ws.findingsCount} />
       <div className="testing-content">
-        {ws.status === 'idle' && id && featuresCount <= 3 && (
-          <button
-            className="btn-add"
-            onClick={() => ws.explore(id)}
-            style={{ margin: '0.5rem', alignSelf: 'flex-start' }}
-            title="Explore the app to discover features"
-          >
-            🔍 Explore App
-          </button>
-        )}
         <ChatPanel
-          projectId={id!}
+          agentId={id!}
           messages={ws.messages}
           status={ws.status}
           currentUrl={ws.currentUrl}
           hasCredentials={hasCredentials}
+          showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
+          onExplore={() => id && ws.explore(id)}
           onStartAgent={() => ws.startAgent(id!)}
           onSendTask={ws.sendTask}
           onStopAgent={ws.stopAgent}
