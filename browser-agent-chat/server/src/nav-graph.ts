@@ -38,11 +38,17 @@ export interface SerializeOptions {
 
 /**
  * Serialize a navigation graph into a prompt-friendly text block.
+ * When maxNodes is set, only the first N nodes are rendered. Edges pointing
+ * to or from excluded nodes are silently omitted.
  */
 export function serializeGraph(graph: NavGraph, options?: SerializeOptions): string {
   if (graph.nodes.length === 0) return '';
 
-  const nodeMap = new Map(graph.nodes.map(n => [n.id, n]));
+  const nodes = options?.maxNodes
+    ? graph.nodes.slice(0, options.maxNodes)
+    : graph.nodes;
+
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const edgesByFrom = new Map<string, NavEdge[]>();
   for (const edge of graph.edges) {
     const list = edgesByFrom.get(edge.fromNodeId) || [];
@@ -50,14 +56,11 @@ export function serializeGraph(graph: NavGraph, options?: SerializeOptions): str
     edgesByFrom.set(edge.fromNodeId, list);
   }
 
-  const nodes = options?.maxNodes
-    ? graph.nodes.slice(0, options.maxNodes)
-    : graph.nodes;
-
   const lines: string[] = ['SITE MAP:'];
   for (const node of nodes) {
-    const featurePart = node.features.length > 0
-      ? ` [features: ${node.features.join(', ')}]`
+    const features = node.features ?? [];
+    const featurePart = features.length > 0
+      ? ` [features: ${features.join(', ')}]`
       : '';
     lines.push(`${node.urlPattern} → "${node.pageTitle}"${featurePart}`);
 

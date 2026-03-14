@@ -121,4 +121,35 @@ describe('serializeGraph', () => {
     const result = serializeGraph(graph, { maxNodes: 3 });
     expect(result.match(/\/page-/g)?.length).toBe(3);
   });
+
+  it('maxNodes omits edges pointing to excluded nodes', () => {
+    const graph: NavGraph = {
+      nodes: [
+        { id: 'n1', projectId: 'p1', urlPattern: '/a', pageTitle: 'A', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+        { id: 'n2', projectId: 'p1', urlPattern: '/b', pageTitle: 'B', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+        { id: 'n3', projectId: 'p1', urlPattern: '/c', pageTitle: 'C', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+      ],
+      edges: [
+        { id: 'e1', projectId: 'p1', fromNodeId: 'n1', toNodeId: 'n2', actionLabel: 'go to b', selector: null, discoveredAt: '' },
+        { id: 'e2', projectId: 'p1', fromNodeId: 'n1', toNodeId: 'n3', actionLabel: 'go to c', selector: null, discoveredAt: '' },
+      ],
+    };
+    const result = serializeGraph(graph, { maxNodes: 2 });
+    expect(result).toContain('→ /b (go to b)');
+    expect(result).not.toContain('/c');
+  });
+
+  it('silently drops edges with dangling toNodeId', () => {
+    const graph: NavGraph = {
+      nodes: [
+        { id: 'n1', projectId: 'p1', urlPattern: '/a', pageTitle: 'A', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+      ],
+      edges: [
+        { id: 'e1', projectId: 'p1', fromNodeId: 'n1', toNodeId: 'missing', actionLabel: 'broken', selector: null, discoveredAt: '' },
+      ],
+    };
+    const result = serializeGraph(graph);
+    expect(result).toContain('/a');
+    expect(result).not.toContain('broken');
+  });
 });
