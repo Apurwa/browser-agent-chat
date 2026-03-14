@@ -239,7 +239,7 @@ export async function executeLogin(
     console.log('[LOGIN] Done, URL:', page.url());
   } catch (err) {
     console.error('[LOGIN] Failed:', err);
-    trace?.update({ output: { success: false, error: String(err) }, level: 'ERROR' });
+    trace?.update({ output: { success: false, error: String(err) } });
     session.currentTrace = null;
     broadcast({ type: 'error', message: 'Auto-login failed. You can log in via chat.' });
     return;
@@ -346,7 +346,7 @@ export async function executeExplore(
         sectionSpan?.end({ output: { features: pageFeatures.features.length, flows: pageFeatures.flows.length } });
         await createSuggestionsFromExtraction(session, pageFeatures, broadcast);
       } catch (navErr) {
-        sectionSpan?.end({ output: { error: String(navErr) }, level: 'ERROR' });
+        sectionSpan?.end({ output: { error: String(navErr) } });
         console.error(`[EXPLORE] Failed to explore "${item.label}":`, navErr);
         broadcast({ type: 'thought', content: `Could not explore ${item.label}, continuing...` });
       }
@@ -359,7 +359,7 @@ export async function executeExplore(
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Exploration failed';
     console.error('[EXPLORE] Failed:', errMsg);
-    trace?.update({ output: { success: false, error: errMsg }, level: 'ERROR' });
+    trace?.update({ output: { success: false, error: errMsg } });
     broadcast({ type: 'error', message: errMsg });
     broadcast({ type: 'taskComplete', success: false });
   } finally {
@@ -459,7 +459,7 @@ export async function executeTask(
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
-    trace?.update({ output: { success: false, error: message }, level: 'ERROR' });
+    trace?.update({ output: { success: false, error: message } });
     broadcast({ type: 'error', message });
     broadcast({ type: 'taskComplete', success: false });
     if (session.sessionId) {
