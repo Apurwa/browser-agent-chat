@@ -80,7 +80,7 @@
 }
 
 .page-node--new svg circle:first-of-type {
-  animation: node-pulse 2s ease-in-out 3;
+  animation: node-pulse 2s ease-in-out 5;
 }
 
 @keyframes node-pulse {

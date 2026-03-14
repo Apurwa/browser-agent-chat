@@ -83,52 +83,54 @@ export default function TestingView() {
     <div className="app-layout">
       <Sidebar findingsCount={ws.findingsCount} />
       <div className="testing-content">
-        <div className="testing-tabs">
-          <button
-            className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
-            onClick={() => setActiveTab('chat')}
-          >
-            Chat
-          </button>
-          <button
-            className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
-            onClick={() => setActiveTab('map')}
-          >
-            App Map
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <div className="testing-tabs">
+            <button
+              className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
+              onClick={() => setActiveTab('chat')}
+            >
+              Chat
+            </button>
+            <button
+              className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
+              onClick={() => setActiveTab('map')}
+            >
+              App Map
+            </button>
+          </div>
+          {activeTab === 'chat' ? (
+            <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
+              {ws.status === 'idle' && id && featuresCount <= 3 && (
+                <button
+                  className="btn-add"
+                  onClick={() => ws.explore(id)}
+                  style={{ margin: '0.5rem', alignSelf: 'flex-start' }}
+                  title="Explore the app to discover features"
+                >
+                  🔍 Explore App
+                </button>
+              )}
+              <ChatPanel
+                projectId={id!}
+                messages={ws.messages}
+                status={ws.status}
+                currentUrl={ws.currentUrl}
+                hasCredentials={hasCredentials}
+                onStartAgent={() => ws.startAgent(id!)}
+                onSendTask={ws.sendTask}
+                onStopAgent={ws.stopAgent}
+                onSaveCredentials={handleSaveCredentials}
+              />
+              <BrowserView
+                screenshot={ws.screenshot}
+                currentUrl={ws.currentUrl}
+                status={ws.status}
+              />
+            </div>
+          ) : (
+            <AppMap projectId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
+          )}
         </div>
-        {activeTab === 'chat' ? (
-          <>
-            {ws.status === 'idle' && id && featuresCount <= 3 && (
-              <button
-                className="btn-add"
-                onClick={() => ws.explore(id)}
-                style={{ margin: '0.5rem', alignSelf: 'flex-start' }}
-                title="Explore the app to discover features"
-              >
-                🔍 Explore App
-              </button>
-            )}
-            <ChatPanel
-              projectId={id!}
-              messages={ws.messages}
-              status={ws.status}
-              currentUrl={ws.currentUrl}
-              hasCredentials={hasCredentials}
-              onStartAgent={() => ws.startAgent(id!)}
-              onSendTask={ws.sendTask}
-              onStopAgent={ws.stopAgent}
-              onSaveCredentials={handleSaveCredentials}
-            />
-            <BrowserView
-              screenshot={ws.screenshot}
-              currentUrl={ws.currentUrl}
-              status={ws.status}
-            />
-          </>
-        ) : (
-          <AppMap projectId={id!} onSendTask={ws.sendTask} />
-        )}
       </div>
     </div>
   );

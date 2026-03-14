@@ -102,30 +102,38 @@ function layoutNodes(mapNodes: MapNode[], mapEdges: MapEdge[]): Node[] {
   return nodes;
 }
 
-function layoutEdges(mapEdges: MapEdge[]): Edge[] {
-  return mapEdges.map(e => ({
-    id: e.id,
-    source: e.fromNodeId,
-    target: e.toNodeId,
-    type: 'nav' as const,
-    data: { actionLabel: e.actionLabel },
-  }));
+function layoutEdges(mapEdges: MapEdge[], mapNodes: MapNode[]): Edge[] {
+  const nodeById = new Map(mapNodes.map(n => [n.id, n]));
+  return mapEdges.map(e => {
+    const targetNode = nodeById.get(e.toNodeId);
+    const isUnexplored = targetNode
+      ? targetNode.features.length === 0 && targetNode.pendingSuggestions.length === 0
+      : false;
+    return {
+      id: e.id,
+      source: e.fromNodeId,
+      target: e.toNodeId,
+      type: 'nav' as const,
+      data: { actionLabel: e.actionLabel, isUnexplored },
+    };
+  });
 }
 
 interface AppMapProps {
   projectId: string;
   onSendTask: (task: string) => void;
+  onExplore?: () => void;
 }
 
-export default function AppMap({ projectId, onSendTask }: AppMapProps) {
+export default function AppMap({ projectId, onSendTask, onExplore }: AppMapProps) {
   const { nodes: mapNodes, edges: mapEdges, unlinkedSuggestions, loading, error, refresh } = useAppMap(projectId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const initialNodes = useMemo(() => layoutNodes(mapNodes, mapEdges), [mapNodes, mapEdges]);
-  const initialEdges = useMemo(() => layoutEdges(mapEdges), [mapEdges]);
+  const initialEdges = useMemo(() => layoutEdges(mapEdges, mapNodes), [mapEdges, mapNodes]);
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState(initialNodes);
-  const [rfEdges, , onEdgesChange] = useEdgesState(initialEdges);
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   // Sync layout when map data changes
   useEffect(() => {
@@ -141,7 +149,8 @@ export default function AppMap({ projectId, onSendTask }: AppMapProps) {
         },
       }));
     });
-  }, [mapNodes, mapEdges, selectedNodeId, setRfNodes]);
+    setRfEdges(layoutEdges(mapEdges, mapNodes));
+  }, [mapNodes, mapEdges, selectedNodeId, setRfNodes, setRfEdges]);
 
   const selectedNode = mapNodes.find(n => n.id === selectedNodeId) || null;
 
@@ -166,6 +175,9 @@ export default function AppMap({ projectId, onSendTask }: AppMapProps) {
       <div className="app-map-empty">
         <p>No map data yet.</p>
         <p>Start an exploration to build the app map.</p>
+        {onExplore && (
+          <button className="btn-add" onClick={onExplore}>Explore & Learn</button>
+        )}
       </div>
     );
   }
@@ -189,7 +201,6 @@ export default function AppMap({ projectId, onSendTask }: AppMapProps) {
           fitView
           minZoom={0.3}
           maxZoom={2}
-          proOptions={{ hideAttribution: true }}
         >
           <Background color="#1e293b" gap={20} size={1} />
           <Controls showInteractive={false} />
