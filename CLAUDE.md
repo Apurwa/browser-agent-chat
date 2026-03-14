@@ -114,6 +114,29 @@ Uses Render with `render.yaml` blueprint:
 
 See README.md for detailed deployment instructions.
 
+## UI Theme System (MANDATORY)
+
+The client uses a **CSS custom property theme system** defined in `client/src/App.css`. Design language: **Delphi Tools** (earthy, warm, handmade). Supports light/dark toggle.
+
+**NEVER use hardcoded hex colors in component CSS.** Always use CSS variables:
+
+| Purpose | Variable | Dark value | Light value |
+|---------|----------|------------|-------------|
+| Page background | `var(--bg-primary)` | `#1A1814` | `#FAF7F2` |
+| Section background | `var(--bg-secondary)` | `#141210` | `#F0EDE6` |
+| Card background | `var(--bg-card)` | `#221F1A` | `#FFFFFF` |
+| Hover state | `var(--bg-hover)` | `#2A2620` | `#E8F2E5` |
+| Primary border | `var(--border-primary)` | `#332E25` | `#E8E3DC` |
+| Body text | `var(--text-body)` | `#EAE5DD` | `#3A3530` |
+| Muted text | `var(--text-muted)` | `#A5A098` | `#6B6560` |
+| Dim text | `var(--text-dim)` | `#858078` | `#8A8580` |
+| Brand color (green) | `var(--brand)` | `#3D6B4F` | `#3D6B4F` |
+| Accent color (amber) | `var(--accent)` | `#D4874D` | `#D4874D` |
+
+For SVG `fill`/`stroke` attributes, use `var(--variable, fallback)` syntax: `fill="var(--text-primary, #F5F0E8)"`.
+
+**Exceptions:** Semantic colors that don't change with theme (error red `#ef4444`, criticality colors) may be hardcoded.
+
 ## Magnitude API Reference
 
 ```ts
