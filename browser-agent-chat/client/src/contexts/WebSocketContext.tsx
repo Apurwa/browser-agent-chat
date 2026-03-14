@@ -130,6 +130,26 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       case 'pong':
         // Heartbeat response — no action needed
         break;
+      case 'sessionCrashed':
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: 'Browser session crashed. Please restart the agent to continue.',
+          timestamp: Date.now(),
+        }]);
+        setStatus('disconnected');
+        activeProjectRef.current = null;
+        setActiveProjectId(null);
+        break;
+      case 'taskInterrupted':
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: `Server restarted while running a task. Your browser session was preserved. Previous task: "${(msg as any).task}"`,
+          timestamp: Date.now(),
+        }]);
+        // Status stays as-is (likely 'idle' from the recovered session snapshot)
+        break;
     }
   }, [addMessage]);
 

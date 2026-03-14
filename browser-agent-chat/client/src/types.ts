@@ -137,7 +137,9 @@ export type ServerMessage =
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
   | { type: 'sessionRestore'; messages: ChatMessage[] }
-  | { type: 'metrics'; metrics: StartupMetrics };
+  | { type: 'metrics'; metrics: StartupMetrics }
+  | { type: 'sessionCrashed' }
+  | { type: 'taskInterrupted'; task: string };
 
 // === Chat ===
 
