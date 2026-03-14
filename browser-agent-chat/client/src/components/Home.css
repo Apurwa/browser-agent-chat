@@ -21,7 +21,7 @@
 }
 
 .home-logo-accent {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .home-logo-text {
@@ -137,7 +137,7 @@
 
 .home-url-form:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.1);
+  box-shadow: 0 0 0 3px var(--accent-light);
 }
 
 .home-url-input {
@@ -202,7 +202,7 @@
 .home-error-text {
   margin-top: 12px;
   font-size: 13px;
-  color: #e53e3e;
+  color: var(--accent);
   font-weight: 500;
 }
 
@@ -315,12 +315,12 @@
 
 .home-project-badge--bugs {
   color: var(--accent);
-  background: rgba(233, 69, 96, 0.08);
+  background: var(--accent-light);
 }
 
 .home-project-badge--clean {
-  color: #4CAF50;
-  background: rgba(76, 175, 80, 0.08);
+  color: var(--brand);
+  background: var(--brand-light);
 }
 
 .home-project-time {

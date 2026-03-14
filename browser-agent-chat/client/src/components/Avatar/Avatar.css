@@ -1,7 +1,7 @@
 .avatar-container {
   display: flex;
   flex-direction: column;
-  background: #16213e;
+  background: var(--bg-card);
   border-radius: 12px;
   overflow: hidden;
   height: 100%;
@@ -12,8 +12,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 1rem;
-  background: #0f3460;
-  border-bottom: 1px solid #1a1a2e;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .avatar-header h3 {
@@ -32,40 +32,40 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #666;
+  background: var(--text-dimmer);
 }
 
 .avatar-status .status-dot.ready {
-  background: #4ade80;
+  background: var(--brand);
 }
 
 .avatar-status .status-dot.speaking {
-  background: #60a5fa;
+  background: var(--accent);
   animation: pulse 1s infinite;
 }
 
 .avatar-status .status-dot.listening {
-  background: #f472b6;
+  background: var(--accent);
   animation: pulse 0.5s infinite;
 }
 
 .avatar-status .status-dot.loading {
-  background: #fbbf24;
+  background: var(--accent);
   animation: pulse 1s infinite;
 }
 
 .avatar-status .status-dot.error {
-  background: #ef4444;
+  background: #C25040;
 }
 
 .avatar-status .status-dot.disconnected {
-  background: #666;
+  background: var(--text-dimmer);
 }
 
 .avatar-status .status-text {
   font-size: 0.75rem;
   text-transform: uppercase;
-  color: #888;
+  color: var(--text-dim);
 }
 
 /* Video Wrapper */
@@ -75,7 +75,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0a0a1a;
+  background: var(--bg-primary);
   min-height: 200px;
 }
 
@@ -98,7 +98,7 @@
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  color: #888;
+  color: var(--text-dim);
   text-align: center;
   padding: 1rem;
   position: absolute;
@@ -113,8 +113,8 @@
 .avatar-loading-spinner {
   width: 48px;
   height: 48px;
-  border: 3px solid #333;
-  border-top-color: #e94560;
+  border: 3px solid var(--border-secondary);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -132,7 +132,7 @@
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  color: #666;
+  color: var(--text-dimmer);
   text-align: center;
   padding: 1rem;
   position: absolute;
@@ -155,7 +155,7 @@
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  color: #ef4444;
+  color: #C25040;
   text-align: center;
   padding: 1rem;
   position: absolute;
@@ -187,7 +187,7 @@
 .speaking-dot {
   width: 8px;
   height: 8px;
-  background: #60a5fa;
+  background: var(--accent);
   border-radius: 50%;
   animation: speakingBounce 0.6s infinite ease-in-out;
 }
@@ -212,8 +212,8 @@
 /* Error Message */
 .avatar-error-message {
   padding: 0.75rem 1rem;
-  background: rgba(239, 68, 68, 0.1);
-  border-top: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(194, 80, 64, 0.1);
+  border-top: 1px solid rgba(194, 80, 64, 0.3);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -221,15 +221,15 @@
 }
 
 .avatar-error-message p {
-  color: #ef4444;
+  color: #C25040;
   font-size: 0.875rem;
   margin: 0;
 }
 
 .error-dismiss {
   background: transparent;
-  border: 1px solid rgba(239, 68, 68, 0.5);
-  color: #ef4444;
+  border: 1px solid rgba(194, 80, 64, 0.5);
+  color: #C25040;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   font-size: 0.75rem;
@@ -237,7 +237,7 @@
 }
 
 .error-dismiss:hover {
-  background: rgba(239, 68, 68, 0.1);
+  background: rgba(194, 80, 64, 0.1);
 }
 
 /* Controls */
@@ -245,8 +245,8 @@
   display: flex;
   gap: 0.5rem;
   padding: 0.75rem;
-  background: #0f3460;
-  border-top: 1px solid #1a1a2e;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-primary);
 }
 
 .avatar-btn {
@@ -266,32 +266,32 @@
 }
 
 .avatar-btn-primary {
-  background: #e94560;
+  background: var(--accent);
   color: white;
 }
 
 .avatar-btn-primary:hover:not(:disabled) {
-  background: #d63050;
+  background: var(--accent-hover);
 }
 
 .avatar-btn-secondary {
-  background: #16213e;
-  color: #eee;
-  border: 1px solid #333;
+  background: var(--bg-card);
+  color: var(--text-body);
+  border: 1px solid var(--border-secondary);
 }
 
 .avatar-btn-secondary:hover:not(:disabled) {
-  background: #1a2742;
+  background: var(--bg-hover);
 }
 
 .avatar-btn-danger {
   background: transparent;
-  color: #ef4444;
-  border: 1px solid #ef4444;
+  color: #C25040;
+  border: 1px solid #C25040;
 }
 
 .avatar-btn-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.1);
+  background: rgba(194, 80, 64, 0.1);
 }
 
 @keyframes pulse {

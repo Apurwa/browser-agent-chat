@@ -3,16 +3,16 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: #0a0a0a;
-  color: #e0e0e0;
+  background: var(--bg-primary);
+  color: var(--text-body);
 }
 
 .login-card {
   text-align: center;
   padding: 3rem;
   border-radius: 12px;
-  background: #1a1a1a;
-  border: 1px solid #333;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
   max-width: 400px;
   width: 90%;
 }
@@ -20,12 +20,12 @@
 .login-card h1 {
   margin: 0 0 0.5rem;
   font-size: 1.5rem;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .login-card p {
   margin: 0 0 2rem;
-  color: #888;
+  color: var(--text-dim);
 }
 
 .login-btn {
@@ -34,30 +34,31 @@
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  background: #238636;
+  background: var(--brand);
   color: #fff;
   font-weight: 500;
   transition: background 0.2s;
 }
 
 .login-btn:hover {
-  background: #2ea043;
+  background: var(--brand-hover);
 }
 
 .login-btn.secondary {
-  background: #333;
+  background: var(--bg-hover);
+  color: var(--text-body);
   margin-top: 1rem;
 }
 
 .login-btn.secondary:hover {
-  background: #444;
+  background: var(--bg-active);
 }
 
 .access-denied {
-  color: #f85149;
+  color: var(--accent);
   margin-bottom: 1rem;
 }
 
 .access-denied p {
-  color: #f85149;
+  color: var(--accent);
 }
