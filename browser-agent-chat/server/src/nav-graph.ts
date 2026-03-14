@@ -205,6 +205,7 @@ export async function getGraph(projectId: string): Promise<NavGraph> {
 
   if (edgeErr) {
     console.error('[NAV-GRAPH] getGraph edges error:', edgeErr);
+    return { nodes: [], edges: [] };
   }
 
   // 3. Load feature links (join with memory_features for names)

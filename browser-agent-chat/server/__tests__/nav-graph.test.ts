@@ -297,4 +297,37 @@ describe('getGraph', () => {
     const graph = await getGraph('p1');
     expect(graph).toEqual({ nodes: [], edges: [] });
   });
+
+  it('returns empty graph when node fetch fails', async () => {
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          order: vi.fn().mockResolvedValue({ data: null, error: { message: 'node fail' } }),
+        }),
+      }),
+    });
+    const graph = await getGraph('p1');
+    expect(graph).toEqual({ nodes: [], edges: [] });
+  });
+
+  it('returns empty graph when edge fetch fails', async () => {
+    const nodeRows = [
+      { id: 'n1', project_id: 'p1', url_pattern: '/a', page_title: 'A', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' },
+    ];
+    mockFrom
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: nodeRows, error: null }),
+          }),
+        }),
+      })
+      .mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ data: null, error: { message: 'edge fail' } }),
+        }),
+      });
+    const graph = await getGraph('p1');
+    expect(graph).toEqual({ nodes: [], edges: [] });
+  });
 });
