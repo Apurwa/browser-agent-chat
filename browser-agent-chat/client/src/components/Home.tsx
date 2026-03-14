@@ -6,6 +6,7 @@ import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
 import { Sun, Moon, LogOut } from 'lucide-react';
 import type { ProjectListItem } from '../types';
+import './Home.css';
 
 export default function Home() {
   const [url, setUrl] = useState('');
