@@ -191,7 +191,6 @@ export type ClientMessage =
   | { type: 'resume'; projectId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; projectId: string }
-  | { type: 'viewport'; width: number; height: number }
   | { type: 'stop' }
   | { type: 'ping' };
 
