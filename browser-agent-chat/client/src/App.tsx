@@ -6,7 +6,7 @@ import Home from './components/Home';
 import TestingView from './components/TestingView';
 import FindingsDashboard from './components/FindingsDashboard';
 import MemoryViewer from './components/MemoryViewer';
-import ProjectSettings from './components/ProjectSettings';
+import AgentSettings from './components/AgentSettings';
 import EvalDashboard from './components/EvalDashboard';
 
 export default function App() {
@@ -20,12 +20,12 @@ export default function App() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
       <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-      <Route path="/projects" element={<Navigate to="/" replace />} />
-      <Route path="/projects/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
-      <Route path="/projects/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
-      <Route path="/projects/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
-      <Route path="/projects/:id/settings" element={<ProtectedRoute><ProjectSettings /></ProtectedRoute>} />
-      <Route path="/projects/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
+      <Route path="/agents/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
+      <Route path="/agents/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
+      <Route path="/agents/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
+      <Route path="/agents/:id/settings" element={<ProtectedRoute><AgentSettings /></ProtectedRoute>} />
+      <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
+      <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
       <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
     </Routes>
   );
