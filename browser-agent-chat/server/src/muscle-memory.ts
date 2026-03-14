@@ -74,6 +74,80 @@ export async function incrementFailures(patternId: string, currentFailures: numb
   if (error) console.error('[MUSCLE-MEMORY] incrementFailures error:', error);
 }
 
+// ─── Pure Helpers ─────────────────────────────────────────────────
+
+/** Inject credential values into placeholder steps. */
+export function injectCredentials(
+  steps: PlaywrightStep[],
+  credentials: { username: string; password: string },
+): PlaywrightStep[] {
+  return steps.map(step => {
+    if (!step.value) return step;
+    return {
+      ...step,
+      value: step.value
+        .replace('{{username}}', credentials.username)
+        .replace('{{password}}', credentials.password),
+    };
+  });
+}
+
+/** Strip action prefix from nav edge labels: "click: Pipelines" → "Pipelines" */
+export function stripActionPrefix(label: string): string {
+  return label.replace(/^\w+:\s*/, '').trim();
+}
+
+/** Find a nav node by page title or URL path segment. */
+export function findNodeByUrlOrTitle(nodes: NavNode[], query: string): NavNode | null {
+  const q = query.toLowerCase();
+
+  // 1. Exact page_title match (strongest signal)
+  const exactTitle = nodes.find(n =>
+    n.pageTitle && n.pageTitle.toLowerCase() === q
+  );
+  if (exactTitle) return exactTitle;
+
+  // 2. Word-boundary match on URL path segments
+  const byUrl = nodes.find(n => {
+    const segments = n.urlPattern.split('/').filter(Boolean);
+    return segments.some(seg => seg.toLowerCase() === q);
+  });
+  if (byUrl) return byUrl;
+
+  // 3. Substring match on page_title (weakest)
+  return nodes.find(n =>
+    n.pageTitle && n.pageTitle.toLowerCase().includes(q)
+  ) || null;
+}
+
+/** BFS shortest path through nav edges. Operates on in-memory graph. */
+export function findPath(graph: NavGraph, fromId: string, toId: string): NavEdge[] {
+  if (fromId === toId) return [];
+
+  // Build adjacency list
+  const adj = new Map<string, NavEdge[]>();
+  for (const edge of graph.edges) {
+    if (!adj.has(edge.fromNodeId)) adj.set(edge.fromNodeId, []);
+    adj.get(edge.fromNodeId)!.push(edge);
+  }
+
+  // BFS
+  const queue: Array<{ nodeId: string; path: NavEdge[] }> = [{ nodeId: fromId, path: [] }];
+  const visited = new Set<string>([fromId]);
+
+  while (queue.length > 0) {
+    const { nodeId, path } = queue.shift()!;
+    for (const edge of adj.get(nodeId) || []) {
+      if (edge.toNodeId === toId) return [...path, edge];
+      if (!visited.has(edge.toNodeId)) {
+        visited.add(edge.toNodeId);
+        queue.push({ nodeId: edge.toNodeId, path: [...path, edge] });
+      }
+    }
+  }
+  return [];
+}
+
 /** Upsert a login pattern for a project (manual query since partial unique index). */
 export async function upsertLoginPattern(
   projectId: string,
