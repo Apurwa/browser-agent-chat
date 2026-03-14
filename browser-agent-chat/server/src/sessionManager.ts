@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
 import { createAgent } from './agent.js';
-import { endSession as dbEndSession } from './db.js';
+import { endSession as dbEndSession, getMessagesBySession } from './db.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
 
@@ -172,17 +172,110 @@ export async function destroySession(projectId: string): Promise<void> {
 // -- Recover session (on server restart) --
 
 export async function recoverSession(projectId: string): Promise<boolean> {
-  throw new Error('Not implemented — Task 9');
+  const redis = redisStore.getRedis();
+  const serverId = String(process.pid);
+
+  // Distributed lock
+  const locked = await redis.set(`session:lock:${projectId}`, serverId, 'NX', 'EX', 30);
+  if (!locked) return false;
+
+  try {
+    const session = await redisStore.getSession(projectId);
+    if (!session) return false;
+
+    const alive = await browserManager.isAlive(session.browserPid, session.cdpPort);
+
+    if (alive) {
+      const broadcastFn = makeBroadcast(projectId);
+
+      // Connect agent to existing browser — NO url (keep current page)
+      const agentSession = await createAgent(
+        broadcastFn, session.cdpEndpoint, session.dbSessionId, projectId, undefined
+      );
+      agents.set(projectId, agentSession);
+
+      // Update status based on what was happening before crash
+      if (session.status === 'working') {
+        await redisStore.setSession(projectId, { status: 'interrupted' });
+      } else {
+        await redisStore.setSession(projectId, { status: 'idle' });
+      }
+
+      console.log(`[RECOVERY] Session ${projectId} recovered`);
+      return true;
+    } else {
+      // Browser is dead
+      await redisStore.setSession(projectId, { status: 'crashed' });
+      await redisStore.freePort(session.cdpPort);
+      console.log(`[RECOVERY] Session ${projectId} browser crashed`);
+      return false;
+    }
+  } finally {
+    await redis.del(`session:lock:${projectId}`);
+  }
 }
 
 export async function recoverAllSessions(): Promise<void> {
-  throw new Error('Not implemented — Task 9');
+  const projectIds = await redisStore.listSessions();
+  if (projectIds.length === 0) return;
+
+  console.log(`[RECOVERY] Recovering ${projectIds.length} session(s)...`);
+  const results: PromiseSettledResult<boolean>[] = [];
+
+  for (let i = 0; i < projectIds.length; i += 5) {
+    const batch = projectIds.slice(i, i + 5);
+    results.push(...await Promise.allSettled(
+      batch.map(pid => recoverSession(pid))
+    ));
+  }
+
+  const recovered = results.filter(r => r.status === 'fulfilled' && r.value).length;
+  const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value)).length;
+  console.log(`[RECOVERY] ${recovered} recovered, ${failed} failed of ${projectIds.length} total`);
 }
 
 // -- Send snapshot to reconnecting client --
 
 export async function sendSnapshot(projectId: string, ws: WebSocket): Promise<void> {
-  throw new Error('Not implemented — Task 9');
+  const session = await redisStore.getSession(projectId);
+  if (!session) return;
+
+  const send = (msg: ServerMessage) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  };
+
+  // Status
+  send({ type: 'status', status: session.status as any });
+
+  // Current URL
+  if (session.currentUrl) {
+    send({ type: 'nav', url: session.currentUrl });
+  }
+
+  // Screenshot (separate Redis key)
+  const screenshot = await redisStore.getScreenshot(projectId);
+  if (screenshot) {
+    send({ type: 'screenshot', data: screenshot });
+  }
+
+  // Messages — Redis first, fall back to Supabase
+  let messages = await redisStore.getMessages(projectId);
+  if (messages.length === 0 && session.dbSessionId) {
+    messages = await getMessagesBySession(session.dbSessionId);
+  }
+  if (messages.length > 0) {
+    send({ type: 'sessionRestore', messages });
+  }
+
+  // Interrupted task notification
+  if (session.status === 'interrupted' && session.lastTask) {
+    send({ type: 'taskInterrupted', task: session.lastTask });
+  }
+
+  // Crashed notification
+  if (session.status === 'crashed') {
+    send({ type: 'sessionCrashed' });
+  }
 }
 
 // -- Check session exists --

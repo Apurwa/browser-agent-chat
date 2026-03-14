@@ -49,6 +49,7 @@ vi.mock('../src/db.js', () => ({
 import * as redisStore from '../src/redisStore.js';
 import * as browserManager from '../src/browserManager.js';
 import { createAgent } from '../src/agent.js';
+import { WebSocket } from 'ws';
 import {
   createSession,
   destroySession,
@@ -56,6 +57,9 @@ import {
   addClient,
   removeClient,
   makeBroadcast,
+  recoverSession,
+  recoverAllSessions,
+  sendSnapshot,
 } from '../src/sessionManager.js';
 
 describe('sessionManager — create', () => {
@@ -112,12 +116,6 @@ describe('sessionManager — destroy', () => {
   });
 
   it('destroySession kills browser, ends DB session, deletes Redis', async () => {
-    (redisStore.getSession as any).mockResolvedValueOnce({
-      dbSessionId: 'db-1',
-      browserPid: 12345,
-      cdpPort: 19300,
-    });
-
     // First create a session so there's an agent to clean up
     await createSession('proj-1', 'https://example.com', 'db-1');
     vi.clearAllMocks();
@@ -158,5 +156,163 @@ describe('sessionManager — broadcast', () => {
       type: 'agent',
       content: 'Analyzing the page...',
     }));
+  });
+});
+
+const mockRedisSession = {
+  dbSessionId: 'db-1',
+  status: 'idle' as const,
+  cdpPort: 19300,
+  cdpEndpoint: 'http://localhost:19300',
+  currentUrl: 'https://example.com/dashboard',
+  memoryContext: '',
+  browserPid: 12345,
+  lastTask: '',
+  createdAt: 1710000000000,
+  lastActivityAt: 1710000000000,
+};
+
+describe('sessionManager — recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('recoverSession reconnects agent when browser is alive', async () => {
+    const redis = redisStore.getRedis();
+    (redis.set as any).mockResolvedValueOnce('OK'); // lock acquired
+    (redisStore.getSession as any).mockResolvedValueOnce(mockRedisSession);
+    (browserManager.isAlive as any).mockResolvedValueOnce(true);
+
+    const result = await recoverSession('proj-1');
+
+    expect(result).toBe(true);
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.any(Function), 'http://localhost:19300', 'db-1', 'proj-1', undefined
+    );
+    expect(redisStore.setSession).toHaveBeenCalledWith('proj-1', { status: 'idle' });
+    expect(redis.del).toHaveBeenCalledWith('session:lock:proj-1');
+  });
+
+  it('recoverSession marks crashed when browser is dead', async () => {
+    const redis = redisStore.getRedis();
+    (redis.set as any).mockResolvedValueOnce('OK');
+    (redisStore.getSession as any).mockResolvedValueOnce(mockRedisSession);
+    (browserManager.isAlive as any).mockResolvedValueOnce(false);
+
+    const result = await recoverSession('proj-1');
+
+    expect(result).toBe(false);
+    expect(redisStore.setSession).toHaveBeenCalledWith('proj-1', { status: 'crashed' });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('recoverSession skips when lock is held by another server', async () => {
+    const redis = redisStore.getRedis();
+    (redis.set as any).mockResolvedValueOnce(null); // lock NOT acquired
+
+    const result = await recoverSession('proj-1');
+    expect(result).toBe(false);
+    expect(redisStore.getSession).not.toHaveBeenCalled();
+  });
+
+  it('recoverSession sets status to interrupted when previous status was working', async () => {
+    const redis = redisStore.getRedis();
+    (redis.set as any).mockResolvedValueOnce('OK');
+    (redisStore.getSession as any).mockResolvedValueOnce({
+      ...mockRedisSession,
+      status: 'working',
+      lastTask: 'Click the submit button',
+    });
+    (browserManager.isAlive as any).mockResolvedValueOnce(true);
+
+    await recoverSession('proj-1');
+
+    expect(redisStore.setSession).toHaveBeenCalledWith('proj-1', { status: 'interrupted' });
+  });
+});
+
+describe('sessionManager — recoverAll', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('recoverAllSessions processes sessions in batches of 5', async () => {
+    (redisStore.listSessions as any).mockResolvedValueOnce([
+      'proj-1', 'proj-2', 'proj-3', 'proj-4', 'proj-5', 'proj-6',
+    ]);
+
+    const redis = redisStore.getRedis();
+    (redis.set as any).mockResolvedValue('OK');
+    (redisStore.getSession as any).mockResolvedValue(mockRedisSession);
+    (browserManager.isAlive as any).mockResolvedValue(true);
+
+    await recoverAllSessions();
+
+    // All 6 sessions attempted
+    expect(createAgent).toHaveBeenCalledTimes(6);
+  });
+});
+
+describe('sessionManager — sendSnapshot', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('sendSnapshot sends status, nav, screenshot, and messages', async () => {
+    (redisStore.getSession as any).mockResolvedValueOnce(mockRedisSession);
+    (redisStore.getScreenshot as any).mockResolvedValueOnce('screenshot-data');
+    (redisStore.getMessages as any).mockResolvedValueOnce([
+      { id: '1', type: 'user', content: 'hello', timestamp: 1000 },
+    ]);
+
+    const mockWs = {
+      readyState: WebSocket.OPEN,
+      send: vi.fn(),
+    } as any;
+
+    await sendSnapshot('proj-1', mockWs);
+
+    const calls = mockWs.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'status', status: 'idle' }),
+      expect.objectContaining({ type: 'nav', url: 'https://example.com/dashboard' }),
+      expect.objectContaining({ type: 'screenshot', data: 'screenshot-data' }),
+      expect.objectContaining({ type: 'sessionRestore' }),
+    ]));
+  });
+
+  it('sendSnapshot sends taskInterrupted for interrupted sessions', async () => {
+    (redisStore.getSession as any).mockResolvedValueOnce({
+      ...mockRedisSession,
+      status: 'interrupted',
+      lastTask: 'Fill out the form',
+    });
+    (redisStore.getScreenshot as any).mockResolvedValueOnce(null);
+    (redisStore.getMessages as any).mockResolvedValueOnce([]);
+
+    const mockWs = { readyState: WebSocket.OPEN, send: vi.fn() } as any;
+    await sendSnapshot('proj-1', mockWs);
+
+    const calls = mockWs.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+    expect(calls).toContainEqual(
+      expect.objectContaining({ type: 'taskInterrupted', task: 'Fill out the form' })
+    );
+  });
+
+  it('sendSnapshot sends sessionCrashed for crashed sessions', async () => {
+    (redisStore.getSession as any).mockResolvedValueOnce({
+      ...mockRedisSession,
+      status: 'crashed',
+    });
+    (redisStore.getScreenshot as any).mockResolvedValueOnce(null);
+    (redisStore.getMessages as any).mockResolvedValueOnce([]);
+
+    const mockWs = { readyState: WebSocket.OPEN, send: vi.fn() } as any;
+    await sendSnapshot('proj-1', mockWs);
+
+    const calls = mockWs.send.mock.calls.map((c: any) => JSON.parse(c[0]));
+    expect(calls).toContainEqual(
+      expect.objectContaining({ type: 'sessionCrashed' })
+    );
   });
 });

@@ -2,7 +2,8 @@ import { supabase, isSupabaseEnabled } from './supabase.js';
 import type {
   Project, Feature, Flow, Finding, Session, Message,
   EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
-  Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint
+  Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint,
+  ChatMessage
 } from './types.js';
 
 // === Projects ===
@@ -203,6 +204,29 @@ export async function saveMessage(
 ): Promise<void> {
   if (!isSupabaseEnabled()) return;
   await supabase!.from('messages').insert({ session_id: sessionId, role, content });
+}
+
+export async function getMessagesBySession(sessionId: string): Promise<ChatMessage[]> {
+  if (!isSupabaseEnabled()) return [];
+  try {
+    const { data, error } = await supabase!
+      .from('messages')
+      .select('id, role, content, created_at')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+      .limit(200);
+
+    if (error || !data) return [];
+
+    return data.map(m => ({
+      id: m.id,
+      type: (m.role === 'thought' || m.role === 'action') ? 'agent' as const : m.role as ChatMessage['type'],
+      content: m.content,
+      timestamp: new Date(m.created_at).getTime(),
+    }));
+  } catch {
+    return [];
+  }
 }
 
 // === Findings ===
