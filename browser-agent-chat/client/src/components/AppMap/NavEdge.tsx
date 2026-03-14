@@ -11,7 +11,7 @@ function NavEdge(props: EdgeProps) {
       {...props}
       path={edgePath}
       style={{
-        stroke: '#1e293b',
+        stroke: 'var(--border-secondary, #443E35)',
         strokeWidth: 1.5,
         strokeDasharray: isUnexplored ? '4' : 'none',
       }}

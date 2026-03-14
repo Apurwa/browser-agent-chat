@@ -4,7 +4,7 @@ import { apiAuthFetch } from '../../lib/api';
 import type { MapFeature } from './useAppMap';
 
 const CRITICALITY_COLORS: Record<string, string> = {
-  critical: '#ef4444', high: '#f59e0b', medium: '#a78bfa', low: '#22c55e',
+  critical: '#ef4444', high: '#D4874D', medium: '#3D6B4F', low: '#443E35',
 };
 
 interface FeatureCardProps {

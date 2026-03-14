@@ -17,7 +17,7 @@ const CRITICALITY_ORDER: Record<string, number> = {
 };
 
 const CRITICALITY_COLORS: Record<string, string> = {
-  critical: '#ef4444', high: '#f59e0b', medium: '#a78bfa', low: '#334155',
+  critical: '#ef4444', high: '#D4874D', medium: '#3D6B4F', low: '#443E35',
 };
 
 function getHighestCriticality(features: Array<{ criticality: string }>): string {
@@ -46,12 +46,12 @@ function PageNode({ data }: NodeProps) {
             <circle cx={radius + 8} cy={radius + 8} r={radius + 10} fill="none" stroke={borderColor} strokeWidth={0.5} opacity={0.15} />
           </>
         )}
-        <circle cx={radius + 8} cy={radius + 8} r={radius} fill="#0f172a" stroke={borderColor}
+        <circle cx={radius + 8} cy={radius + 8} r={radius} fill="var(--bg-card, #221F1A)" stroke={borderColor}
           strokeWidth={isUnexplored ? 1 : 2} strokeDasharray={isUnexplored ? '4' : 'none'} />
-        <text x={radius + 8} y={radius + 5} textAnchor="middle" fill="#e2e8f0" fontSize={featureCount > 3 ? 9 : 10} fontWeight={d.isSelected ? 'bold' : 'normal'}>
+        <text x={radius + 8} y={radius + 5} textAnchor="middle" fill="var(--text-primary, #F5F0E8)" fontSize={featureCount > 3 ? 9 : 10} fontWeight={d.isSelected ? 'bold' : 'normal'}>
           {d.pageTitle || 'Untitled'}
         </text>
-        <text x={radius + 8} y={radius + 17} textAnchor="middle" fill="#64748b" fontSize={7}>
+        <text x={radius + 8} y={radius + 17} textAnchor="middle" fill="var(--text-dim, #858078)" fontSize={7}>
           {d.urlPattern}
         </text>
         {featureCount > 0 && (
@@ -63,7 +63,7 @@ function PageNode({ data }: NodeProps) {
           </>
         )}
         {isUnexplored && (
-          <text x={radius + 8} y={radius + 28} textAnchor="middle" fill="#475569" fontSize={7}>
+          <text x={radius + 8} y={radius + 28} textAnchor="middle" fill="var(--text-dimmer, #656058)" fontSize={7}>
             unexplored
           </text>
         )}
