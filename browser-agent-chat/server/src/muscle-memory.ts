@@ -277,3 +277,74 @@ export async function upsertLoginPattern(
     if (error) console.error('[MUSCLE-MEMORY] upsertLoginPattern insert error:', error);
   }
 }
+
+// ─── Login Replay ─────────────────────────────────────────────────
+
+const LOGIN_REPLAY_TIMEOUT = 10_000;
+
+/**
+ * Attempt login via a recorded pattern.
+ * Returns true if login succeeded, false if failed (caller should fall back to LLM).
+ */
+export async function replayLogin(
+  page: any, // Playwright Page
+  patterns: LearnedPattern[],
+  credentials: { username: string; password: string },
+): Promise<boolean> {
+  const pattern = patterns.find(
+    p => p.pattern_type === 'login' && p.status === 'active'
+  );
+  if (!pattern) return false;
+
+  try {
+    const steps = injectCredentials(pattern.steps, credentials);
+
+    // Race against timeout
+    const success = await Promise.race([
+      executeSteps(page, steps),
+      new Promise<false>(resolve => setTimeout(() => resolve(false), LOGIN_REPLAY_TIMEOUT)),
+    ]);
+
+    if (!success) return false;
+
+    // Verify login succeeded
+    await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+    const onLogin = /\/(login|signin|sign-in|auth)\b/i.test(page.url())
+      || await page.locator('input[type="password"]').isVisible().catch(() => false);
+
+    return !onLogin;
+  } catch {
+    return false;
+  }
+}
+
+/** Execute a sequence of Playwright steps on a page. Returns true on success. */
+async function executeSteps(page: any, steps: PlaywrightStep[]): Promise<boolean> {
+  for (const step of steps) {
+    try {
+      await page.waitForSelector(step.selector, { timeout: 5000 });
+
+      switch (step.action) {
+        case 'fill':
+          await page.fill(step.selector, step.value || '');
+          break;
+        case 'click':
+          await page.click(step.selector);
+          break;
+        case 'type':
+          await page.type(step.selector, step.value || '');
+          break;
+        case 'press':
+          await page.keyboard.press(step.value || '');
+          break;
+      }
+
+      if (step.waitAfter) {
+        await page.waitForTimeout(step.waitAfter);
+      }
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}

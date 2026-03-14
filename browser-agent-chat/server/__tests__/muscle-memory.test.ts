@@ -15,8 +15,9 @@ vi.mock('../src/nav-graph.js', () => ({
   }),
 }));
 
-import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures, findFirstVisible } from '../src/muscle-memory.js';
+import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures, findFirstVisible, replayLogin } from '../src/muscle-memory.js';
 import type { PlaywrightStep, NavGraph } from '../src/types.js';
+import type { LearnedPattern } from '../src/types.js';
 
 describe('loadPatterns', () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -302,5 +303,46 @@ describe('findFirstVisible', () => {
 
     const result = await findFirstVisible(mockPage as any, ['input[type="email"]']);
     expect(result).toBeNull();
+  });
+});
+
+describe('replayLogin', () => {
+  const makePattern = (overrides?: Partial<LearnedPattern>): LearnedPattern => ({
+    id: 'pat-1',
+    project_id: 'proj-1',
+    pattern_type: 'login',
+    trigger: { type: 'login', url_pattern: '/login' },
+    steps: [
+      { action: 'fill', selector: 'input[type="email"]', value: '{{username}}' },
+      { action: 'fill', selector: 'input[type="password"]', value: '{{password}}' },
+      { action: 'click', selector: 'button[type="submit"]' },
+    ],
+    consecutive_failures: 0,
+    status: 'active',
+    use_count: 3,
+    last_used_at: null,
+    created_at: '2026-01-01',
+    updated_at: '2026-01-01',
+    ...overrides,
+  });
+
+  it('returns false when no active login pattern exists', async () => {
+    const mockPage = {} as any;
+    const result = await replayLogin(mockPage, [], { username: 'u', password: 'p' });
+    expect(result).toBe(false);
+  });
+
+  it('returns false when only stale patterns exist', async () => {
+    const mockPage = {} as any;
+    const patterns = [makePattern({ status: 'stale' })];
+    const result = await replayLogin(mockPage, patterns, { username: 'u', password: 'p' });
+    expect(result).toBe(false);
+  });
+
+  it('returns false when pattern_type is not login', async () => {
+    const mockPage = {} as any;
+    const patterns = [makePattern({ pattern_type: 'navigation' })];
+    const result = await replayLogin(mockPage, patterns, { username: 'u', password: 'p' });
+    expect(result).toBe(false);
   });
 });
