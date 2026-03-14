@@ -65,6 +65,42 @@ export async function deleteProject(projectId: string): Promise<boolean> {
   return !error;
 }
 
+export async function getProjectListStats(projectIds: string[]): Promise<Map<string, { findingsCount: number; lastSessionAt: string | null }>> {
+  const result = new Map<string, { findingsCount: number; lastSessionAt: string | null }>();
+  projectIds.forEach(id => result.set(id, { findingsCount: 0, lastSessionAt: null }));
+
+  if (!isSupabaseEnabled() || projectIds.length === 0) return result;
+
+  // Fetch findings counts (parallel queries — Supabase JS doesn't support GROUP BY natively)
+  await Promise.all(projectIds.map(async id => {
+    const { count } = await supabase!
+      .from('findings')
+      .select('*', { count: 'exact', head: true })
+      .eq('project_id', id)
+      .neq('status', 'dismissed');
+    const entry = result.get(id);
+    if (entry) entry.findingsCount = count ?? 0;
+  }));
+
+  // Fetch last session timestamps (single query for all projects)
+  const { data: sessionData } = await supabase!
+    .from('sessions')
+    .select('project_id, started_at')
+    .in('project_id', projectIds)
+    .order('started_at', { ascending: false });
+  if (sessionData) {
+    for (const row of sessionData) {
+      const entry = result.get(row.project_id);
+      // First row per project_id is the most recent (ordered desc)
+      if (entry && entry.lastSessionAt === null) {
+        entry.lastSessionAt = row.started_at;
+      }
+    }
+  }
+
+  return result;
+}
+
 // === Memory Features ===
 
 export async function listFeatures(projectId: string): Promise<Feature[]> {

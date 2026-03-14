@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requireAuth, type AuthenticatedRequest } from '../auth.js';
 import { encryptCredentials } from '../crypto.js';
 import {
-  createProject, getProject, listProjects, updateProject, deleteProject,
+  createProject, getProject, listProjects, updateProject, deleteProject, getProjectListStats,
 } from '../db.js';
 import type { CreateProjectRequest, ProjectResponse, ProjectListItem } from '../types.js';
 
@@ -20,17 +20,24 @@ function normalizeUrl(url: string): string {
 router.get('/', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
   const projects = await listProjects(userId);
-  const items: ProjectListItem[] = projects.map(p => ({
-    id: p.id,
-    name: p.name,
-    url: p.url,
-    hasCredentials: p.credentials !== null,
-    context: p.context,
-    created_at: p.created_at,
-    updated_at: p.updated_at,
-    findings_count: 0, // TODO: join with findings count
-    last_session_at: null, // TODO: join with latest session
-  }));
+
+  const projectIds = projects.map(p => p.id);
+  const stats = await getProjectListStats(projectIds);
+
+  const items: ProjectListItem[] = projects.map(p => {
+    const s = stats.get(p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      url: p.url,
+      hasCredentials: p.credentials !== null,
+      context: p.context,
+      created_at: p.created_at,
+      updated_at: p.updated_at,
+      findings_count: s?.findingsCount ?? 0,
+      last_session_at: s?.lastSessionAt ?? null,
+    };
+  });
   res.json({ projects: items });
 });
 
