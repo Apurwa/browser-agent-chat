@@ -318,6 +318,102 @@ export async function replayLogin(
   }
 }
 
+// ─── Navigation Replay ───────────────────────────────────────────
+
+const NAV_HOP_TIMEOUT = 5000;
+const NAV_TOTAL_TIMEOUT = 15_000;
+
+/** Try multiple Playwright locator strategies to click an element. */
+export async function tryLocators(page: any, label: string, timeout: number): Promise<boolean> {
+  // Try text match first (most common for nav items)
+  try {
+    await page.getByText(label, { exact: false }).first().click({ timeout });
+    return true;
+  } catch {}
+
+  // Try link role
+  try {
+    await page.getByRole('link', { name: label }).first().click({ timeout });
+    return true;
+  } catch {}
+
+  // Try button role
+  try {
+    await page.getByRole('button', { name: label }).first().click({ timeout });
+    return true;
+  } catch {}
+
+  // Try menuitem role (for sidebar nav)
+  try {
+    await page.getByRole('menuitem', { name: label }).first().click({ timeout });
+    return true;
+  } catch {}
+
+  return false;
+}
+
+/**
+ * Attempt navigation to a target page via recorded nav graph edges.
+ * Uses BFS to find shortest path, then replays each hop with text-based locators.
+ */
+export async function replayNavigation(
+  page: any, // Playwright Page
+  projectId: string,
+  currentUrl: string,
+  targetQuery: string,
+): Promise<boolean> {
+  try {
+    const graph = await getGraph(projectId);
+    if (graph.nodes.length === 0) return false;
+
+    // Resolve current node by URL
+    const currentPattern = normalizeUrl(currentUrl);
+    const currentNode = graph.nodes.find(n => n.urlPattern === currentPattern);
+    if (!currentNode) return false;
+
+    // Resolve target node by title/URL
+    const targetNode = findNodeByUrlOrTitle(graph.nodes, targetQuery);
+    if (!targetNode) return false;
+    if (currentNode.id === targetNode.id) return true; // Already there
+
+    // BFS shortest path
+    const edges = findPath(graph, currentNode.id, targetNode.id);
+    if (edges.length === 0) return false;
+
+    // Race against total timeout
+    const success = await Promise.race([
+      replayEdges(page, edges),
+      new Promise<false>(resolve => setTimeout(() => resolve(false), NAV_TOTAL_TIMEOUT)),
+    ]);
+
+    if (!success) return false;
+
+    // Verify we arrived
+    const finalPattern = normalizeUrl(page.url());
+    return finalPattern === targetNode.urlPattern;
+  } catch {
+    return false;
+  }
+}
+
+/** Replay a sequence of nav graph edges by clicking through pages. */
+async function replayEdges(page: any, edges: NavEdge[]): Promise<boolean> {
+  for (const edge of edges) {
+    const textLabel = stripActionPrefix(edge.rawTarget || edge.actionLabel);
+    if (!textLabel) return false;
+
+    const clicked = await tryLocators(page, textLabel, NAV_HOP_TIMEOUT);
+    if (!clicked) return false;
+
+    try {
+      await page.waitForLoadState('networkidle', { timeout: NAV_HOP_TIMEOUT });
+    } catch {
+      // Timeout waiting for network idle — continue anyway, page might be an SPA
+    }
+  }
+  return true;
+}
+
 /** Execute a sequence of Playwright steps on a page. Returns true on success. */
 async function executeSteps(page: any, steps: PlaywrightStep[]): Promise<boolean> {
   for (const step of steps) {

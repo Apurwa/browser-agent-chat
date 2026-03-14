@@ -15,7 +15,8 @@ vi.mock('../src/nav-graph.js', () => ({
   }),
 }));
 
-import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures, findFirstVisible, replayLogin } from '../src/muscle-memory.js';
+import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures, findFirstVisible, replayLogin, tryLocators, replayNavigation } from '../src/muscle-memory.js';
+import { getGraph } from '../src/nav-graph.js';
 import type { PlaywrightStep, NavGraph } from '../src/types.js';
 import type { LearnedPattern } from '../src/types.js';
 
@@ -303,6 +304,76 @@ describe('findFirstVisible', () => {
 
     const result = await findFirstVisible(mockPage as any, ['input[type="email"]']);
     expect(result).toBeNull();
+  });
+});
+
+describe('tryLocators', () => {
+  it('returns true when getByText matches', async () => {
+    const mockPage = {
+      getByText: vi.fn().mockReturnValue({
+        first: vi.fn().mockReturnValue({
+          click: vi.fn().mockResolvedValue(undefined),
+        }),
+      }),
+      getByRole: vi.fn(),
+    };
+
+    const result = await tryLocators(mockPage as any, 'Settings', 5000);
+    expect(result).toBe(true);
+    expect(mockPage.getByText).toHaveBeenCalledWith('Settings', { exact: false });
+  });
+
+  it('falls back to getByRole link when getByText fails', async () => {
+    const mockPage = {
+      getByText: vi.fn().mockReturnValue({
+        first: vi.fn().mockReturnValue({
+          click: vi.fn().mockRejectedValue(new Error('not found')),
+        }),
+      }),
+      getByRole: vi.fn().mockReturnValue({
+        first: vi.fn().mockReturnValue({
+          click: vi.fn().mockResolvedValue(undefined),
+        }),
+      }),
+    };
+
+    const result = await tryLocators(mockPage as any, 'Settings', 5000);
+    expect(result).toBe(true);
+    expect(mockPage.getByRole).toHaveBeenCalledWith('link', { name: 'Settings' });
+  });
+
+  it('returns false when all locators fail', async () => {
+    const failClick = vi.fn().mockRejectedValue(new Error('not found'));
+    const mockPage = {
+      getByText: vi.fn().mockReturnValue({ first: vi.fn().mockReturnValue({ click: failClick }) }),
+      getByRole: vi.fn().mockReturnValue({ first: vi.fn().mockReturnValue({ click: failClick }) }),
+    };
+
+    const result = await tryLocators(mockPage as any, 'NonExistent', 5000);
+    expect(result).toBe(false);
+  });
+});
+
+describe('replayNavigation', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('returns false when graph has no nodes', async () => {
+    (getGraph as any).mockResolvedValue({ nodes: [], edges: [] });
+    const mockPage = { url: () => 'https://app.com/dashboard' } as any;
+    const result = await replayNavigation(mockPage, 'proj1', 'https://app.com/dashboard', 'Pipelines');
+    expect(result).toBe(false);
+  });
+
+  it('returns false when target node not found', async () => {
+    (getGraph as any).mockResolvedValue({
+      nodes: [
+        { id: 'n1', projectId: 'p1', urlPattern: '/dashboard', pageTitle: 'Dashboard', description: '', firstSeenAt: '', lastSeenAt: '', features: [] },
+      ],
+      edges: [],
+    });
+    const mockPage = { url: () => 'https://app.com/dashboard' } as any;
+    const result = await replayNavigation(mockPage, 'proj1', 'https://app.com/dashboard', 'NonexistentPage');
+    expect(result).toBe(false);
   });
 });
 
