@@ -215,7 +215,7 @@ export type ServerMessage =
 export interface CreateProjectRequest {
   name: string;
   url: string;
-  credentials: PlaintextCredentials;
+  credentials?: PlaintextCredentials;
   context?: string;
 }
 
