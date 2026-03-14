@@ -15,6 +15,10 @@ export interface AgentSession {
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
   /** Resolves when background login finishes (or immediately if no login). */
   loginDone: Promise<void>;
+  /** Last action performed — consumed by nav listener for edge labels. */
+  lastAction: { label: string; selector?: string } | null;
+  /** Current page URL — updated on every nav event. */
+  currentUrl: string | null;
   close: () => Promise<void>;
 }
 
@@ -167,11 +171,10 @@ export async function createAgent(
     projectId,
     memoryContext,
     stepsHistory,
-    loginDone: Promise.resolve(), // Will be replaced by executeLogin
+    loginDone: Promise.resolve(),
+    lastAction: null,
+    currentUrl: currentPageUrl,
     close: async () => {
-      // Do NOT call agent.stop() — it closes the browser context.
-      // Browser lifecycle is managed by browserManager.killBrowser().
-      // Just drop event listeners to prevent memory leaks.
       agent.events.removeAllListeners();
       agent.browserAgentEvents.removeAllListeners();
     }

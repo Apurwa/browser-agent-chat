@@ -122,6 +122,34 @@ export interface RedisSession {
 
 export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted';
 
+// === Navigation Graph ===
+
+export interface NavNode {
+  id: string;
+  projectId: string;
+  urlPattern: string;
+  pageTitle: string;
+  description: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  features: string[]; // feature names, populated from nav_node_features join
+}
+
+export interface NavEdge {
+  id: string;
+  projectId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  actionLabel: string;
+  selector: string | null;
+  discoveredAt: string;
+}
+
+export interface NavGraph {
+  nodes: NavNode[];
+  edges: NavEdge[];
+}
+
 // === Suggestions ===
 
 export interface Suggestion {
@@ -140,6 +168,7 @@ export interface FeatureSuggestionData {
   description: string;
   criticality: Criticality;
   expected_behaviors: string[];
+  discovered_at_url?: string; // URL where feature was observed during exploration
 }
 
 export interface FlowSuggestionData {
