@@ -15,7 +15,7 @@ vi.mock('../src/nav-graph.js', () => ({
   }),
 }));
 
-import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures } from '../src/muscle-memory.js';
+import { loadPatterns, markStale, markSuccess, injectCredentials, stripActionPrefix, findNodeByUrlOrTitle, findPath, incrementFailures, findFirstVisible } from '../src/muscle-memory.js';
 import type { PlaywrightStep, NavGraph } from '../src/types.js';
 
 describe('loadPatterns', () => {
@@ -252,5 +252,55 @@ describe('findPath', () => {
     const graph: NavGraph = { nodes: [], edges: [] };
     const path = findPath(graph, 'n1', 'n1');
     expect(path).toEqual([]);
+  });
+});
+
+describe('findFirstVisible', () => {
+  it('returns the first visible selector from candidates', async () => {
+    // First selector not visible, second visible
+    let callCount = 0;
+    const mockPage = {
+      locator: vi.fn().mockImplementation(() => ({
+        first: vi.fn().mockImplementation(() => ({
+          isVisible: vi.fn().mockImplementation(async () => {
+            callCount++;
+            return callCount >= 2; // first call false, second call true
+          }),
+        })),
+      })),
+    };
+
+    const result = await findFirstVisible(mockPage as any, [
+      'input[type="email"]',
+      'input[name="username"]',
+    ]);
+
+    expect(result).toBe('input[name="username"]');
+  });
+
+  it('returns null when no selectors are visible', async () => {
+    const mockPage = {
+      locator: vi.fn().mockReturnValue({
+        first: vi.fn().mockReturnValue({
+          isVisible: vi.fn().mockResolvedValue(false),
+        }),
+      }),
+    };
+
+    const result = await findFirstVisible(mockPage as any, ['input[type="email"]']);
+    expect(result).toBeNull();
+  });
+
+  it('handles selector errors gracefully', async () => {
+    const mockPage = {
+      locator: vi.fn().mockReturnValue({
+        first: vi.fn().mockReturnValue({
+          isVisible: vi.fn().mockRejectedValue(new Error('element detached')),
+        }),
+      }),
+    };
+
+    const result = await findFirstVisible(mockPage as any, ['input[type="email"]']);
+    expect(result).toBeNull();
   });
 });

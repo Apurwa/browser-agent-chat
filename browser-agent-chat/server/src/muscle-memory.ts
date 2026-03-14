@@ -148,6 +148,93 @@ export function findPath(graph: NavGraph, fromId: string, toId: string): NavEdge
   return [];
 }
 
+// ─── DOM Inspection Helpers ───────────────────────────────────────
+
+/** Find the first visible element matching one of the candidate selectors. */
+export async function findFirstVisible(
+  page: { locator: (selector: string) => { first: () => { isVisible: () => Promise<boolean> } } },
+  selectors: string[],
+): Promise<string | null> {
+  for (const selector of selectors) {
+    try {
+      const visible = await page.locator(selector).first().isVisible();
+      if (visible) return selector;
+    } catch {
+      // Selector not found or page error — try next
+    }
+  }
+  return null;
+}
+
+// ─── Login Recording ──────────────────────────────────────────────
+
+const USERNAME_SELECTORS = [
+  'input[type="email"]',
+  'input[name="email"]',
+  'input[name="username"]',
+  'input[type="text"][autocomplete="username"]',
+  'input[type="text"]',
+];
+
+const PASSWORD_SELECTORS = [
+  'input[type="password"]',
+  'input[name="password"]',
+];
+
+const SUBMIT_SELECTORS = [
+  'button[type="submit"]',
+  'input[type="submit"]',
+  'button:has-text("Sign in")',
+  'button:has-text("Log in")',
+  'button:has-text("Login")',
+  'button:has-text("Submit")',
+];
+
+/**
+ * Record a login pattern by inspecting the login page DOM in a new tab.
+ * Called after successful LLM login to capture the form structure.
+ */
+export async function recordLoginPattern(
+  page: any, // Playwright Page
+  projectId: string,
+  loginUrl: string,
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+
+  let inspectPage: any = null;
+  try {
+    // Open a new tab to inspect the login page without disrupting the main view
+    const context = page.context();
+    inspectPage = await context.newPage();
+    await inspectPage.goto(loginUrl, { waitUntil: 'networkidle', timeout: 5000 });
+
+    // Find form elements
+    const usernameSelector = await findFirstVisible(inspectPage, USERNAME_SELECTORS);
+    const passwordSelector = await findFirstVisible(inspectPage, PASSWORD_SELECTORS);
+    const submitSelector = await findFirstVisible(inspectPage, SUBMIT_SELECTORS);
+
+    if (!usernameSelector || !passwordSelector || !submitSelector) {
+      console.warn('[MUSCLE-MEMORY] Could not identify all login form elements, skipping recording');
+      return;
+    }
+
+    const steps: PlaywrightStep[] = [
+      { action: 'fill', selector: usernameSelector, value: '{{username}}' },
+      { action: 'fill', selector: passwordSelector, value: '{{password}}' },
+      { action: 'click', selector: submitSelector },
+    ];
+
+    await upsertLoginPattern(projectId, loginUrl, steps);
+    console.log('[MUSCLE-MEMORY] Login pattern recorded for project:', projectId);
+  } catch (err) {
+    console.error('[MUSCLE-MEMORY] recordLoginPattern error:', err);
+  } finally {
+    if (inspectPage) {
+      await inspectPage.close().catch(() => {});
+    }
+  }
+}
+
 /** Upsert a login pattern for a project (manual query since partial unique index). */
 export async function upsertLoginPattern(
   projectId: string,
