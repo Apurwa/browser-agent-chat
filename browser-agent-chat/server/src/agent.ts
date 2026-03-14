@@ -2,7 +2,7 @@ import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitud
 import { z } from 'zod';
 import type { ServerMessage, MetricStep } from './types.js';
 import { saveMessage, createSuggestion } from './db.js';
-import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
+import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
 import { recordNavigation } from './nav-graph.js';
