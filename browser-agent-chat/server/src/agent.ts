@@ -247,7 +247,7 @@ export async function executeLogin(
   broadcast: (msg: ServerMessage) => void
 ): Promise<void> {
   const page = session.connector.getHarness().page;
-  broadcast({ type: 'thought', content: 'Logging in...' });
+  const loginUrl = page.url(); // Capture login URL before any navigation
 
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
@@ -257,6 +257,40 @@ export async function executeLogin(
   }) ?? null;
   session.currentTrace = trace;
 
+  // 1. Try muscle memory replay first
+  if (session.patterns.length > 0) {
+    broadcast({ type: 'thought', content: 'Replaying saved login pattern...' });
+    const replaySpan = trace?.span({ name: 'muscle-memory-login-replay' });
+
+    const startTime = Date.now();
+    const success = await replayLogin(page, session.patterns, credentials);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+    if (success) {
+      replaySpan?.end({ output: { success: true, elapsed } });
+      const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
+      if (pattern) markSuccess(pattern.id).catch(() => {});
+
+      broadcast({ type: 'thought', content: `Logged in via muscle memory (${elapsed}s)` });
+      broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
+      broadcast({ type: 'nav', url: page.url() });
+      trace?.update({ output: { success: true, method: 'muscle-memory', elapsed } });
+      session.currentTrace = null;
+      return;
+    }
+
+    // Replay failed — increment failures
+    replaySpan?.end({ output: { success: false, elapsed } });
+    const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
+    if (pattern) {
+      incrementFailures(pattern.id, pattern.consecutive_failures).catch(() => {});
+    }
+    broadcast({ type: 'thought', content: 'Saved login pattern failed, using AI agent...' });
+  } else {
+    broadcast({ type: 'thought', content: 'Logging in...' });
+  }
+
+  // 2. Fall back to LLM agent
   try {
     const span = trace?.span({ name: 'agent-act-login' });
     await session.agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
@@ -270,7 +304,7 @@ export async function executeLogin(
     return;
   }
 
-  // Capture post-login state
+  // 3. Capture post-login state
   try {
     const buf = await page.screenshot({ type: 'png' });
     broadcast({ type: 'screenshot', data: buf.toString('base64') });
@@ -281,7 +315,14 @@ export async function executeLogin(
     broadcast({ type: 'thought', content: onLogin
       ? 'Could not log in. Please log in via chat.'
       : 'Logged in successfully' });
-    trace?.update({ output: { success: !onLogin, url: page.url() } });
+    trace?.update({ output: { success: !onLogin, method: 'llm', url: page.url() } });
+
+    // 4. Record login pattern for next time (background, fire-and-forget)
+    if (!onLogin && session.projectId) {
+      recordLoginPattern(page, session.projectId, loginUrl).catch(err => {
+        console.error('[MUSCLE-MEMORY] Background recording error:', err);
+      });
+    }
   } catch {}
   session.currentTrace = null;
 }
