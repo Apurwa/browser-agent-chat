@@ -6,6 +6,7 @@ import {
   FlaskConical,
   Bug,
   BrainCircuit,
+  ClipboardCheck,
   Settings,
   Sun,
   Moon,
@@ -74,6 +75,14 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
         {pendingSuggestionCount > 0 && (
           <span className="sidebar-badge sidebar-badge--warn">{pendingSuggestionCount}</span>
         )}
+      </button>
+
+      <button
+        className={`sidebar-item${isActive('evals') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
+        onClick={() => navTo('evals')}
+      >
+        <ClipboardCheck size={18} />
+        {expanded && <span className="sidebar-label">Evals</span>}
       </button>
 
       <div className="sidebar-spacer" />

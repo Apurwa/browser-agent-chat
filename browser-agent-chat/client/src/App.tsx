@@ -7,6 +7,7 @@ import TestingView from './components/TestingView';
 import FindingsDashboard from './components/FindingsDashboard';
 import MemoryViewer from './components/MemoryViewer';
 import ProjectSettings from './components/ProjectSettings';
+import EvalDashboard from './components/EvalDashboard';
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -24,6 +25,7 @@ export default function App() {
       <Route path="/projects/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
       <Route path="/projects/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
       <Route path="/projects/:id/settings" element={<ProtectedRoute><ProjectSettings /></ProtectedRoute>} />
+      <Route path="/projects/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
     </Routes>
   );
