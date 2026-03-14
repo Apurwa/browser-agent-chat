@@ -7,17 +7,17 @@ interface SeedResult {
   cases: Array<{ name: string; source_type: string }>;
 }
 
-export async function seedEvalCases(projectId: string): Promise<SeedResult> {
+export async function seedEvalCases(agentId: string): Promise<SeedResult> {
   const result: SeedResult = { created: 0, skipped: 0, cases: [] };
 
   // Seed from features (features include nested flows via listFeatures)
-  const features = await listFeatures(projectId);
+  const features = await listFeatures(agentId);
   for (const feature of features) {
     if (feature.expected_behaviors?.length) {
       for (const behavior of feature.expected_behaviors) {
         const name = `${feature.name}: ${behavior}`;
         const created = await createEvalCase({
-          project_id: projectId,
+          agent_id: agentId,
           name,
           task_prompt: `Test the "${feature.name}" feature. Verify: ${behavior}`,
           source_type: 'feature',
@@ -46,7 +46,7 @@ export async function seedEvalCases(projectId: string): Promise<SeedResult> {
           : null;
 
         const created = await createEvalCase({
-          project_id: projectId,
+          agent_id: agentId,
           name,
           task_prompt: `Complete the flow: ${flow.name}. Steps: ${
             flow.steps?.length
@@ -72,13 +72,13 @@ export async function seedEvalCases(projectId: string): Promise<SeedResult> {
 
   // Seed from findings (regression tests)
   // Use a high limit to fetch all confirmed findings
-  const { findings } = await listFindings(projectId, { status: 'confirmed' }, 1000, 0);
+  const { findings } = await listFindings(agentId, { status: 'confirmed' }, 1000, 0);
   for (const finding of findings) {
     if (!finding.steps_to_reproduce?.length) continue;
 
     const name = `Regression: ${finding.title}`;
     const created = await createEvalCase({
-      project_id: projectId,
+      agent_id: agentId,
       name,
       task_prompt: finding.steps_to_reproduce.map(s => s.action).join('. '),
       source_type: 'finding',

@@ -5,13 +5,13 @@ import type { LearnedPattern, PlaywrightStep, NavNode, NavEdge, NavGraph } from 
 // ─── DB Operations ────────────────────────────────────────────────
 
 /** Load active patterns for a project. */
-export async function loadPatterns(projectId: string): Promise<LearnedPattern[]> {
+export async function loadPatterns(agentId: string): Promise<LearnedPattern[]> {
   if (!isSupabaseEnabled()) return [];
 
   const { data, error } = await supabase!
     .from('learned_patterns')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .eq('status', 'active');
 
   if (error || !data) {
@@ -217,7 +217,7 @@ const SUBMIT_SELECTORS = [
  */
 export async function recordLoginPattern(
   page: any, // Playwright Page
-  projectId: string,
+  agentId: string,
   loginUrl: string,
 ): Promise<void> {
   if (!isSupabaseEnabled()) return;
@@ -245,8 +245,8 @@ export async function recordLoginPattern(
       { action: 'click', selector: submitSelector },
     ];
 
-    await upsertLoginPattern(projectId, loginUrl, steps);
-    console.log('[MUSCLE-MEMORY] Login pattern recorded for project:', projectId);
+    await upsertLoginPattern(agentId, loginUrl, steps);
+    console.log('[MUSCLE-MEMORY] Login pattern recorded for project:', agentId);
   } catch (err) {
     console.error('[MUSCLE-MEMORY] recordLoginPattern error:', err);
   } finally {
@@ -258,7 +258,7 @@ export async function recordLoginPattern(
 
 /** Upsert a login pattern for a project (manual query since partial unique index). */
 export async function upsertLoginPattern(
-  projectId: string,
+  agentId: string,
   loginUrl: string,
   steps: PlaywrightStep[],
 ): Promise<void> {
@@ -270,13 +270,13 @@ export async function upsertLoginPattern(
   const { data: existing } = await supabase!
     .from('learned_patterns')
     .select('id')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .eq('pattern_type', 'login')
     .limit(1)
     .maybeSingle();
 
   const payload = {
-    project_id: projectId,
+    agent_id: agentId,
     pattern_type: 'login' as const,
     trigger: { type: 'login', url_pattern: urlPattern },
     steps,
@@ -379,12 +379,12 @@ export async function tryLocators(page: any, label: string, timeout: number): Pr
  */
 export async function replayNavigation(
   page: any, // Playwright Page
-  projectId: string,
+  agentId: string,
   currentUrl: string,
   targetQuery: string,
 ): Promise<boolean> {
   try {
-    const graph = await getGraph(projectId);
+    const graph = await getGraph(agentId);
     if (graph.nodes.length === 0) return false;
 
     // Resolve current node by URL

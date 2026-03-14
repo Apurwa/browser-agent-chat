@@ -17,6 +17,7 @@ function buildArgs(port: number): string[] {
     '--no-sandbox',
     '--disable-gpu',
     '--disable-blink-features=AutomationControlled',
+    '--disable-features=TrustedTypesEnforcement',
   ];
 }
 
@@ -34,8 +35,8 @@ export async function waitForCDP(port: number, timeoutMs: number): Promise<void>
   throw new Error(`CDP not ready on port ${port} after ${timeoutMs}ms`);
 }
 
-export async function launchBrowser(projectId: string): Promise<{ pid: number; port: number; cdpEndpoint: string }> {
-  const port = await redisStore.allocatePort(projectId);
+export async function launchBrowser(agentId: string): Promise<{ pid: number; port: number; cdpEndpoint: string }> {
+  const port = await redisStore.allocatePort(agentId);
   const chromePath = getChromiumPath();
 
   const child = spawn(chromePath, buildArgs(port), {
@@ -102,7 +103,7 @@ export async function isAlive(pid: number, port: number): Promise<boolean> {
   }
 }
 
-export async function claimWarm(projectId: string): Promise<{ pid: number; port: number; cdpEndpoint: string } | null> {
+export async function claimWarm(agentId: string): Promise<{ pid: number; port: number; cdpEndpoint: string } | null> {
   const redis = redisStore.getRedis();
   const member = await redis.spop('browser:warm:pids');
   if (!member) return null;
@@ -115,7 +116,7 @@ export async function claimWarm(projectId: string): Promise<{ pid: number; port:
     // Reassign port from warm to this project.
     // Uses bare SET (not NX) to overwrite the __warm_* allocation from warmUp().
     // This is intentionally different from allocatePort() which uses SET NX.
-    await redis.set(`browser:port:${port}`, projectId);
+    await redis.set(`browser:port:${port}`, agentId);
     return { pid, port, cdpEndpoint: `http://localhost:${port}` };
   }
 

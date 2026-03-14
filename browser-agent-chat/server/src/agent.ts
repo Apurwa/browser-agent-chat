@@ -15,7 +15,7 @@ export interface AgentSession {
   agent: BrowserAgent;
   connector: BrowserConnector;
   sessionId: string | null;
-  projectId: string | null;
+  agentId: string | null;
   memoryContext: string;
   patterns: LearnedPattern[];
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
@@ -49,17 +49,17 @@ export async function createAgent(
   broadcast: (msg: ServerMessage) => void,
   cdpEndpoint: string,
   sessionId: string | null = null,
-  projectId: string | null = null,
+  agentId: string | null = null,
   url?: string,
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
   const timer = new StepTimer();
 
   // Load memory context for prompt injection
-  const memoryContext = projectId ? await loadMemoryContext(projectId) : '';
+  const memoryContext = agentId ? await loadMemoryContext(agentId) : '';
   timer.step('load_memory');
 
-  const patterns = projectId ? await loadPatterns(projectId) : [];
+  const patterns = agentId ? await loadPatterns(agentId) : [];
   timer.step('load_patterns');
 
   timer.step('acquire_browser');
@@ -91,6 +91,21 @@ export async function createAgent(
     console.warn('[AGENT] Failed to set default viewport:', err);
   }
 
+  // When reusing a warm-pool browser via CDP, magnitude may not navigate to the
+  // target URL. Force navigation if the current page doesn't match.
+  if (url) {
+    const page = connector.getHarness().page;
+    const current = page.url();
+    if (current !== url && !current.startsWith(url)) {
+      console.log(`[AGENT] Warm browser on ${current}, navigating to ${url}`);
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      } catch (err) {
+        console.warn('[AGENT] Navigation to target URL failed:', err);
+      }
+    }
+  }
+
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
 
@@ -115,7 +130,7 @@ export async function createAgent(
     agent,
     connector,
     sessionId,
-    projectId,
+    agentId,
     memoryContext,
     patterns,
     stepsHistory,
@@ -138,11 +153,11 @@ export async function createAgent(
     session.currentTrace?.event({ name: 'thought', input: { content: thought } });
 
     // Check for findings in thought text
-    if (projectId && sessionId) {
+    if (agentId && sessionId) {
       const rawFindings = parseFindingsFromText(thought);
       for (const raw of rawFindings) {
         const finding = await processFinding(
-          raw, projectId, sessionId, [...stepsHistory], getScreenshotBase64
+          raw, agentId, sessionId, [...stepsHistory], getScreenshotBase64
         );
         if (finding) {
           broadcast({ type: 'finding', finding });
@@ -153,7 +168,7 @@ export async function createAgent(
       const memUpdates = parseMemoryUpdates(thought);
       for (const update of memUpdates) {
         const suggestion = await createSuggestion(
-          projectId, update.type, update.data, sessionId
+          agentId, update.type, update.data, sessionId
         );
         if (suggestion) {
           broadcast({ type: 'suggestion', suggestion });
@@ -200,7 +215,7 @@ export async function createAgent(
     broadcast({ type: 'nav', url: navUrl });
 
     // Fire-and-forget graph update
-    if (projectId) {
+    if (agentId) {
       const action = lastAction?.label;
       const selector = lastAction?.selector;
       const rawTarget = lastAction?.rawTarget;
@@ -212,7 +227,7 @@ export async function createAgent(
         title = await connector.getHarness().page.title();
       } catch {}
 
-      recordNavigation(projectId, previousUrl, navUrl, action, selector, title, rawTarget).catch(() => {});
+      recordNavigation(agentId, previousUrl, navUrl, action, selector, title, rawTarget).catch(() => {});
     }
     previousUrl = navUrl;
     session.currentUrl = navUrl;
@@ -253,7 +268,7 @@ export async function executeLogin(
   const trace = langfuse?.trace({
     name: 'login',
     sessionId: session.sessionId ?? undefined,
-    metadata: { projectId: session.projectId },
+    metadata: { agentId: session.agentId },
     input: { username: credentials.username },
   }) ?? null;
   session.currentTrace = trace;
@@ -319,8 +334,8 @@ export async function executeLogin(
     trace?.update({ output: { success: !onLogin, method: 'llm', url: page.url() } });
 
     // 4. Record login pattern for next time (background, fire-and-forget)
-    if (!onLogin && session.projectId) {
-      recordLoginPattern(page, session.projectId, loginUrl).catch(err => {
+    if (!onLogin && session.agentId) {
+      recordLoginPattern(page, session.agentId, loginUrl).catch(err => {
         console.error('[MUSCLE-MEMORY] Background recording error:', err);
       });
     }
@@ -369,7 +384,7 @@ export async function executeExplore(
   const trace = langfuse?.trace({
     name: 'explore',
     sessionId: session.sessionId ?? undefined,
-    metadata: { projectId: session.projectId },
+    metadata: { agentId: session.agentId },
     input: { context },
   }) ?? null;
   session.currentTrace = trace;
@@ -444,11 +459,11 @@ async function createSuggestionsFromExtraction(
   extracted: z.infer<typeof ExtractedFeatureSchema>,
   broadcast: (msg: ServerMessage) => void
 ): Promise<void> {
-  if (!session.projectId || !session.sessionId) return;
+  if (!session.agentId || !session.sessionId) return;
 
   for (const feature of extracted.features) {
     const suggestion = await createSuggestion(
-      session.projectId,
+      session.agentId,
       'feature',
       {
         name: feature.name,
@@ -466,7 +481,7 @@ async function createSuggestionsFromExtraction(
 
   for (const flow of extracted.flows) {
     const suggestion = await createSuggestion(
-      session.projectId,
+      session.agentId,
       'flow',
       {
         feature_name: flow.feature_name,
@@ -503,7 +518,7 @@ export async function executeTask(
   }
 
   // Build prompt with memory context
-  const prompt = session.projectId
+  const prompt = session.agentId
     ? buildTaskPrompt(task, session.memoryContext)
     : task;
 
@@ -515,15 +530,15 @@ export async function executeTask(
   const trace = langfuse?.trace({
     name: 'user-task',
     sessionId: session.sessionId ?? undefined,
-    metadata: { projectId: session.projectId },
+    metadata: { agentId: session.agentId },
     input: { task },
   }) ?? null;
   session.currentTrace = trace;
 
   // Try navigation shortcut if project has nav graph data
-  if (session.projectId && session.currentUrl) {
+  if (session.agentId && session.currentUrl) {
     try {
-      const graph = await getGraph(session.projectId);
+      const graph = await getGraph(session.agentId);
 
       if (graph.nodes.length > 0) {
         // Check if task mentions a known page title or URL segment
@@ -535,7 +550,7 @@ export async function executeTask(
 
           const navSuccess = await replayNavigation(
             session.connector.getHarness().page,
-            session.projectId,
+            session.agentId,
             session.currentUrl,
             task,
           );

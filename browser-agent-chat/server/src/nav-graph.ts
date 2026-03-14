@@ -83,7 +83,7 @@ export function serializeGraph(graph: NavGraph, options?: SerializeOptions): str
 function mapNavNode(row: any): NavNode {
   return {
     id: row.id,
-    projectId: row.project_id,
+    agentId: row.agent_id,
     urlPattern: row.url_pattern,
     pageTitle: row.page_title,
     description: row.description,
@@ -96,7 +96,7 @@ function mapNavNode(row: any): NavNode {
 function mapNavEdge(row: any): NavEdge {
   return {
     id: row.id,
-    projectId: row.project_id,
+    agentId: row.agent_id,
     fromNodeId: row.from_node_id,
     toNodeId: row.to_node_id,
     actionLabel: row.action_label,
@@ -109,7 +109,7 @@ function mapNavEdge(row: any): NavEdge {
 // --- Database operations ---
 
 export async function upsertNode(
-  projectId: string,
+  agentId: string,
   url: string,
   title?: string,
   description?: string,
@@ -118,7 +118,7 @@ export async function upsertNode(
 
   const urlPattern = normalizeUrl(url);
   const payload: Record<string, string> = {
-    project_id: projectId,
+    agent_id: agentId,
     url_pattern: urlPattern,
     last_seen_at: new Date().toISOString(),
   };
@@ -127,7 +127,7 @@ export async function upsertNode(
 
   const { data, error } = await supabase!
     .from('nav_nodes')
-    .upsert(payload, { onConflict: 'project_id,url_pattern' })
+    .upsert(payload, { onConflict: 'agent_id,url_pattern' })
     .select()
     .single();
 
@@ -139,7 +139,7 @@ export async function upsertNode(
 }
 
 export async function upsertEdge(
-  projectId: string,
+  agentId: string,
   fromNodeId: string,
   toNodeId: string,
   actionLabel: string,
@@ -149,7 +149,7 @@ export async function upsertEdge(
   if (!isSupabaseEnabled()) return null;
 
   const payload: Record<string, string> = {
-    project_id: projectId,
+    agent_id: agentId,
     from_node_id: fromNodeId,
     to_node_id: toNodeId,
     action_label: actionLabel || '',
@@ -159,7 +159,7 @@ export async function upsertEdge(
 
   const { data, error } = await supabase!
     .from('nav_edges')
-    .upsert(payload, { onConflict: 'project_id,from_node_id,to_node_id,action_label' })
+    .upsert(payload, { onConflict: 'agent_id,from_node_id,to_node_id,action_label' })
     .select()
     .single();
 
@@ -190,7 +190,7 @@ export async function linkFeatureToNode(nodeId: string, featureId: string): Prom
  * Creates/updates nodes and edge. Fire-and-forget — errors are logged, never thrown.
  */
 export async function recordNavigation(
-  projectId: string,
+  agentId: string,
   fromUrl: string | null,
   toUrl: string,
   action?: string,
@@ -199,13 +199,13 @@ export async function recordNavigation(
   rawTarget?: string,
 ): Promise<void> {
   try {
-    const toNode = await upsertNode(projectId, toUrl, title);
+    const toNode = await upsertNode(agentId, toUrl, title);
     if (!toNode) return;
 
     if (fromUrl) {
-      const fromNode = await upsertNode(projectId, fromUrl);
+      const fromNode = await upsertNode(agentId, fromUrl);
       if (fromNode && fromNode.id !== toNode.id) {
-        await upsertEdge(projectId, fromNode.id, toNode.id, action || '', selector, rawTarget);
+        await upsertEdge(agentId, fromNode.id, toNode.id, action || '', selector, rawTarget);
       }
     }
   } catch (err) {
@@ -213,14 +213,14 @@ export async function recordNavigation(
   }
 }
 
-export async function getGraph(projectId: string): Promise<NavGraph> {
+export async function getGraph(agentId: string): Promise<NavGraph> {
   if (!isSupabaseEnabled()) return { nodes: [], edges: [] };
 
   // 1. Load nodes
   const { data: nodeRows, error: nodeErr } = await supabase!
     .from('nav_nodes')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .order('first_seen_at', { ascending: true });
 
   if (nodeErr || !nodeRows) {
@@ -232,7 +232,7 @@ export async function getGraph(projectId: string): Promise<NavGraph> {
   const { data: edgeRows, error: edgeErr } = await supabase!
     .from('nav_edges')
     .select('*')
-    .eq('project_id', projectId);
+    .eq('agent_id', agentId);
 
   if (edgeErr) {
     console.error('[NAV-GRAPH] getGraph edges error:', edgeErr);

@@ -13,29 +13,29 @@ const wsClients = new Map<string, Set<WebSocket>>();
 
 // -- WebSocket client management --
 
-export function getAgent(projectId: string): AgentSession | undefined {
-  return agents.get(projectId);
+export function getAgent(agentId: string): AgentSession | undefined {
+  return agents.get(agentId);
 }
 
-export function addClient(projectId: string, ws: WebSocket): void {
-  let clients = wsClients.get(projectId);
+export function addClient(agentId: string, ws: WebSocket): void {
+  let clients = wsClients.get(agentId);
   if (!clients) {
     clients = new Set();
-    wsClients.set(projectId, clients);
+    wsClients.set(agentId, clients);
   }
   clients.add(ws);
-  redisStore.refreshTTL(projectId).catch(() => {});
+  redisStore.refreshTTL(agentId).catch(() => {});
 }
 
-export function removeClient(projectId: string, ws: WebSocket): void {
-  const clients = wsClients.get(projectId);
+export function removeClient(agentId: string, ws: WebSocket): void {
+  const clients = wsClients.get(agentId);
   if (!clients) return;
   clients.delete(ws);
-  if (clients.size === 0) wsClients.delete(projectId);
+  if (clients.size === 0) wsClients.delete(agentId);
 }
 
-export function broadcastToClients(projectId: string, msg: ServerMessage): void {
-  const clients = wsClients.get(projectId);
+export function broadcastToClients(agentId: string, msg: ServerMessage): void {
+  const clients = wsClients.get(agentId);
   if (!clients) return;
   const data = JSON.stringify(msg);
   for (const ws of clients) {
@@ -74,18 +74,18 @@ function serverMsgToChatMessage(msg: ServerMessage): ChatMessage | null {
 
 // -- Broadcast with Redis write-through --
 
-export function makeBroadcast(projectId: string): (msg: ServerMessage) => void {
+export function makeBroadcast(agentId: string): (msg: ServerMessage) => void {
   return (msg: ServerMessage) => {
     // Write-through to Redis
     if (msg.type === 'screenshot') {
-      redisStore.setScreenshot(projectId, msg.data).catch(() => {});
+      redisStore.setScreenshot(agentId, msg.data).catch(() => {});
     } else if (msg.type === 'nav') {
-      redisStore.setSession(projectId, { currentUrl: msg.url }).catch(() => {});
+      redisStore.setSession(agentId, { currentUrl: msg.url }).catch(() => {});
     } else if (msg.type === 'status') {
       const statusMap: Record<string, RedisSession['status']> = {
         idle: 'idle', working: 'working', error: 'idle', disconnected: 'disconnected',
       };
-      redisStore.setSession(projectId, {
+      redisStore.setSession(agentId, {
         status: statusMap[msg.status] || 'idle',
       }).catch(() => {});
     }
@@ -93,36 +93,36 @@ export function makeBroadcast(projectId: string): (msg: ServerMessage) => void {
     // Store chat messages
     const chatMsg = serverMsgToChatMessage(msg);
     if (chatMsg) {
-      redisStore.pushMessage(projectId, chatMsg).catch(() => {});
+      redisStore.pushMessage(agentId, chatMsg).catch(() => {});
     }
 
     // Forward to WebSocket clients
-    broadcastToClients(projectId, msg);
+    broadcastToClients(agentId, msg);
   };
 }
 
 // -- Create session --
 
 export async function createSession(
-  projectId: string,
+  agentId: string,
   url: string,
   dbSessionId: string | null,
 ): Promise<AgentSession> {
   // Claim warm browser or launch new
-  let browser = await browserManager.claimWarm(projectId);
+  let browser = await browserManager.claimWarm(agentId);
   if (!browser) {
-    browser = await browserManager.launchBrowser(projectId);
+    browser = await browserManager.launchBrowser(agentId);
   }
 
-  const broadcastFn = makeBroadcast(projectId);
+  const broadcastFn = makeBroadcast(agentId);
 
   // Create agent via CDP
   const agentSession = await createAgent(
-    broadcastFn, browser.cdpEndpoint, dbSessionId, projectId, url
+    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url
   );
 
   // Write session to Redis
-  await redisStore.setSession(projectId, {
+  await redisStore.setSession(agentId, {
     dbSessionId: dbSessionId || '',
     status: 'idle',
     cdpPort: browser.port,
@@ -135,27 +135,27 @@ export async function createSession(
     lastActivityAt: Date.now(),
   });
 
-  agents.set(projectId, agentSession);
+  agents.set(agentId, agentSession);
   return agentSession;
 }
 
 // -- Destroy session --
 
-export async function destroySession(projectId: string): Promise<void> {
-  const session = await redisStore.getSession(projectId);
+export async function destroySession(agentId: string): Promise<void> {
+  const session = await redisStore.getSession(agentId);
 
   // Remove from local maps
-  const agentSession = agents.get(projectId);
-  agents.delete(projectId);
+  const agentSession = agents.get(agentId);
+  agents.delete(agentId);
 
   // Notify connected clients
-  broadcastToClients(projectId, { type: 'status', status: 'disconnected' });
-  wsClients.delete(projectId);
+  broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
+  wsClients.delete(agentId);
 
   // Close agent (drops event listeners only, does NOT close browser context)
   if (agentSession) {
     await agentSession.close().catch(err =>
-      console.error(`[SessionManager] Error closing agent for ${projectId}:`, err)
+      console.error(`[SessionManager] Error closing agent for ${agentId}:`, err)
     );
   }
 
@@ -165,71 +165,71 @@ export async function destroySession(projectId: string): Promise<void> {
     // End DB session
     if (session.dbSessionId) await dbEndSession(session.dbSessionId);
     // Remove from Redis
-    await redisStore.deleteSession(projectId);
+    await redisStore.deleteSession(agentId);
   }
 }
 
 // -- Recover session (on server restart) --
 
-export async function recoverSession(projectId: string): Promise<boolean> {
+export async function recoverSession(agentId: string): Promise<boolean> {
   const redis = redisStore.getRedis();
   const serverId = String(process.pid);
 
   // Distributed lock
-  const locked = await redis.set(`session:lock:${projectId}`, serverId, 'EX', 30, 'NX');
+  const locked = await redis.set(`session:lock:${agentId}`, serverId, 'EX', 30, 'NX');
   if (!locked) return false;
 
   try {
-    const session = await redisStore.getSession(projectId);
+    const session = await redisStore.getSession(agentId);
     if (!session) return false;
 
     const alive = await browserManager.isAlive(session.browserPid, session.cdpPort);
 
     if (alive) {
       try {
-        const broadcastFn = makeBroadcast(projectId);
+        const broadcastFn = makeBroadcast(agentId);
 
         // Connect agent to existing browser — NO url (keep current page)
         const agentSession = await createAgent(
-          broadcastFn, session.cdpEndpoint, session.dbSessionId, projectId, undefined
+          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined
         );
-        agents.set(projectId, agentSession);
+        agents.set(agentId, agentSession);
 
         // Update status based on what was happening before crash
         if (session.status === 'working') {
-          await redisStore.setSession(projectId, { status: 'interrupted' });
+          await redisStore.setSession(agentId, { status: 'interrupted' });
         } else {
-          await redisStore.setSession(projectId, { status: 'idle' });
+          await redisStore.setSession(agentId, { status: 'idle' });
         }
 
-        console.log(`[RECOVERY] Session ${projectId} recovered`);
+        console.log(`[RECOVERY] Session ${agentId} recovered`);
         return true;
       } catch (err) {
-        console.error(`[RECOVERY] Agent creation failed for ${projectId}:`, err);
-        await redisStore.setSession(projectId, { status: 'crashed' });
+        console.error(`[RECOVERY] Agent creation failed for ${agentId}:`, err);
+        await redisStore.setSession(agentId, { status: 'crashed' });
         return false;
       }
     } else {
       // Browser is dead
-      await redisStore.setSession(projectId, { status: 'crashed' });
+      await redisStore.setSession(agentId, { status: 'crashed' });
       await redisStore.freePort(session.cdpPort);
-      console.log(`[RECOVERY] Session ${projectId} browser crashed`);
+      console.log(`[RECOVERY] Session ${agentId} browser crashed`);
       return false;
     }
   } finally {
-    await redis.del(`session:lock:${projectId}`);
+    await redis.del(`session:lock:${agentId}`);
   }
 }
 
 export async function recoverAllSessions(): Promise<void> {
-  const projectIds = await redisStore.listSessions();
-  if (projectIds.length === 0) return;
+  const agentIds = await redisStore.listSessions();
+  if (agentIds.length === 0) return;
 
-  console.log(`[RECOVERY] Recovering ${projectIds.length} session(s)...`);
+  console.log(`[RECOVERY] Recovering ${agentIds.length} session(s)...`);
   const results: PromiseSettledResult<boolean>[] = [];
 
-  for (let i = 0; i < projectIds.length; i += 5) {
-    const batch = projectIds.slice(i, i + 5);
+  for (let i = 0; i < agentIds.length; i += 5) {
+    const batch = agentIds.slice(i, i + 5);
     results.push(...await Promise.allSettled(
       batch.map(pid => recoverSession(pid))
     ));
@@ -237,13 +237,13 @@ export async function recoverAllSessions(): Promise<void> {
 
   const recovered = results.filter(r => r.status === 'fulfilled' && r.value).length;
   const failed = results.filter(r => r.status === 'rejected' || (r.status === 'fulfilled' && !r.value)).length;
-  console.log(`[RECOVERY] ${recovered} recovered, ${failed} failed of ${projectIds.length} total`);
+  console.log(`[RECOVERY] ${recovered} recovered, ${failed} failed of ${agentIds.length} total`);
 }
 
 // -- Send snapshot to reconnecting client --
 
-export async function sendSnapshot(projectId: string, ws: WebSocket): Promise<void> {
-  const session = await redisStore.getSession(projectId);
+export async function sendSnapshot(agentId: string, ws: WebSocket): Promise<void> {
+  const session = await redisStore.getSession(agentId);
   if (!session) return;
 
   const send = (msg: ServerMessage) => {
@@ -259,13 +259,13 @@ export async function sendSnapshot(projectId: string, ws: WebSocket): Promise<vo
   }
 
   // Screenshot (separate Redis key)
-  const screenshot = await redisStore.getScreenshot(projectId);
+  const screenshot = await redisStore.getScreenshot(agentId);
   if (screenshot) {
     send({ type: 'screenshot', data: screenshot });
   }
 
   // Messages — Redis first, fall back to Supabase
-  let messages = await redisStore.getMessages(projectId);
+  let messages = await redisStore.getMessages(agentId);
   if (messages.length === 0 && session.dbSessionId) {
     messages = await getMessagesBySession(session.dbSessionId);
   }
@@ -286,8 +286,8 @@ export async function sendSnapshot(projectId: string, ws: WebSocket): Promise<vo
 
 // -- Check session exists --
 
-export async function hasSession(projectId: string): Promise<boolean> {
-  const session = await redisStore.getSession(projectId);
+export async function hasSession(agentId: string): Promise<boolean> {
+  const session = await redisStore.getSession(agentId);
   return session !== null;
 }
 
@@ -297,19 +297,19 @@ export async function listActiveSessions(): Promise<string[]> {
 
 // -- Handle expiry (called by polling loop) --
 
-export async function handleExpiry(projectId: string): Promise<void> {
-  console.log(`[SessionManager] Session ${projectId} expired, destroying...`);
-  await destroySession(projectId);
+export async function handleExpiry(agentId: string): Promise<void> {
+  console.log(`[SessionManager] Session ${agentId} expired, destroying...`);
+  await destroySession(agentId);
 }
 
 // -- Graceful shutdown --
 
 export async function shutdownAll(): Promise<void> {
   // Mark all sessions as disconnected in Redis (browsers survive)
-  const projectIds = Array.from(agents.keys());
-  for (const projectId of projectIds) {
-    await redisStore.setSession(projectId, { status: 'disconnected' }).catch(() => {});
-    broadcastToClients(projectId, { type: 'status', status: 'disconnected' });
+  const agentIds = Array.from(agents.keys());
+  for (const agentId of agentIds) {
+    await redisStore.setSession(agentId, { status: 'disconnected' }).catch(() => {});
+    broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
   }
   agents.clear();
   wsClients.clear();

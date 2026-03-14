@@ -38,7 +38,7 @@ export function parseFindingsFromText(text: string): RawFinding[] {
  */
 export async function processFinding(
   raw: RawFinding,
-  projectId: string,
+  agentId: string,
   sessionId: string,
   stepsHistory: Array<{ order: number; action: string; target?: string }>,
   getScreenshot: () => Promise<string | null>
@@ -47,11 +47,11 @@ export async function processFinding(
   let screenshotUrl: string | null = null;
   const screenshotBase64 = await getScreenshot();
   if (screenshotBase64) {
-    screenshotUrl = await uploadScreenshot(projectId, screenshotBase64);
+    screenshotUrl = await uploadScreenshot(agentId, screenshotBase64);
   }
 
   const finding = await createFinding({
-    project_id: projectId,
+    agent_id: agentId,
     session_id: sessionId,
     title: raw.title,
     description: null,

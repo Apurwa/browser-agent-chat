@@ -64,11 +64,11 @@ As you perform this task:
 /**
  * Load memory for a project and build the serialized context.
  */
-export async function loadMemoryContext(projectId: string): Promise<string> {
-  const features = await listFeatures(projectId);
+export async function loadMemoryContext(agentId: string): Promise<string> {
+  const features = await listFeatures(agentId);
   const memoryBlock = serializeMemory(features);
 
-  const graph = await getGraph(projectId);
+  const graph = await getGraph(agentId);
   const graphBlock = serializeGraph(graph);
 
   if (graphBlock) {

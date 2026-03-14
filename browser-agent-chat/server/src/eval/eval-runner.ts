@@ -25,20 +25,20 @@ export function cancelRun(runId: string): boolean {
 }
 
 export async function startEvalRun(
-  projectId: string,
+  agentId: string,
   trigger: EvalRunTrigger,
   broadcast: EvalBroadcast,
   tags?: string[],
 ): Promise<EvalRun | null> {
   // Create the run record
-  const run = await createEvalRun(projectId, trigger);
+  const run = await createEvalRun(agentId, trigger);
   if (!run) return null;
 
   const runState = { cancelled: false };
   activeRuns.set(run.id, runState);
 
   // Load eval cases
-  const cases = await listEvalCases(projectId, { status: 'active', tags });
+  const cases = await listEvalCases(agentId, { status: 'active', tags });
   if (cases.length === 0) {
     await updateEvalRun(run.id, {
       status: 'completed',
@@ -50,7 +50,7 @@ export async function startEvalRun(
   }
 
   // Kick off run asynchronously — returns immediately with the run record
-  runCasesSequentially(run.id, projectId, cases, broadcast, runState).catch(err => {
+  runCasesSequentially(run.id, agentId, cases, broadcast, runState).catch(err => {
     console.error(`[EvalRunner] Run ${run.id} failed with unexpected error:`, err);
     updateEvalRun(run.id, {
       status: 'failed',
@@ -64,7 +64,7 @@ export async function startEvalRun(
 
 async function runCasesSequentially(
   runId: string,
-  projectId: string,
+  agentId: string,
   cases: EvalCase[],
   broadcast: EvalBroadcast,
   runState: { cancelled: boolean },
@@ -89,7 +89,7 @@ async function runCasesSequentially(
     const startTime = Date.now();
 
     try {
-      const result = await runSingleCase(runId, projectId, evalCase);
+      const result = await runSingleCase(runId, agentId, evalCase);
       const duration = Date.now() - startTime;
 
       await createEvalResult({
@@ -174,14 +174,14 @@ interface CaseResult {
 
 async function runSingleCase(
   runId: string,
-  projectId: string,
+  agentId: string,
   evalCase: EvalCase,
 ): Promise<CaseResult> {
   // Attempt to claim a warm browser; fall back to launching a fresh one
-  let browserInfo = await claimWarm(projectId);
+  let browserInfo = await claimWarm(agentId);
   if (!browserInfo) {
     try {
-      browserInfo = await launchBrowser(projectId);
+      browserInfo = await launchBrowser(agentId);
     } catch (err) {
       console.error(`[EvalRunner] Failed to launch browser for case ${evalCase.id}:`, err);
       return {
@@ -208,14 +208,14 @@ async function runSingleCase(
   };
 
   try {
-    // Create agent — pass null for both sessionId and projectId to prevent:
-    //   - nav graph writes (recordNavigation fires only when projectId is set)
-    //   - finding/suggestion detection (both guarded by `if (projectId && sessionId)`)
+    // Create agent — pass null for both sessionId and agentId to prevent:
+    //   - nav graph writes (recordNavigation fires only when agentId is set)
+    //   - finding/suggestion detection (both guarded by `if (agentId && sessionId)`)
     const agentSession = await createAgent(
       evalBroadcast,
       browserInfo.cdpEndpoint,
       null,  // sessionId
-      null,  // projectId
+      null,  // agentId
     );
 
     try {
