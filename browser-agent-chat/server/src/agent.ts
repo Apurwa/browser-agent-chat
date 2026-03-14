@@ -5,6 +5,7 @@ import { saveMessage, createSuggestion } from './db.js';
 import { loadMemoryContext, buildTaskPrompt, buildExplorePrompt } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
+import { recordNavigation } from './nav-graph.js';
 
 export interface AgentSession {
   agent: BrowserAgent;
@@ -73,6 +74,13 @@ export async function createAgent(
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
 
+  // Session-scoped state for nav graph writes
+  let lastAction: { label: string; selector?: string } | null = null;
+
+  // Get initial page URL for graph tracking
+  const currentPageUrl = connector.getHarness().page.url();
+  let previousUrl: string | null = currentPageUrl;
+
   // Helper to get screenshot as base64
   const getScreenshotBase64 = async (): Promise<string | null> => {
     try {
@@ -119,6 +127,10 @@ export async function createAgent(
     stepOrder++;
     stepsHistory.push({ order: stepOrder, action: actionName, target: target as string | undefined });
 
+    // Update lastAction buffer for nav graph edge labels
+    const actionLabel = target ? `${actionName}: ${target}` : actionName;
+    lastAction = { label: actionLabel };
+
     broadcast({ type: 'action', action: actionName, target: target as string | undefined });
     if (sessionId) {
       const actionContent = target ? `${actionName}: ${target}` : actionName;
@@ -138,9 +150,18 @@ export async function createAgent(
     }
   });
 
-  // Listen for navigation events
+  // Listen for navigation events — update graph + broadcast
   agent.browserAgentEvents.on('nav', (navUrl: string) => {
     broadcast({ type: 'nav', url: navUrl });
+
+    // Fire-and-forget graph update
+    if (projectId) {
+      const action = lastAction?.label;
+      const selector = lastAction?.selector;
+      lastAction = null; // Consume the action
+      recordNavigation(projectId, previousUrl, navUrl, action, selector).catch(() => {});
+    }
+    previousUrl = navUrl;
   });
 
   // Send initial screenshot
@@ -161,7 +182,6 @@ export async function createAgent(
   broadcast({ type: 'metrics', metrics });
 
   broadcast({ type: 'status', status: 'idle' });
-  const currentPageUrl = connector.getHarness().page.url();
   broadcast({ type: 'nav', url: currentPageUrl });
 
   return {
