@@ -103,7 +103,24 @@ export type Criticality = 'critical' | 'high' | 'medium' | 'low';
 export type FindingType = 'visual' | 'functional' | 'data' | 'ux';
 export type FindingStatus = 'new' | 'confirmed' | 'dismissed';
 export type MessageRole = 'user' | 'agent' | 'thought' | 'action' | 'system';
-export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected';
+export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected' | 'crashed' | 'interrupted';
+
+// === Redis Session State ===
+
+export interface RedisSession {
+  dbSessionId: string;
+  status: RedisSessionStatus;
+  cdpPort: number;
+  cdpEndpoint: string;
+  currentUrl: string;
+  memoryContext: string;
+  browserPid: number;
+  lastTask: string;
+  createdAt: number;
+  lastActivityAt: number;
+}
+
+export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted';
 
 // === Suggestions ===
 
@@ -160,7 +177,9 @@ export type ServerMessage =
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
   | { type: 'sessionRestore'; messages: ChatMessage[] }
-  | { type: 'metrics'; metrics: StartupMetrics };
+  | { type: 'metrics'; metrics: StartupMetrics }
+  | { type: 'sessionCrashed' }
+  | { type: 'taskInterrupted'; task: string };
 
 // === API Request/Response ===
 
