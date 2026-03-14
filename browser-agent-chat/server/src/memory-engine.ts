@@ -1,4 +1,5 @@
 import { listFeatures } from './db.js';
+import { getGraph, serializeGraph } from './nav-graph.js';
 import type { Feature, Flow } from './types.js';
 
 /**
@@ -81,5 +82,13 @@ Guidelines:
  */
 export async function loadMemoryContext(projectId: string): Promise<string> {
   const features = await listFeatures(projectId);
-  return serializeMemory(features);
+  const memoryBlock = serializeMemory(features);
+
+  const graph = await getGraph(projectId);
+  const graphBlock = serializeGraph(graph);
+
+  if (graphBlock) {
+    return memoryBlock + '\n\n' + graphBlock;
+  }
+  return memoryBlock;
 }

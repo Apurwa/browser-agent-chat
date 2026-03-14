@@ -6,10 +6,14 @@ vi.mock('../src/supabase.js', () => ({
   isSupabaseEnabled: vi.fn().mockReturnValue(true),
   supabase: { from: mockFrom },
 }));
+vi.mock('../src/db.js', () => ({
+  listFeatures: vi.fn().mockResolvedValue([]),
+}));
 
 // Single merged import
 import { normalizeUrl, serializeGraph, upsertNode, upsertEdge, linkFeatureToNode, getGraph, recordNavigation } from '../src/nav-graph.js';
 import type { NavGraph } from '../src/types.js';
+import { loadMemoryContext } from '../src/memory-engine.js';
 
 describe('normalizeUrl', () => {
   it('strips query parameters', () => {
@@ -412,5 +416,61 @@ describe('recordNavigation', () => {
     mockFrom.mockImplementation(() => { throw new Error('DB down'); });
 
     await expect(recordNavigation('p1', null, 'https://app.com/page')).resolves.toBeUndefined();
+  });
+});
+
+describe('loadMemoryContext — graph integration', () => {
+  beforeEach(() => {
+    mockFrom.mockReset();
+  });
+
+  it('includes SITE MAP block when graph has nodes', async () => {
+    const nodeRows = [
+      { id: 'n1', project_id: 'p1', url_pattern: '/dashboard', page_title: 'Dashboard', description: '', first_seen_at: '2026-01-01', last_seen_at: '2026-01-01' },
+    ];
+
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          order: vi.fn().mockResolvedValue({ data: nodeRows, error: null }),
+        }),
+      }),
+    });
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+      }),
+    });
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        in: vi.fn().mockResolvedValue({ data: [], error: null }),
+      }),
+    });
+
+    const result = await loadMemoryContext('p1');
+
+    expect(result).toContain('SITE MAP:');
+    expect(result).toContain('/dashboard');
+  });
+
+  it('omits SITE MAP block when graph is empty', async () => {
+    // nodes query (empty)
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          order: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      }),
+    });
+    // edges query (empty, no nodeIds so no feature-links query)
+    mockFrom.mockReturnValueOnce({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+      }),
+    });
+
+    const result = await loadMemoryContext('p1');
+
+    expect(result).not.toContain('SITE MAP:');
   });
 });
