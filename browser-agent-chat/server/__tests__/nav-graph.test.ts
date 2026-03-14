@@ -236,6 +236,28 @@ describe('upsertEdge', () => {
       id: 'e1', fromNodeId: 'n1', toNodeId: 'n2', actionLabel: 'click: Settings',
     }));
   });
+
+  it('maps raw_target from row to rawTarget', async () => {
+    const row = {
+      id: 'e1', project_id: 'p1', from_node_id: 'n1', to_node_id: 'n2',
+      action_label: 'click: Settings', selector: null,
+      raw_target: 'Settings gear icon',
+      discovered_at: '2026-01-01T00:00:00Z',
+    };
+    mockFrom.mockReturnValue({
+      upsert: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: row, error: null }),
+        }),
+      }),
+    });
+
+    const result = await upsertEdge('p1', 'n1', 'n2', 'click: Settings', undefined, 'Settings gear icon');
+
+    expect(result).toEqual(expect.objectContaining({
+      rawTarget: 'Settings gear icon',
+    }));
+  });
 });
 
 describe('linkFeatureToNode', () => {

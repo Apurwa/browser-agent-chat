@@ -101,6 +101,7 @@ function mapNavEdge(row: any): NavEdge {
     toNodeId: row.to_node_id,
     actionLabel: row.action_label,
     selector: row.selector,
+    rawTarget: row.raw_target ?? null,
     discoveredAt: row.discovered_at,
   };
 }
@@ -143,6 +144,7 @@ export async function upsertEdge(
   toNodeId: string,
   actionLabel: string,
   selector?: string,
+  rawTarget?: string,
 ): Promise<NavEdge | null> {
   if (!isSupabaseEnabled()) return null;
 
@@ -153,6 +155,7 @@ export async function upsertEdge(
     action_label: actionLabel || '',
   };
   if (selector) payload.selector = selector;
+  if (rawTarget) payload.raw_target = rawTarget;
 
   const { data, error } = await supabase!
     .from('nav_edges')
@@ -192,15 +195,17 @@ export async function recordNavigation(
   toUrl: string,
   action?: string,
   selector?: string,
+  title?: string,
+  rawTarget?: string,
 ): Promise<void> {
   try {
-    const toNode = await upsertNode(projectId, toUrl);
+    const toNode = await upsertNode(projectId, toUrl, title);
     if (!toNode) return;
 
     if (fromUrl) {
       const fromNode = await upsertNode(projectId, fromUrl);
       if (fromNode && fromNode.id !== toNode.id) {
-        await upsertEdge(projectId, fromNode.id, toNode.id, action || '', selector);
+        await upsertEdge(projectId, fromNode.id, toNode.id, action || '', selector, rawTarget);
       }
     }
   } catch (err) {
