@@ -9,6 +9,7 @@ import findingsRouter from './routes/findings.js';
 import memoryRouter from './routes/memory.js';
 import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
+import mapRouter from './routes/map.js';
 import { executeTask, executeExplore, executeLogin } from './agent.js';
 import { getProject, createSession } from './db.js';
 import { decryptCredentials } from './crypto.js';
@@ -60,6 +61,7 @@ app.use('/api/projects/:id/findings', findingsRouter);
 app.use('/api/projects/:id/memory', memoryRouter);
 app.use('/api/projects/:id/suggestions', suggestionsRouter);
 app.use('/api/projects/:id/evals', evalsRouter);
+app.use('/api/projects/:id/map', mapRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
