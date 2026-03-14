@@ -186,23 +186,29 @@ export async function recoverSession(projectId: string): Promise<boolean> {
     const alive = await browserManager.isAlive(session.browserPid, session.cdpPort);
 
     if (alive) {
-      const broadcastFn = makeBroadcast(projectId);
+      try {
+        const broadcastFn = makeBroadcast(projectId);
 
-      // Connect agent to existing browser — NO url (keep current page)
-      const agentSession = await createAgent(
-        broadcastFn, session.cdpEndpoint, session.dbSessionId, projectId, undefined
-      );
-      agents.set(projectId, agentSession);
+        // Connect agent to existing browser — NO url (keep current page)
+        const agentSession = await createAgent(
+          broadcastFn, session.cdpEndpoint, session.dbSessionId, projectId, undefined
+        );
+        agents.set(projectId, agentSession);
 
-      // Update status based on what was happening before crash
-      if (session.status === 'working') {
-        await redisStore.setSession(projectId, { status: 'interrupted' });
-      } else {
-        await redisStore.setSession(projectId, { status: 'idle' });
+        // Update status based on what was happening before crash
+        if (session.status === 'working') {
+          await redisStore.setSession(projectId, { status: 'interrupted' });
+        } else {
+          await redisStore.setSession(projectId, { status: 'idle' });
+        }
+
+        console.log(`[RECOVERY] Session ${projectId} recovered`);
+        return true;
+      } catch (err) {
+        console.error(`[RECOVERY] Agent creation failed for ${projectId}:`, err);
+        await redisStore.setSession(projectId, { status: 'crashed' });
+        return false;
       }
-
-      console.log(`[RECOVERY] Session ${projectId} recovered`);
-      return true;
     } else {
       // Browser is dead
       await redisStore.setSession(projectId, { status: 'crashed' });
@@ -245,7 +251,7 @@ export async function sendSnapshot(projectId: string, ws: WebSocket): Promise<vo
   };
 
   // Status
-  send({ type: 'status', status: session.status as any });
+  send({ type: 'status', status: session.status });
 
   // Current URL
   if (session.currentUrl) {

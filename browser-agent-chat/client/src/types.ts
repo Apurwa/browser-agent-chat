@@ -3,7 +3,7 @@
 export type Criticality = 'critical' | 'high' | 'medium' | 'low';
 export type FindingType = 'visual' | 'functional' | 'data' | 'ux';
 export type FindingStatus = 'new' | 'confirmed' | 'dismissed';
-export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected';
+export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected' | 'crashed' | 'interrupted';
 
 export interface ProjectListItem {
   id: string;
