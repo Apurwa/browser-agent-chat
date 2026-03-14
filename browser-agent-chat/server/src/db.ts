@@ -1,98 +1,99 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
 import { normalizeUrl } from './nav-graph.js';
 import type {
-  Project, Feature, Flow, Finding, Session, Message,
+  Agent, Feature, Flow, Finding, Session, Message,
   EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
   Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint,
   ChatMessage,
-  EvalCase, EvalRun, EvalResult, EvalRunTrigger, EvalRunStatus
+  EvalCase, EvalRun, EvalResult, EvalRunTrigger, EvalRunStatus,
+  Task, StepType, ExecutionStep
 } from './types.js';
 
-// === Projects ===
+// === Agents ===
 
-export async function createProject(
+export async function createAgent(
   userId: string, name: string, url: string,
   credentials: EncryptedCredentials | null, context: string | null
-): Promise<Project | null> {
+): Promise<Agent | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
-    .from('projects')
+    .from('agents')
     .insert({ user_id: userId, name, url, credentials, context })
     .select()
     .single();
-  if (error) { console.error('createProject error:', error); return null; }
+  if (error) { console.error('createAgent error:', error); return null; }
   return data;
 }
 
-export async function getProject(projectId: string): Promise<Project | null> {
+export async function getAgent(agentId: string): Promise<Agent | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
-    .from('projects')
+    .from('agents')
     .select('*')
-    .eq('id', projectId)
+    .eq('id', agentId)
     .single();
   if (error) return null;
   return data;
 }
 
-export async function listProjects(userId: string): Promise<Project[]> {
+export async function listAgents(userId: string): Promise<Agent[]> {
   if (!isSupabaseEnabled()) return [];
   const { data, error } = await supabase!
-    .from('projects')
+    .from('agents')
     .select('*')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false });
-  if (error) { console.error('listProjects error:', error); return []; }
+  if (error) { console.error('listAgents error:', error); return []; }
   return data ?? [];
 }
 
-export async function updateProject(
-  projectId: string, updates: Partial<Pick<Project, 'name' | 'url' | 'credentials' | 'context'>>
-): Promise<Project | null> {
+export async function updateAgent(
+  agentId: string, updates: Partial<Pick<Agent, 'name' | 'url' | 'credentials' | 'context'>>
+): Promise<Agent | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
-    .from('projects')
+    .from('agents')
     .update({ ...updates, updated_at: new Date().toISOString() })
-    .eq('id', projectId)
+    .eq('id', agentId)
     .select()
     .single();
-  if (error) { console.error('updateProject error:', error); return null; }
+  if (error) { console.error('updateAgent error:', error); return null; }
   return data;
 }
 
-export async function deleteProject(projectId: string): Promise<boolean> {
+export async function deleteAgent(agentId: string): Promise<boolean> {
   if (!isSupabaseEnabled()) return false;
-  const { error } = await supabase!.from('projects').delete().eq('id', projectId);
+  const { error } = await supabase!.from('agents').delete().eq('id', agentId);
   return !error;
 }
 
-export async function getProjectListStats(projectIds: string[]): Promise<Map<string, { findingsCount: number; lastSessionAt: string | null }>> {
+export async function getAgentListStats(agentIds: string[]): Promise<Map<string, { findingsCount: number; lastSessionAt: string | null }>> {
   const result = new Map<string, { findingsCount: number; lastSessionAt: string | null }>();
-  projectIds.forEach(id => result.set(id, { findingsCount: 0, lastSessionAt: null }));
+  agentIds.forEach(id => result.set(id, { findingsCount: 0, lastSessionAt: null }));
 
-  if (!isSupabaseEnabled() || projectIds.length === 0) return result;
+  if (!isSupabaseEnabled() || agentIds.length === 0) return result;
 
   // Fetch findings counts (parallel queries — Supabase JS doesn't support GROUP BY natively)
-  await Promise.all(projectIds.map(async id => {
+  await Promise.all(agentIds.map(async id => {
     const { count } = await supabase!
       .from('findings')
       .select('*', { count: 'exact', head: true })
-      .eq('project_id', id)
+      .eq('agent_id', id)
       .neq('status', 'dismissed');
     const entry = result.get(id);
     if (entry) entry.findingsCount = count ?? 0;
   }));
 
-  // Fetch last session timestamps (single query for all projects)
+  // Fetch last session timestamps (single query for all agents)
   const { data: sessionData } = await supabase!
     .from('sessions')
-    .select('project_id, started_at')
-    .in('project_id', projectIds)
+    .select('agent_id, started_at')
+    .in('agent_id', agentIds)
     .order('started_at', { ascending: false });
   if (sessionData) {
     for (const row of sessionData) {
-      const entry = result.get(row.project_id);
-      // First row per project_id is the most recent (ordered desc)
+      const entry = result.get(row.agent_id);
+      // First row per agent_id is the most recent (ordered desc)
       if (entry && entry.lastSessionAt === null) {
         entry.lastSessionAt = row.started_at;
       }
@@ -104,12 +105,12 @@ export async function getProjectListStats(projectIds: string[]): Promise<Map<str
 
 // === Memory Features ===
 
-export async function listFeatures(projectId: string): Promise<Feature[]> {
+export async function listFeatures(agentId: string): Promise<Feature[]> {
   if (!isSupabaseEnabled()) return [];
   const { data: features, error } = await supabase!
     .from('memory_features')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .order('created_at', { ascending: true });
   if (error || !features) return [];
 
@@ -117,7 +118,7 @@ export async function listFeatures(projectId: string): Promise<Feature[]> {
   const { data: flows } = await supabase!
     .from('memory_flows')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .order('created_at', { ascending: true });
 
   return features.map(f => ({
@@ -127,13 +128,13 @@ export async function listFeatures(projectId: string): Promise<Feature[]> {
 }
 
 export async function createFeature(
-  projectId: string, name: string, description: string | null,
+  agentId: string, name: string, description: string | null,
   criticality: Criticality, expectedBehaviors: string[]
 ): Promise<Feature | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
     .from('memory_features')
-    .insert({ project_id: projectId, name, description, criticality, expected_behaviors: expectedBehaviors })
+    .insert({ agent_id: agentId, name, description, criticality, expected_behaviors: expectedBehaviors })
     .select()
     .single();
   if (error) { console.error('createFeature error:', error); return null; }
@@ -161,7 +162,7 @@ export async function deleteFeature(featureId: string): Promise<boolean> {
 }
 
 export async function findFeatureByName(
-  projectId: string,
+  agentId: string,
   name: string
 ): Promise<Feature | null> {
   if (!isSupabaseEnabled()) return null;
@@ -170,7 +171,7 @@ export async function findFeatureByName(
   const { data, error } = await supabase!
     .from('memory_features')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .ilike('name', escaped)
     .limit(1)
     .maybeSingle();
@@ -181,13 +182,13 @@ export async function findFeatureByName(
 // === Memory Flows ===
 
 export async function createFlow(
-  featureId: string, projectId: string, name: string,
+  featureId: string, agentId: string, name: string,
   steps: Flow['steps'], checkpoints: Flow['checkpoints'], criticality: Criticality
 ): Promise<Flow | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
     .from('memory_flows')
-    .insert({ feature_id: featureId, project_id: projectId, name, steps, checkpoints, criticality })
+    .insert({ feature_id: featureId, agent_id: agentId, name, steps, checkpoints, criticality })
     .select()
     .single();
   if (error) { console.error('createFlow error:', error); return null; }
@@ -216,11 +217,11 @@ export async function deleteFlow(flowId: string): Promise<boolean> {
 
 // === Sessions ===
 
-export async function createSession(projectId: string): Promise<string | null> {
+export async function createSession(agentId: string): Promise<string | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
     .from('sessions')
-    .insert({ project_id: projectId })
+    .insert({ agent_id: agentId })
     .select('id')
     .single();
   if (error) { console.error('createSession error:', error); return null; }
@@ -289,13 +290,13 @@ export async function createFinding(finding: Omit<Finding, 'id' | 'created_at'>)
 }
 
 export async function listFindings(
-  projectId: string,
+  agentId: string,
   filters: { type?: FindingType; severity?: Criticality; status?: FindingStatus },
   limit = 50, offset = 0
 ): Promise<{ findings: Finding[]; total: number }> {
   if (!isSupabaseEnabled()) return { findings: [], total: 0 };
 
-  let query = supabase!.from('findings').select('*', { count: 'exact' }).eq('project_id', projectId);
+  let query = supabase!.from('findings').select('*', { count: 'exact' }).eq('agent_id', agentId);
 
   if (filters.type) query = query.eq('type', filters.type);
   if (filters.severity) query = query.eq('severity', filters.severity);
@@ -326,11 +327,11 @@ export async function updateFindingStatus(
 // === Screenshot Upload ===
 
 export async function uploadScreenshot(
-  projectId: string, base64Data: string
+  agentId: string, base64Data: string
 ): Promise<string | null> {
   if (!isSupabaseEnabled()) return null;
   const buffer = Buffer.from(base64Data, 'base64');
-  const filename = `${projectId}/${Date.now()}.png`;
+  const filename = `${agentId}/${Date.now()}.png`;
 
   const { error } = await supabase!.storage
     .from('screenshots')
@@ -344,7 +345,7 @@ export async function uploadScreenshot(
 // === Memory Suggestions ===
 
 export async function createSuggestion(
-  projectId: string,
+  agentId: string,
   type: Suggestion['type'],
   data: Suggestion['data'],
   sessionId: string | null
@@ -359,7 +360,7 @@ export async function createSuggestion(
     const { data: pendingDupes } = await supabase!
       .from('memory_suggestions')
       .select('id, data')
-      .eq('project_id', projectId)
+      .eq('agent_id', agentId)
       .eq('type', type)
       .eq('status', 'pending');
 
@@ -384,14 +385,14 @@ export async function createSuggestion(
 
     // Check for already-accepted entities
     if (type === 'feature') {
-      const existing = await findFeatureByName(projectId, name);
+      const existing = await findFeatureByName(agentId, name);
       if (existing) return null;
     }
 
     if (type === 'flow') {
       // Check if a flow with this name already exists under the parent feature
       const fd = data as FlowSuggestionData;
-      const feature = await findFeatureByName(projectId, fd.feature_name);
+      const feature = await findFeatureByName(agentId, fd.feature_name);
       if (feature) {
         const escaped = fd.name.replace(/%/g, '\\%').replace(/_/g, '\\_');
         const { data: existingFlow } = await supabase!
@@ -407,7 +408,7 @@ export async function createSuggestion(
 
     if (type === 'behavior') {
       const bd = data as BehaviorSuggestionData;
-      const feature = await findFeatureByName(projectId, bd.feature_name);
+      const feature = await findFeatureByName(agentId, bd.feature_name);
       if (feature && feature.expected_behaviors?.includes(bd.behavior)) {
         return null; // Identical behavior already accepted
       }
@@ -418,7 +419,7 @@ export async function createSuggestion(
   const { data: inserted, error } = await supabase!
     .from('memory_suggestions')
     .insert({
-      project_id: projectId,
+      agent_id: agentId,
       type,
       data,
       source_session: sessionId,
@@ -430,24 +431,24 @@ export async function createSuggestion(
   return inserted;
 }
 
-export async function listPendingSuggestions(projectId: string): Promise<Suggestion[]> {
+export async function listPendingSuggestions(agentId: string): Promise<Suggestion[]> {
   if (!isSupabaseEnabled()) return [];
   const { data, error } = await supabase!
     .from('memory_suggestions')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .eq('status', 'pending')
     .order('created_at', { ascending: true });
   if (error) { console.error('listPendingSuggestions error:', error); return []; }
   return data ?? [];
 }
 
-export async function getPendingSuggestionCount(projectId: string): Promise<number> {
+export async function getPendingSuggestionCount(agentId: string): Promise<number> {
   if (!isSupabaseEnabled()) return 0;
   const { count, error } = await supabase!
     .from('memory_suggestions')
     .select('*', { count: 'exact', head: true })
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .eq('status', 'pending');
   if (error) { console.error('getPendingSuggestionCount error:', error); return 0; }
   return count ?? 0;
@@ -464,12 +465,12 @@ export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
 
   if (fetchError || !suggestion) return false;
 
-  const { type, data: suggData, project_id: projectId } = suggestion;
+  const { type, data: suggData, agent_id: agentId } = suggestion;
 
   // Process by type
   if (type === 'feature') {
     const fd = suggData as FeatureSuggestionData;
-    const created = await createFeature(projectId, fd.name, fd.description, fd.criticality, fd.expected_behaviors);
+    const created = await createFeature(agentId, fd.name, fd.description, fd.criticality, fd.expected_behaviors);
 
     // Link feature to nav node if discovery URL is known
     if (created && fd.discovered_at_url) {
@@ -478,7 +479,7 @@ export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
         const { data: node } = await supabase!
           .from('nav_nodes')
           .select('id')
-          .eq('project_id', projectId)
+          .eq('agent_id', agentId)
           .eq('url_pattern', urlPattern)
           .maybeSingle();
 
@@ -498,18 +499,18 @@ export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
     }
   } else if (type === 'flow') {
     const fd = suggData as FlowSuggestionData;
-    let feature = await findFeatureByName(projectId, fd.feature_name);
+    let feature = await findFeatureByName(agentId, fd.feature_name);
     if (!feature) {
-      feature = await createFeature(projectId, fd.feature_name, null, fd.criticality, []);
+      feature = await createFeature(agentId, fd.feature_name, null, fd.criticality, []);
     }
     if (feature) {
-      await createFlow(feature.id, projectId, fd.name, fd.steps, fd.checkpoints, fd.criticality);
+      await createFlow(feature.id, agentId, fd.name, fd.steps, fd.checkpoints, fd.criticality);
     }
   } else if (type === 'behavior') {
     const fd = suggData as BehaviorSuggestionData;
-    let feature = await findFeatureByName(projectId, fd.feature_name);
+    let feature = await findFeatureByName(agentId, fd.feature_name);
     if (!feature) {
-      feature = await createFeature(projectId, fd.feature_name, null, 'medium', []);
+      feature = await createFeature(agentId, fd.feature_name, null, 'medium', []);
     }
     if (feature) {
       await supabase!.rpc('append_expected_behavior', {
@@ -552,9 +553,9 @@ export async function updateSuggestionData(
   return updated;
 }
 
-export async function bulkAcceptSuggestions(projectId: string): Promise<number> {
+export async function bulkAcceptSuggestions(agentId: string): Promise<number> {
   if (!isSupabaseEnabled()) return 0;
-  const pending = await listPendingSuggestions(projectId);
+  const pending = await listPendingSuggestions(agentId);
   if (pending.length === 0) return 0;
 
   // Process in order: features first, then flows, then behaviors
@@ -570,12 +571,12 @@ export async function bulkAcceptSuggestions(projectId: string): Promise<number> 
   return accepted;
 }
 
-export async function bulkDismissSuggestions(projectId: string): Promise<boolean> {
+export async function bulkDismissSuggestions(agentId: string): Promise<boolean> {
   if (!isSupabaseEnabled()) return false;
   const { error } = await supabase!
     .from('memory_suggestions')
     .update({ status: 'dismissed', resolved_at: new Date().toISOString() })
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .eq('status', 'pending');
   return !error;
 }
@@ -594,14 +595,14 @@ export async function createEvalCase(evalCase: Omit<EvalCase, 'id' | 'created_at
 }
 
 export async function listEvalCases(
-  projectId: string,
+  agentId: string,
   filters?: { status?: EvalCase['status']; tags?: string[] }
 ): Promise<EvalCase[]> {
   if (!isSupabaseEnabled()) return [];
   let query = supabase!
     .from('eval_cases')
     .select('*')
-    .eq('project_id', projectId);
+    .eq('agent_id', agentId);
 
   if (filters?.status) query = query.eq('status', filters.status);
   if (filters?.tags && filters.tags.length > 0) query = query.overlaps('tags', filters.tags);
@@ -645,11 +646,11 @@ export async function deleteEvalCase(caseId: string): Promise<boolean> {
 
 // === Eval Runs ===
 
-export async function createEvalRun(projectId: string, trigger: EvalRunTrigger): Promise<EvalRun | null> {
+export async function createEvalRun(agentId: string, trigger: EvalRunTrigger): Promise<EvalRun | null> {
   if (!isSupabaseEnabled()) return null;
   const { data, error } = await supabase!
     .from('eval_runs')
-    .insert({ project_id: projectId, trigger, status: 'running' as EvalRunStatus })
+    .insert({ agent_id: agentId, trigger, status: 'running' as EvalRunStatus })
     .select()
     .single();
   if (error) { console.error('createEvalRun error:', error); return null; }
@@ -667,12 +668,12 @@ export async function getEvalRun(runId: string): Promise<EvalRun | null> {
   return data;
 }
 
-export async function listEvalRuns(projectId: string, limit = 20): Promise<EvalRun[]> {
+export async function listEvalRuns(agentId: string, limit = 20): Promise<EvalRun[]> {
   if (!isSupabaseEnabled()) return [];
   const { data, error } = await supabase!
     .from('eval_runs')
     .select('*')
-    .eq('project_id', projectId)
+    .eq('agent_id', agentId)
     .order('started_at', { ascending: false })
     .limit(limit);
   if (error) { console.error('listEvalRuns error:', error); return []; }
@@ -729,24 +730,71 @@ export async function listEvalResults(runId: string): Promise<EvalResult[]> {
   return data ?? [];
 }
 
-// === Project Eval Schedule ===
+// === Agent Eval Schedule ===
 
-export async function updateProjectEvalSchedule(projectId: string, cronSchedule: string | null): Promise<boolean> {
+export async function updateAgentEvalSchedule(agentId: string, cronSchedule: string | null): Promise<boolean> {
   if (!isSupabaseEnabled()) return false;
   const { error } = await supabase!
-    .from('projects')
+    .from('agents')
     .update({ eval_cron_schedule: cronSchedule, updated_at: new Date().toISOString() })
-    .eq('id', projectId);
-  if (error) { console.error('updateProjectEvalSchedule error:', error); return false; }
+    .eq('id', agentId);
+  if (error) { console.error('updateAgentEvalSchedule error:', error); return false; }
   return true;
 }
 
-export async function getProjectsWithEvalSchedule(): Promise<Project[]> {
+export async function getAgentsWithEvalSchedule(): Promise<Agent[]> {
   if (!isSupabaseEnabled()) return [];
   const { data, error } = await supabase!
-    .from('projects')
+    .from('agents')
     .select('*')
     .not('eval_cron_schedule', 'is', null);
-  if (error) { console.error('getProjectsWithEvalSchedule error:', error); return []; }
+  if (error) { console.error('getAgentsWithEvalSchedule error:', error); return []; }
+  return data ?? [];
+}
+
+// === Tasks ===
+
+export async function createTask(sessionId: string, agentId: string, prompt: string): Promise<string> {
+  const { data, error } = await supabase!
+    .from('tasks')
+    .insert({ session_id: sessionId, agent_id: agentId, prompt, status: 'running', started_at: new Date().toISOString() })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
+export async function updateTask(taskId: string, updates: { status?: string; success?: boolean; error_message?: string; completed_at?: string }): Promise<void> {
+  const { error } = await supabase!.from('tasks').update(updates).eq('id', taskId);
+  if (error) throw error;
+}
+
+export async function getTasksBySession(sessionId: string): Promise<Task[]> {
+  const { data, error } = await supabase!
+    .from('tasks')
+    .select('*')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function createExecutionStep(taskId: string, stepOrder: number, stepType: StepType, fields: { content?: string; target?: string; screenshot_url?: string; duration_ms?: number }): Promise<string> {
+  const { data, error } = await supabase!
+    .from('execution_steps')
+    .insert({ task_id: taskId, step_order: stepOrder, step_type: stepType, ...fields })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
+}
+
+export async function getStepsByTask(taskId: string): Promise<ExecutionStep[]> {
+  const { data, error } = await supabase!
+    .from('execution_steps')
+    .select('*')
+    .eq('task_id', taskId)
+    .order('step_order', { ascending: true });
+  if (error) throw error;
   return data ?? [];
 }
