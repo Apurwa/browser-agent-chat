@@ -229,9 +229,51 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 const PORT = parseInt(process.env.PORT || '3001');
-server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log('WebSocket server ready');
-  // Pre-warm a browser so first agent start is fast
-  browserManager.warmUp().catch(() => {});
+
+async function shutdown(signal: string): Promise<void> {
+  console.log(`[SHUTDOWN] Received ${signal}, shutting down gracefully...`);
+
+  // Stop accepting new connections
+  wss.close();
+
+  // Mark sessions disconnected (browsers survive)
+  await sessionManager.shutdownAll();
+
+  // Close Redis
+  await redisStore.shutdown();
+
+  console.log('[SHUTDOWN] Complete');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+async function startup(): Promise<void> {
+  console.log('[STARTUP] Connecting to Redis...');
+  redisStore.connect();
+
+  console.log('[STARTUP] Cleaning up orphaned warm browsers...');
+  await browserManager.cleanupOrphanedWarm();
+
+  console.log('[STARTUP] Recovering sessions...');
+  await sessionManager.recoverAllSessions();
+
+  console.log('[STARTUP] Starting expiry polling...');
+  redisStore.pollExpiredSessions(sessionManager.handleExpiry);
+
+  console.log('[STARTUP] Warming browser pool...');
+  browserManager.warmUp().catch(err =>
+    console.error('[STARTUP] Warm-up error:', err)
+  );
+
+  server.listen(PORT, () => {
+    console.log(`[STARTUP] Server running on http://localhost:${PORT}`);
+    console.log('[STARTUP] WebSocket server ready');
+  });
+}
+
+startup().catch(err => {
+  console.error('[STARTUP] Fatal error:', err);
+  process.exit(1);
 });
