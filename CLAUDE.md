@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Multi-Agent Coordination (REQUIRED)
+
+Multiple Claude Code sessions work on this project simultaneously. You MUST follow this protocol to avoid conflicts:
+
+### On session start:
+1. **Read all files** in `.claude/agents/` to see what other agents are working on
+2. **Create your agent file** at `.claude/agents/<short-id>.md` using the TEMPLATE.md format
+   - Use a descriptive short-id like `nav-graph`, `vault-ui`, `theme-fix`
+   - List every file you plan to modify
+3. **Check for conflicts** — if another agent is modifying a file you need, coordinate:
+   - If the overlap is minor, note it in your file and proceed carefully
+   - If the overlap is significant, **ask the user** before proceeding
+
+### During work:
+- **Update your agent file** if your scope changes (new files, changed task)
+- **Do not modify files** listed in another agent's file without asking the user first
+- If you need a file another agent owns, add a `Depends on:` entry and tell the user
+
+### On session end:
+- **Delete your agent file** when your work is complete or the session is ending
+- If you can't delete (e.g., context limit), the user will clean up stale files
+
+### Commit discipline:
+- Only commit your own changes — if you see uncommitted changes from another agent, **do not commit them**
+- If you must commit to unblock yourself, use a separate commit with a clear message attributing the other session's work
+
 ## Project Overview
 
 **Browser Agent Chat** - A web-based chat platform where users communicate with an AI browser agent powered by Magnitude. Users see a chat interface alongside a live stream of the browser as the agent performs tasks.
