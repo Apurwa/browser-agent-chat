@@ -237,7 +237,9 @@ export type ServerMessage =
   | { type: 'sessionRestore'; messages: ChatMessage[] }
   | { type: 'metrics'; metrics: StartupMetrics }
   | { type: 'sessionCrashed' }
-  | { type: 'taskInterrupted'; task: string };
+  | { type: 'taskInterrupted'; task: string }
+  | { type: 'evalProgress'; runId: string; completed: number; total: number; latest: { case: string; verdict: string } }
+  | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } };
 
 // === API Request/Response ===
 
@@ -287,6 +289,80 @@ export interface MetricStep {
 export interface StartupMetrics {
   total: number;
   steps: MetricStep[];
+}
+
+// === Eval Framework Types ===
+
+export type CheckType = 'url_matches' | 'element_exists' | 'element_absent' | 'text_contains' | 'page_title' | 'custom_js';
+
+export type Check =
+  | { type: 'url_matches'; pattern: string }
+  | { type: 'element_exists'; selector: string }
+  | { type: 'element_absent'; selector: string }
+  | { type: 'text_contains'; selector: string; text: string }
+  | { type: 'page_title'; pattern: string }
+  | { type: 'custom_js'; script: string; expected: any };
+
+export type EvalCaseSourceType = 'feature' | 'flow' | 'finding' | 'manual';
+export type EvalCaseStatus = 'active' | 'disabled';
+export type EvalRunTrigger = 'manual' | 'scheduled' | 'ci';
+export type EvalRunStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+export type EvalVerdict = 'pass' | 'fail' | 'error';
+
+export type ErrorType =
+  | 'navigation_failure'
+  | 'element_not_found'
+  | 'wrong_element'
+  | 'action_timeout'
+  | 'reasoning_error'
+  | 'hallucination'
+  | 'partial_completion'
+  | 'unexpected_state'
+  | 'tool_misuse';
+
+export interface EvalCase {
+  id: string;
+  project_id: string;
+  name: string;
+  task_prompt: string;
+  source_type: EvalCaseSourceType;
+  source_id: string | null;
+  checks: Check[];
+  llm_judge_criteria: string | null;
+  tags: string[];
+  status: EvalCaseStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvalRun {
+  id: string;
+  project_id: string;
+  trigger: EvalRunTrigger;
+  status: EvalRunStatus;
+  summary: {
+    total?: number;
+    passed?: number;
+    failed?: number;
+    errored?: number;
+    error_breakdown?: Record<string, number>;
+  };
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface EvalResult {
+  id: string;
+  run_id: string;
+  case_id: string;
+  session_id: string | null;
+  verdict: EvalVerdict;
+  code_checks: Record<string, boolean>;
+  llm_judge: { verdict: string; reasoning: string } | null;
+  error_type: ErrorType | null;
+  steps_taken: Array<{ order: number; action: string; target?: string }>;
+  duration_ms: number | null;
+  screenshots: string[];
 }
 
 // === Chat Messages (for session persistence) ===
