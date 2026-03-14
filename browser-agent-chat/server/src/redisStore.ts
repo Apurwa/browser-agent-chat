@@ -111,14 +111,33 @@ export async function freePort(port: number): Promise<void> {
 
 // -- Expiry --
 
+let expiryInterval: ReturnType<typeof setInterval> | null = null;
+
 export function pollExpiredSessions(callback: (projectId: string) => Promise<void>): void {
-  throw new Error('Not implemented');
+  expiryInterval = setInterval(async () => {
+    try {
+      const now = Date.now();
+      const expired = await redis.zrangebyscore('session:expiry', '-inf', now);
+      for (const projectId of expired) {
+        await redis.zrem('session:expiry', projectId);
+        await callback(projectId).catch(err =>
+          console.error(`[EXPIRY] Failed to clean up ${projectId}:`, err)
+        );
+      }
+    } catch (err) {
+      console.error('[EXPIRY] Polling error:', err);
+    }
+  }, 30_000);
 }
 
 export function stopPolling(): void {
-  throw new Error('Not implemented');
+  if (expiryInterval) {
+    clearInterval(expiryInterval);
+    expiryInterval = null;
+  }
 }
 
 export async function shutdown(): Promise<void> {
-  throw new Error('Not implemented');
+  stopPolling();
+  await redis.quit();
 }

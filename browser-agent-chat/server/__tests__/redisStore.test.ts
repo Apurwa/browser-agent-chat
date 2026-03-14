@@ -44,6 +44,9 @@ import {
   getScreenshot,
   allocatePort,
   freePort,
+  pollExpiredSessions,
+  shutdown,
+  refreshTTL,
 } from '../src/redisStore.js';
 
 describe('redisStore — session CRUD', () => {
@@ -183,5 +186,52 @@ describe('redisStore — port allocation', () => {
   it('freePort deletes the port key', async () => {
     await freePort(19300);
     expect(mockRedis.del).toHaveBeenCalledWith('browser:port:19300');
+  });
+});
+
+describe('redisStore — expiry polling', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    connect('redis://localhost:6379');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('pollExpiredSessions calls callback for expired sessions every 30s', async () => {
+    const callback = vi.fn().mockResolvedValue(undefined);
+    mockRedis.zrangebyscore.mockResolvedValueOnce(['proj-expired']);
+    mockRedis.zrem.mockResolvedValueOnce(1);
+
+    pollExpiredSessions(callback);
+
+    // Advance 30 seconds
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(mockRedis.zrangebyscore).toHaveBeenCalledWith(
+      'session:expiry', '-inf', expect.any(Number)
+    );
+    expect(callback).toHaveBeenCalledWith('proj-expired');
+    expect(mockRedis.zrem).toHaveBeenCalledWith('session:expiry', 'proj-expired');
+  });
+
+  it('refreshTTL uses pipeline for atomic TTL refresh', async () => {
+    const pipeline = mockRedis.pipeline();
+    await refreshTTL('proj-1');
+    expect(mockRedis.pipeline).toHaveBeenCalled();
+  });
+});
+
+describe('redisStore — shutdown', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connect('redis://localhost:6379');
+  });
+
+  it('shutdown calls redis.quit()', async () => {
+    await shutdown();
+    expect(mockRedis.quit).toHaveBeenCalled();
   });
 });
