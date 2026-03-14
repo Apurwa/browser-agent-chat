@@ -2349,3 +2349,29 @@ select:focus {
 .input-form input::placeholder {
   color: var(--text-dimmer);
 }
+
+.chat-cred-prompt {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-cred-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+}
+
+.chat-cred-form input {
+  padding: 6px 10px;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+}

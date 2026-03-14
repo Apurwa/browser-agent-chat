@@ -2,19 +2,25 @@ import { useState, useRef, useEffect } from 'react';
 import FindingAlert from './FindingAlert';
 import type { ChatMessage, AgentStatus } from '../types';
 
+const LOGIN_KEYWORDS = ['login', 'sign in', 'sign-in', 'log in', 'authentication', 'username and password', 'credentials'];
+const INTENT_KEYWORDS = ['need', 'require', 'see', 'found', 'ask', 'provide', 'enter'];
+
 interface ChatPanelProps {
   projectId: string;
   messages: ChatMessage[];
   status: AgentStatus;
   currentUrl: string | null;
+  hasCredentials: boolean;
   onStartAgent: () => void;
   onSendTask: (content: string) => void;
   onStopAgent: () => void;
+  onSaveCredentials: (username: string, password: string) => Promise<void>;
 }
 
 export default function ChatPanel({
   projectId: _projectId, messages, status, currentUrl,
-  onStartAgent, onSendTask, onStopAgent,
+  hasCredentials,
+  onStartAgent, onSendTask, onStopAgent, onSaveCredentials,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -23,6 +29,40 @@ export default function ChatPanel({
   const hasShownTip = useRef(false);
   const prevStatus = useRef<AgentStatus>(status);
   const [tipMessage, setTipMessage] = useState<string | null>(null);
+
+  const credentialPromptShown = useRef(false);
+  const [showCredForm, setShowCredForm] = useState(false);
+  const [credUsername, setCredUsername] = useState('');
+  const [credPassword, setCredPassword] = useState('');
+  const [credSaving, setCredSaving] = useState(false);
+  const [credPromptMsgId, setCredPromptMsgId] = useState<string | null>(null);
+
+  // Detect login-related thoughts
+  useEffect(() => {
+    if (credentialPromptShown.current || hasCredentials) return;
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.type !== 'agent') return;
+    const lower = lastMsg.content.toLowerCase();
+    const hasLogin = LOGIN_KEYWORDS.some(k => lower.includes(k));
+    const hasIntent = INTENT_KEYWORDS.some(k => lower.includes(k));
+    if (hasLogin && hasIntent) {
+      credentialPromptShown.current = true;
+      setCredPromptMsgId(lastMsg.id);
+    }
+  }, [messages, hasCredentials]);
+
+  const handleCredSubmit = async () => {
+    if (!credUsername || !credPassword) return;
+    setCredSaving(true);
+    await onSaveCredentials(credUsername, credPassword);
+    setCredSaving(false);
+    setShowCredForm(false);
+    setCredPromptMsgId(null);
+  };
+
+  const handleCredSkip = () => {
+    setCredPromptMsgId(null);
+  };
 
   useEffect(() => {
     if (prevStatus.current === 'working' && status === 'idle' && !hasShownTip.current) {
@@ -66,6 +106,21 @@ export default function ChatPanel({
               <FindingAlert finding={msg.finding} />
             ) : (
               <p>{msg.content}</p>
+            )}
+            {msg.id === credPromptMsgId && !showCredForm && (
+              <div className="chat-cred-prompt">
+                <button className="btn-primary btn-sm" onClick={() => setShowCredForm(true)}>Add credentials</button>
+                <button className="btn-secondary btn-sm" onClick={handleCredSkip}>Skip</button>
+              </div>
+            )}
+            {msg.id === credPromptMsgId && showCredForm && (
+              <div className="chat-cred-form">
+                <input type="text" placeholder="Username / email" value={credUsername} onChange={e => setCredUsername(e.target.value)} />
+                <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} />
+                <button className="btn-primary btn-sm" onClick={handleCredSubmit} disabled={credSaving || !credUsername || !credPassword}>
+                  {credSaving ? 'Saving...' : 'Save & Login'}
+                </button>
+              </div>
             )}
           </div>
         ))}
