@@ -92,28 +92,37 @@ Three new Supabase tables:
 
 #### 1. Explore Mode (Active Discovery)
 
-During `executeExplore`, the agent performs deep extraction:
+**Current state:** `executeExplore` currently does single-page `agent.extract()` only — it does NOT navigate between pages despite `buildExplorePrompt` suggesting multi-page exploration. Phase A changes `executeExplore` to use `agent.act()` for actual multi-page navigation.
 
-1. As the agent navigates between pages, each navigation event creates/updates a `nav_node` and creates a `nav_edge` from the previous page.
-2. On each page, the existing vision-based feature extraction runs as before.
-3. Extracted features go through the suggestion queue (human-gated, unchanged).
-4. When a suggestion is accepted, a `nav_node_features` link is created connecting the feature to the page(s) where it was discovered.
-5. Nodes and edges are **auto-committed** — no suggestion queue. The agent visited the URL; it exists.
+**Modified `executeExplore` behavior:**
+
+1. `executeExplore` uses `agent.act(explorePrompt)` instead of `agent.extract()` to drive actual navigation across pages.
+2. As the agent navigates between pages, each `nav` event creates/updates a `nav_node`. Each `actionDone` → `nav` pair creates a `nav_edge` from the previous page, with the action label from `actionDone`.
+3. After navigating, the existing vision-based feature extraction runs via `agent.extract()` on the current page (same as today, but now happens per-page during exploration).
+4. Extracted features go through the suggestion queue (human-gated, unchanged).
+5. When a suggestion is accepted, a `nav_node_features` link is created connecting the feature to the page(s) where it was discovered.
+6. Nodes and edges are **auto-committed** — no suggestion queue. The agent visited the URL; it exists.
+
+**Action-to-navigation correlation:** Both Explore and Task modes need to correlate `actionDone` events with subsequent `nav` events. The agent maintains a `lastAction: { label: string, selector?: string } | null` buffer. On each `actionDone`, store the action description. On each `nav`, consume `lastAction` as the edge's action label, then reset to null. If `nav` fires with no preceding `actionDone` (e.g., redirect), the edge gets an empty action label.
 
 #### 2. Task Execution (Passive Updates)
 
 During `executeTask`, lightweight graph updates happen as a side effect:
 
-1. On each `nav` event (URL change), normalize the URL and check if a `nav_node` exists.
-2. If not, create the node with `page_title` from the document title. No description or feature extraction.
-3. If the agent navigated from a known previous URL, create a `nav_edge` if one doesn't already exist for this `(from, to, action)` triple.
+1. On each `actionDone` event, store the action description in a `lastAction` buffer (same mechanism as Explore Mode).
+2. On each `nav` event (URL change), normalize the URL and upsert a `nav_node`.
+3. If there was a previous URL, create a `nav_edge` using `lastAction` as the action label (may be empty if no `actionDone` preceded the `nav`). Reset `lastAction` to null.
 4. Update `last_seen_at` on existing nodes.
+
+**Note:** The `nav` event (agent.ts line 138) provides only the URL string. The action label comes from correlating with the most recent `actionDone` event via the `lastAction` buffer. Passive edges may have empty action labels when navigation occurs without a tracked action (e.g., server-side redirects).
 
 This is a **fire-and-forget** write — it should not block or slow down task execution. Errors are logged and swallowed.
 
 ### Read Path
 
-At task start, the navigation graph is serialized alongside existing product knowledge and injected into the agent prompt.
+The navigation graph is serialized alongside existing product knowledge and injected into the agent prompt.
+
+**Current behavior:** `loadMemoryContext()` is called once during `createAgent()` and cached in `session.memoryContext`. This means graph updates during a session won't appear in subsequent task prompts within the same session. Phase A accepts this limitation — the graph is primarily useful across sessions. Phase B may address per-task reloading if needed.
 
 **Serialization format:**
 
@@ -154,7 +163,7 @@ Single module responsible for all graph operations:
 - `upsertNode(projectId, url, title?, description?): Promise<NavNode>` — Create or update a node
 - `upsertEdge(projectId, fromNodeId, toNodeId, actionLabel, selector?): Promise<NavEdge>` — Create or update an edge
 - `linkFeatureToNode(nodeId, featureId): Promise<void>` — Create feature-node association
-- `getGraph(projectId): Promise<NavGraph>` — Load full graph for a project
+- `getGraph(projectId): Promise<NavGraph>` — Load full graph for a project. Queries `nav_nodes` and `nav_edges` by project_id, then queries `nav_node_features` for all returned node IDs to populate the `features` array on each node. Three queries total (not a join, for simplicity).
 - `serializeGraph(graph, options?): string` — Serialize to prompt-friendly text
 - `recordNavigation(projectId, fromUrl, toUrl, action?, selector?): Promise<void>` — High-level helper for passive updates (combines normalize + upsert node + upsert edge)
 
@@ -167,8 +176,8 @@ interface NavNode {
   urlPattern: string;
   pageTitle: string;
   description: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
+  firstSeenAt: string;  // ISO 8601 timestamptz from Supabase
+  lastSeenAt: string;
   features: string[]; // feature IDs
 }
 
@@ -179,7 +188,7 @@ interface NavEdge {
   toNodeId: string;
   actionLabel: string;
   selector: string | null;
-  discoveredAt: number;
+  discoveredAt: string;  // ISO 8601 timestamptz from Supabase
 }
 
 interface NavGraph {
@@ -192,22 +201,28 @@ interface NavGraph {
 
 ### `memory-engine.ts`
 
-- `serializeMemory()` extended to include graph serialization
-- Calls `navGraph.getGraph()` + `navGraph.serializeGraph()` and appends the SITE MAP block after the existing PRODUCT KNOWLEDGE block
+- `loadMemoryContext()` (the async function, not the pure `serializeMemory()`) extended to also load and serialize the nav graph
+- After calling `serializeMemory(features)`, calls `navGraph.getGraph(projectId)` + `navGraph.serializeGraph(graph)` and appends the SITE MAP block after the PRODUCT KNOWLEDGE block
+- `serializeMemory()` remains a pure synchronous function — it is NOT modified
 
 ### `agent.ts`
 
-- **`executeExplore`**: After each navigation action, call `navGraph.recordNavigation()`. When features are extracted, associate them with the current node via `navGraph.linkFeatureToNode()`.
-- **`executeTask`**: Hook into `nav` broadcast events. On URL change, call `navGraph.recordNavigation()` (fire-and-forget).
+- **`executeExplore`**: Rewrite to use `agent.act(explorePrompt)` for actual multi-page navigation (currently only uses `agent.extract()` on the current page). Add `lastAction` buffer. On each `actionDone`, store action description. On each `nav`, call `navGraph.recordNavigation()` with `lastAction`. After navigation completes, run `agent.extract()` per-page for feature extraction. Associate extracted features with the current node via `navGraph.linkFeatureToNode()`.
+- **`executeTask`**: Add `lastAction` buffer (same pattern as Explore). On each `actionDone`, store action description. On each `nav`, call `navGraph.recordNavigation()` with `lastAction` (fire-and-forget). The `lastAction` buffer is local to the event listener closure.
 
 ### `db.ts`
 
-- Add query functions for `nav_nodes`, `nav_edges`, `nav_node_features` tables
-- Add to the `acceptSuggestion` flow: when a feature suggestion is accepted, link it to the node where it was discovered (requires tracking which node the suggestion came from — add `source_nav_node_id` to `memory_suggestions` or to the suggestion data payload)
+- Add query functions for `nav_nodes`, `nav_edges`, `nav_node_features` tables (these are called from `nav-graph.ts`, not directly from agent code)
+- Modify `acceptSuggestion` to create `nav_node_features` link when accepting a feature suggestion that has `discovered_at_url` in its data payload:
+  1. After inserting the feature into `memory_features`, check if `suggestion.data.discovered_at_url` exists
+  2. Normalize the URL via `navGraph.normalizeUrl()`
+  3. Look up the `nav_node` by `(project_id, url_pattern)` — it should exist since the agent visited it
+  4. If found, insert into `nav_node_features(nav_node_id, feature_id)` with `ON CONFLICT DO NOTHING`
+  5. If the node doesn't exist (edge case — data race or URL mismatch), log a warning and skip
 
 ### Suggestion data extension
 
-When the agent discovers a feature during Explore, the suggestion's `data` payload should include the URL where it was found:
+When the agent discovers a feature during Explore, the suggestion's `data` payload includes the URL where it was found. This is the `discovered_at_url` field — stored in the suggestion's JSON `data` column, NOT as a separate database column:
 
 ```typescript
 interface FeatureSuggestionData {
@@ -219,11 +234,11 @@ interface FeatureSuggestionData {
 }
 ```
 
-When the suggestion is accepted, `discovered_at_url` is used to create the `nav_node_features` link.
+When the suggestion is accepted, `discovered_at_url` is normalized and used to look up the `nav_node`, then create the `nav_node_features` link.
 
 ## Migration
 
-New Supabase migration `002_nav_graph.sql`:
+New Supabase migration `003_nav_graph.sql` (next after existing `002_memory_suggestions.sql`):
 
 ```sql
 -- Navigation nodes (pages/routes)
