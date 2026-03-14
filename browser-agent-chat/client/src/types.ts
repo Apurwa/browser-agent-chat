@@ -5,7 +5,7 @@ export type FindingType = 'visual' | 'functional' | 'data' | 'ux';
 export type FindingStatus = 'new' | 'confirmed' | 'dismissed';
 export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected' | 'crashed' | 'interrupted';
 
-export interface ProjectListItem {
+export interface AgentListItem {
   id: string;
   name: string;
   url: string;
@@ -19,7 +19,7 @@ export interface ProjectListItem {
 
 export interface Feature {
   id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   description: string | null;
   criticality: Criticality;
@@ -43,7 +43,7 @@ export interface Checkpoint {
 export interface Flow {
   id: string;
   feature_id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   steps: FlowStep[];
   checkpoints: Checkpoint[];
@@ -54,7 +54,7 @@ export interface Flow {
 
 export interface Finding {
   id: string;
-  project_id: string;
+  agent_id: string;
   session_id: string;
   title: string;
   description: string | null;
@@ -74,7 +74,7 @@ export interface Finding {
 
 export interface Suggestion {
   id: string;
-  project_id: string;
+  agent_id: string;
   type: 'feature' | 'flow' | 'behavior';
   status: 'pending' | 'accepted' | 'dismissed';
   data: FeatureSuggestionData | FlowSuggestionData | BehaviorSuggestionData;
@@ -118,10 +118,10 @@ export interface StartupMetrics {
 // === WebSocket Messages ===
 
 export type ClientMessage =
-  | { type: 'start'; projectId: string; resumeUrl?: string }
-  | { type: 'resume'; projectId: string }
+  | { type: 'start'; agentId: string; resumeUrl?: string }
+  | { type: 'resume'; agentId: string }
   | { type: 'task'; content: string }
-  | { type: 'explore'; projectId: string }
+  | { type: 'explore'; agentId: string }
   | { type: 'stop' }
   | { type: 'ping' };
 

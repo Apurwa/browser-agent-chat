@@ -1,6 +1,6 @@
 export interface EvalCase {
   id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   task_prompt: string;
   source_type: 'feature' | 'flow' | 'finding' | 'manual';
@@ -15,7 +15,7 @@ export interface EvalCase {
 
 export interface EvalRun {
   id: string;
-  project_id: string;
+  agent_id: string;
   trigger: 'manual' | 'scheduled' | 'ci';
   status: 'running' | 'completed' | 'failed' | 'cancelled';
   summary: {
