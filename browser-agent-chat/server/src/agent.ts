@@ -90,6 +90,23 @@ export async function createAgent(
     return null;
   };
 
+  // Declare session before listeners — listeners reference it via closure
+  const session: AgentSession = {
+    agent,
+    connector,
+    sessionId,
+    projectId,
+    memoryContext,
+    stepsHistory,
+    loginDone: Promise.resolve(),
+    lastAction: null,
+    currentUrl: currentPageUrl,
+    close: async () => {
+      agent.events.removeAllListeners();
+      agent.browserAgentEvents.removeAllListeners();
+    }
+  };
+
   // Listen for agent thoughts — parse for findings and memory updates
   agent.events.on('thought', async (thought: string) => {
     broadcast({ type: 'thought', content: thought });
@@ -162,6 +179,7 @@ export async function createAgent(
       recordNavigation(projectId, previousUrl, navUrl, action, selector).catch(() => {});
     }
     previousUrl = navUrl;
+    session.currentUrl = navUrl;
   });
 
   // Send initial screenshot
@@ -184,21 +202,7 @@ export async function createAgent(
   broadcast({ type: 'status', status: 'idle' });
   broadcast({ type: 'nav', url: currentPageUrl });
 
-  return {
-    agent,
-    connector,
-    sessionId,
-    projectId,
-    memoryContext,
-    stepsHistory,
-    loginDone: Promise.resolve(),
-    lastAction: null,
-    currentUrl: currentPageUrl,
-    close: async () => {
-      agent.events.removeAllListeners();
-      agent.browserAgentEvents.removeAllListeners();
-    }
-  };
+  return session;
 }
 
 export async function executeLogin(
