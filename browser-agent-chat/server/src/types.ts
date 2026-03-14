@@ -1,6 +1,6 @@
 // === Database Models ===
 
-export interface Project {
+export interface Agent {
   id: string;
   user_id: string;
   name: string;
@@ -24,7 +24,7 @@ export interface PlaintextCredentials {
 
 export interface Feature {
   id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   description: string | null;
   criticality: Criticality;
@@ -37,7 +37,7 @@ export interface Feature {
 export interface Flow {
   id: string;
   feature_id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   steps: FlowStep[];
   checkpoints: Checkpoint[];
@@ -59,7 +59,7 @@ export interface Checkpoint {
 
 export interface Finding {
   id: string;
-  project_id: string;
+  agent_id: string;
   session_id: string;
   title: string;
   description: string | null;
@@ -83,7 +83,7 @@ export interface ReproStep {
 
 export interface Session {
   id: string;
-  project_id: string;
+  agent_id: string;
   started_at: string;
   ended_at: string | null;
   findings_count: number;
@@ -126,7 +126,7 @@ export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed'
 
 export interface NavNode {
   id: string;
-  projectId: string;
+  agentId: string;
   urlPattern: string;
   pageTitle: string;
   description: string;
@@ -137,7 +137,7 @@ export interface NavNode {
 
 export interface NavEdge {
   id: string;
-  projectId: string;
+  agentId: string;
   fromNodeId: string;
   toNodeId: string;
   actionLabel: string;
@@ -155,7 +155,7 @@ export interface NavGraph {
 
 export interface LearnedPattern {
   id: string;
-  project_id: string;
+  agent_id: string;
   pattern_type: 'login' | 'navigation';
   trigger: LoginTrigger;
   steps: PlaywrightStep[];
@@ -183,7 +183,7 @@ export interface PlaywrightStep {
 
 export interface Suggestion {
   id: string;
-  project_id: string;
+  agent_id: string;
   type: 'feature' | 'flow' | 'behavior';
   status: 'pending' | 'accepted' | 'dismissed';
   data: FeatureSuggestionData | FlowSuggestionData | BehaviorSuggestionData;
@@ -216,10 +216,10 @@ export interface BehaviorSuggestionData {
 // === WebSocket Messages ===
 
 export type ClientMessage =
-  | { type: 'start'; projectId: string; resumeUrl?: string }
-  | { type: 'resume'; projectId: string }
+  | { type: 'start'; agentId: string; resumeUrl?: string }
+  | { type: 'resume'; agentId: string }
   | { type: 'task'; content: string }
-  | { type: 'explore'; projectId: string }
+  | { type: 'explore'; agentId: string }
   | { type: 'stop' }
   | { type: 'ping' };
 
@@ -230,7 +230,8 @@ export type ServerMessage =
   | { type: 'status'; status: AgentStatus }
   | { type: 'nav'; url: string }
   | { type: 'error'; message: string }
-  | { type: 'taskComplete'; success: boolean }
+  | { type: 'taskStarted'; taskId: string }
+  | { type: 'taskComplete'; success: boolean; taskId: string }
   | { type: 'finding'; finding: Finding }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
@@ -243,14 +244,14 @@ export type ServerMessage =
 
 // === API Request/Response ===
 
-export interface CreateProjectRequest {
+export interface CreateAgentRequest {
   name: string;
   url: string;
   credentials?: PlaintextCredentials;
   context?: string;
 }
 
-export interface ProjectResponse {
+export interface AgentResponse {
   id: string;
   name: string;
   url: string;
@@ -260,7 +261,7 @@ export interface ProjectResponse {
   updated_at: string;
 }
 
-export interface ProjectListItem extends ProjectResponse {
+export interface AgentListItem extends AgentResponse {
   findings_count: number;
   last_session_at: string | null;
 }
@@ -322,7 +323,7 @@ export type ErrorType =
 
 export interface EvalCase {
   id: string;
-  project_id: string;
+  agent_id: string;
   name: string;
   task_prompt: string;
   source_type: EvalCaseSourceType;
@@ -337,7 +338,7 @@ export interface EvalCase {
 
 export interface EvalRun {
   id: string;
-  project_id: string;
+  agent_id: string;
   trigger: EvalRunTrigger;
   status: EvalRunStatus;
   summary: {
@@ -372,4 +373,31 @@ export interface ChatMessage {
   type: 'user' | 'agent' | 'system' | 'finding';
   content: string;
   timestamp: number;
+}
+
+export interface Task {
+  id: string;
+  session_id: string;
+  agent_id: string;
+  prompt: string;
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  success: boolean | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export type StepType = 'thought' | 'action' | 'screenshot' | 'navigation' | 'finding' | 'error';
+
+export interface ExecutionStep {
+  id: string;
+  task_id: string;
+  step_order: number;
+  step_type: StepType;
+  content: string | null;
+  target: string | null;
+  screenshot_url: string | null;
+  duration_ms: number | null;
+  created_at: string;
 }
