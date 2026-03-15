@@ -120,7 +120,7 @@ export default function TestingView() {
               />
             </div>
           ) : (
-            <AppMap projectId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
+            <AppMap agentId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
           )}
         </div>
       </div>

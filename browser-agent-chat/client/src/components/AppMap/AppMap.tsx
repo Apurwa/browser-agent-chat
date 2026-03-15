@@ -120,13 +120,13 @@ function layoutEdges(mapEdges: MapEdge[], mapNodes: MapNode[]): Edge[] {
 }
 
 interface AppMapProps {
-  projectId: string;
+  agentId: string;
   onSendTask: (task: string) => void;
   onExplore?: () => void;
 }
 
-export default function AppMap({ projectId, onSendTask, onExplore }: AppMapProps) {
-  const { nodes: mapNodes, edges: mapEdges, unlinkedSuggestions, loading, error, refresh } = useAppMap(projectId);
+export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) {
+  const { nodes: mapNodes, edges: mapEdges, unlinkedSuggestions, loading, error, refresh } = useAppMap(agentId);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const initialNodes = useMemo(() => layoutNodes(mapNodes, mapEdges), [mapNodes, mapEdges]);
@@ -214,7 +214,7 @@ export default function AppMap({ projectId, onSendTask, onExplore }: AppMapProps
       <DetailPanel
         selectedNode={selectedNode}
         unlinkedSuggestions={unlinkedSuggestions}
-        projectId={projectId}
+        agentId={agentId}
         onRefresh={refresh}
         onSendTask={onSendTask}
         onSelectNode={handleSelectNode}

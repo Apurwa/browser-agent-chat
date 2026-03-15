@@ -36,7 +36,7 @@ export interface MapSuggestion {
   type: string;
   status: string;
   data: Record<string, unknown>;
-  project_id: string;
+  agent_id: string;
   source_session: string | null;
   created_at: string;
   resolved_at: string | null;
@@ -69,7 +69,7 @@ interface AppMapData {
   refresh: () => void;
 }
 
-export function useAppMap(projectId: string): AppMapData {
+export function useAppMap(agentId: string): AppMapData {
   const { getAccessToken } = useAuth();
   const ws = useWS();
   const [nodes, setNodes] = useState<MapNode[]>([]);
@@ -83,7 +83,7 @@ export function useAppMap(projectId: string): AppMapData {
   const fetchMap = useCallback(async () => {
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/agents/${projectId}/map`, token);
+      const res = await apiAuthFetch(`/api/agents/${agentId}/map`, token);
       if (!res.ok) throw new Error('Failed to load map');
       const data = await res.json();
 
@@ -103,7 +103,7 @@ export function useAppMap(projectId: string): AppMapData {
     } finally {
       setLoading(false);
     }
-  }, [projectId, getAccessToken]);
+  }, [agentId, getAccessToken]);
 
   // Initial fetch
   useEffect(() => {

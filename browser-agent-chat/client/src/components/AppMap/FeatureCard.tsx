@@ -9,7 +9,7 @@ const CRITICALITY_COLORS: Record<string, string> = {
 
 interface FeatureCardProps {
   feature: MapFeature;
-  projectId: string;
+  agentId: string;
   pageTitle: string;
   urlPattern: string;
   onSendTask: (task: string) => void;
@@ -17,7 +17,7 @@ interface FeatureCardProps {
 }
 
 export default function FeatureCard({
-  feature, projectId, pageTitle, urlPattern, onSendTask, onRefresh,
+  feature, agentId, pageTitle, urlPattern, onSendTask, onRefresh,
 }: FeatureCardProps) {
   const { getAccessToken } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -34,7 +34,7 @@ export default function FeatureCard({
     if (!confirmDelete) { setConfirmDelete(true); return; }
     try {
       const token = await getAccessToken();
-      await apiAuthFetch(`/api/agents/${projectId}/memory/features/${feature.id}`, token, {
+      await apiAuthFetch(`/api/agents/${agentId}/memory/features/${feature.id}`, token, {
         method: 'DELETE',
       });
       onRefresh();

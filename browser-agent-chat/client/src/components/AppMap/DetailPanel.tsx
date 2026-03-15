@@ -6,7 +6,7 @@ import type { MapNode, MapEdge } from './useAppMap';
 interface DetailPanelProps {
   selectedNode: MapNode | null;
   unlinkedSuggestions: MapNode['pendingSuggestions'];
-  projectId: string;
+  agentId: string;
   onRefresh: () => void;
   onSendTask: (task: string) => void;
   onSelectNode: (nodeId: string) => void;
@@ -15,7 +15,7 @@ interface DetailPanelProps {
 }
 
 export default function DetailPanel({
-  selectedNode, unlinkedSuggestions, projectId,
+  selectedNode, unlinkedSuggestions, agentId,
   onRefresh, onSendTask, onSelectNode, edges, nodes,
 }: DetailPanelProps) {
   const { getAccessToken } = useAuth();
@@ -23,7 +23,7 @@ export default function DetailPanel({
   const handleAccept = async (suggestionId: string) => {
     try {
       const token = await getAccessToken();
-      await apiAuthFetch(`/api/agents/${projectId}/suggestions/${suggestionId}/accept`, token, {
+      await apiAuthFetch(`/api/agents/${agentId}/suggestions/${suggestionId}/accept`, token, {
         method: 'PUT',
       });
       onRefresh();
@@ -35,7 +35,7 @@ export default function DetailPanel({
   const handleDismiss = async (suggestionId: string) => {
     try {
       const token = await getAccessToken();
-      await apiAuthFetch(`/api/agents/${projectId}/suggestions/${suggestionId}/dismiss`, token, {
+      await apiAuthFetch(`/api/agents/${agentId}/suggestions/${suggestionId}/dismiss`, token, {
         method: 'PUT',
       });
       onRefresh();
@@ -105,7 +105,7 @@ export default function DetailPanel({
             <FeatureCard
               key={f.id}
               feature={f}
-              projectId={projectId}
+              agentId={agentId}
               pageTitle={selectedNode.pageTitle}
               urlPattern={selectedNode.urlPattern}
               onSendTask={onSendTask}
