@@ -85,6 +85,15 @@ const clientUserIds = new Map<WebSocket, string>();
 
 // Track active tasks per agent
 const activeTasks = new Map<string, { taskId: string; stepCount: number; startedAt: number; prompt: string }>();
+const STEP_EVENT_TYPES = new Set(['thought', 'action', 'screenshot', 'nav']);
+
+// Count broadcast events during active tasks
+sessionManager.onBroadcast((agentId, msg) => {
+  if (STEP_EVENT_TYPES.has(msg.type)) {
+    const activeTask = activeTasks.get(agentId);
+    if (activeTask) activeTask.stepCount++;
+  }
+});
 
 // Broadcast a ServerMessage to all WebSocket clients connected to an agent.
 // Used by eval routes and any future server-initiated push.
@@ -227,12 +236,6 @@ wss.on('connection', (ws: WebSocket) => {
 
       const baseBroadcast = sessionManager.makeBroadcast(agentId);
       const taskBroadcast = (broadcastMsg: ServerMessage) => {
-        // Count steps for all agent events (thought, action, screenshot, nav)
-        const activeTask = activeTasks.get(agentId);
-        if (activeTask && broadcastMsg.type !== 'taskComplete' && broadcastMsg.type !== 'status') {
-          activeTask.stepCount++;
-        }
-
         // Intercept taskComplete to update task record and enrich with metadata
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);

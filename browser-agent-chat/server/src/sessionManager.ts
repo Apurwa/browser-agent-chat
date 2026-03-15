@@ -74,8 +74,15 @@ function serverMsgToChatMessage(msg: ServerMessage): ChatMessage | null {
 
 // -- Broadcast with Redis write-through --
 
+// Optional broadcast listener — called for every broadcast event
+let broadcastListener: ((agentId: string, msg: ServerMessage) => void) | null = null;
+export function onBroadcast(listener: (agentId: string, msg: ServerMessage) => void): void {
+  broadcastListener = listener;
+}
+
 export function makeBroadcast(agentId: string): (msg: ServerMessage) => void {
   return (msg: ServerMessage) => {
+    broadcastListener?.(agentId, msg);
     // Write-through to Redis
     if (msg.type === 'screenshot') {
       redisStore.setScreenshot(agentId, msg.data).catch(() => {});
