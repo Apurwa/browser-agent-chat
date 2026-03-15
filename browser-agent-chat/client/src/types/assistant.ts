@@ -26,3 +26,35 @@ export const DEFAULT_AVATAR_CONFIG: AvatarConfig = {
 };
 
 export const ASSISTANT_GREETING = "Hi! I'm Alex, your browser assistant. What would you like me to help you with today?";
+
+// --- Credential Vault Types ---
+
+export interface VaultEntry {
+  id: string;
+  user_id: string;
+  label: string;
+  credential_type: string;
+  metadata: { username?: string; notes?: string };
+  domains: string[];
+  scope: string;
+  version: number;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_by_agent: string | null;
+  created_by_agent: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoundCredential extends VaultEntry {
+  usage_context: string | null;
+  priority: number;
+  binding_id: string;
+}
+
+export interface CredentialNeededEvent {
+  type: 'credential_needed';
+  agentId: string;
+  domain: string;
+  strategy: string;
+}
