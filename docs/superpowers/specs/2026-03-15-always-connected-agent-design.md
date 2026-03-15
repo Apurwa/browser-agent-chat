@@ -36,10 +36,12 @@ Remove:
 - "Start Agent" button (the blue button shown when disconnected)
 - The `onStopAgent` and `onStartAgent` props
 
-Chat input is **always enabled** when on the testing page. The only states the user sees:
+Chat input behavior by status:
 - `idle` — Ready for input. Show cursor in chat box.
-- `working` — Agent is executing. Input still enabled (task queued).
-- Transient "Reconnecting..." indicator if WS drops (auto-resolves via reconnect).
+- `working` — Agent is executing. Input still enabled (task queued server-side).
+- `disconnected` (WS drop) — Input enabled, tasks queued locally. Show inline "Reconnecting..." indicator below the chat input (small text, not a toast or banner). Auto-clears on reconnect; queued tasks sent automatically.
+- `crashed` / `error` — Input disabled. Show inline error with "Restart Agent" link that sends `{ type: 'restart' }`.
+- `session_evicted` — Input disabled. Show toast with "Click to reconnect" (see WebSocketContext section).
 
 Add a "Restart Agent" option in the agent's Settings page (`AgentSettings.tsx`) for edge cases (frozen browser). Not in the main chat UI.
 
@@ -52,9 +54,11 @@ Remove:
 
 `startAgent(agentId)` becomes the single entry point:
 1. Clear state if switching agents (messages, screenshot, currentUrl)
-2. Set `status: 'working'` (optimistic — shows loading state)
-3. Send `{ type: 'start', agentId, resumeUrl }` to server
-4. Server responds with snapshot or creates new session
+2. If this is a fresh start (not a reconnect): set `status: 'working'` (optimistic — shows loading state)
+   If this is a reconnect (WS just re-established): do NOT change status — keep current status to avoid UI flicker. The server response (`snapshot` or `status: 'idle'`) will set the correct status.
+   Implementation: add `isReconnect` boolean parameter to `startAgent()`, default `false`. The auto-reconnect handler passes `true`.
+3. Send `{ type: 'start', agentId }` to server (no `resumeUrl` — server has the current URL in session)
+4. Server responds with `snapshot` (reattach) or `session_new` + `status: 'idle'` (new session)
 
 On WS reconnect (existing 3s backoff auto-reconnect):
 - If `activeAgentRef.current` is set, auto-send `{ type: 'start', agentId }` to re-establish session (do NOT send `resumeUrl` — the server has the current URL in the session; sending a stale client-side URL would be wrong)
@@ -75,15 +79,18 @@ Handle new server messages:
 Merge the current separate `start` and `resume` message handlers into one:
 
 ```
-On { type: 'start', agentId, resumeUrl? }:
+On { type: 'start', agentId }:
   1. Check Redis for existing session for this agentId
      → If found AND browser alive: reattach WS client, send snapshot, done
      → If found but browser dead: clean up stale session, fall through to create
-  2. Check concurrent browser count
-     → If at MAX_CONCURRENT_BROWSERS cap: evict LRU session (see below)
+  2. await ensureCapacity() — uses agents Map size (local, in-process) for the count
+     (agents Map tracks all sessions with live agent objects; this is accurate because
+     we always clean up the Map entry in destroySession. Redis is the crash-recovery
+     fallback, not the primary count source.)
   3. Create new session (browser + agent)
-  4. Send status: 'idle' to client
-  5. Run login detection (async, non-blocking)
+  4. Send { type: 'session_new', agentId } to client (signals fresh session, not reattach)
+  5. Send status: 'idle' to client
+  6. Run login detection (async, non-blocking)
 ```
 
 Remove the separate `msg.type === 'resume'` handler entirely.
@@ -91,8 +98,13 @@ Remove the separate `msg.type === 'resume'` handler entirely.
 Remove the `msg.type === 'stop'` handler. Add `msg.type === 'restart'`:
 ```
 On { type: 'restart', agentId }:
-  1. destroySession(agentId)
-  2. Create new session (same as start flow step 2-5)
+  1. Cancel active task if running (check activeTasks Map, call agent.stop(),
+     update task DB record to 'cancelled', remove from activeTasks Map)
+  2. destroySession(agentId)
+  3. await ensureCapacity() — restart freed a slot, but check anyway for safety
+  4. Create new session (browser + agent)
+  5. Send { type: 'session_new', agentId } + status: 'idle' to client
+  6. Run login detection (async, non-blocking)
 ```
 
 #### LRU Eviction (sessionManager.ts)
@@ -101,15 +113,20 @@ New function `evictLRUSession()`:
 
 ```
 evictLRUSession():
-  1. Get all active sessions from local sessions Map
+  1. Get all active sessions from local `agents` Map (keyed by agentId → AgentSession)
   2. Sort by lastActivityAt ascending (oldest first)
-  3. Prefer evicting sessions with NO attached WS client
-     - Find oldest detached session → notify evicted client (see below) → destroy it → return
+  3. Prefer evicting sessions with NO attached WS client (wsClients.get(agentId)?.size === 0)
+     - Find oldest detached session → destroy it → return
+     - (No notification needed — user already navigated away. Store eviction in Redis so
+       on reconnect, the start handler can inform the client: "Previous session was reclaimed.")
   4. If all sessions have clients, evict the oldest overall
-     - Notify evicted client → destroy it → return
+     - Send { type: 'session_evicted', agentId, reason: 'capacity' } to attached client FIRST
+     - Then destroy it → return
 ```
 
-**Eviction notification:** Before destroying a session that has an attached WS client, send `{ type: 'session_evicted', agentId, reason: 'capacity' }` to the client. The client displays a toast: "Session ended — another agent needed the slot. Click to reconnect." Clicking re-triggers `startAgent(agentId)`.
+**Eviction of active sessions:** Before destroying a session that has an attached WS client, send `{ type: 'session_evicted', agentId, reason: 'capacity' }` to the client. The client displays a toast: "Session ended — another agent needed the slot. Click to reconnect." Clicking re-triggers `startAgent(agentId)`.
+
+**Eviction of detached sessions:** No WS client to notify. Optionally store `evictedAt` + `evictionReason` in Redis (short TTL, e.g. 5 min) so that if the user returns and triggers a new `start`, the server can include the eviction context in the response.
 
 New function `ensureCapacity()`:
 ```
@@ -118,7 +135,7 @@ async ensureCapacity():
   // to prevent concurrent startAgent calls from both evicting
   await acquireLock('capacity')
   try:
-    count = sessions.size
+    count = agents.size
     while count >= MAX_CONCURRENT_BROWSERS:
       evictLRUSession()
       count--
@@ -152,7 +169,11 @@ Replace the current flat `SESSION_TTL_SECONDS` (10 min) with:
 - No idle timeout. Heartbeat pings (every 30s) update `lastActivityAt` for LRU ordering but do NOT affect timeouts.
 - The absolute 30-min cap still applies.
 
-**Redis `detachedAt` field:** Add `detachedAt: number | null` to the `RedisSession` type in `redisStore.ts`. Set to `Date.now()` when last client detaches, cleared to `null` when a client reattaches.
+**Redis `detachedAt` field:** Add `detachedAt: number` to the `RedisSession` type in `redisStore.ts`. Use `0` as the sentinel for "not detached" (avoids `null` → `"null"` serialization issue with `String(null)` in `setSession()`). Set to `Date.now()` when last client detaches, reset to `0` when a client reattaches. In `getSession()`, parse with `parseInt(val, 10) || 0`.
+
+**Redis key TTL strategy:** Replace `SESSION_TTL_SECONDS` with a safety-net TTL of `ABSOLUTE_TIMEOUT_SECONDS + 300` (35 min). This ensures Redis keys are cleaned up even if the server crashes between session creation and absolute timeout. The local `setTimeout` is the primary timeout mechanism; Redis TTL is the crash-recovery fallback.
+
+**Split `refreshTTL()`:** Rename the current `refreshTTL()` to `resetSessionTTL()` (only called on session creation). Add a new `updateLastActivity(agentId)` that ONLY updates `lastActivityAt` in Redis (for LRU ordering) without resetting the key TTL or expiry sorted set. Heartbeat pings call `updateLastActivity()`, not `resetSessionTTL()`.
 
 Remove `SESSION_TTL_SECONDS` env var. Add:
 - `DETACHED_TIMEOUT_SECONDS` (default 120)
@@ -216,4 +237,4 @@ Frozen browser (edge case)
 - Magnitude agent lifecycle (unchanged)
 - Login detection flow (unchanged)
 - WebSocket heartbeat/reconnect (leveraging existing)
-- `explore()` flow — currently creates its own agent/browser internally. This is compatible with always-connected because `explore()` manages its own lifecycle independent of user sessions. No changes needed.
+- `explore()` flow — requires an active session (`sessionManager.getAgent(agentId)` must exist) and uses `sessionManager.makeBroadcast()`. Since always-connected ensures the session is already active when the user sends an explore command, no changes needed. The `explore()` function's start-then-explore two-step flow (in WebSocketContext) works because `startAgent()` is called on mount before any explore is possible.
