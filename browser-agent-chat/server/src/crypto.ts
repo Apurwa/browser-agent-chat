@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import type { EncryptedCredentials, PlaintextCredentials } from './types.js';
+import type { EncryptedCredentials, PlaintextCredentials, PlaintextSecret } from './types.js';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
@@ -39,4 +39,22 @@ export function decryptCredentials(data: EncryptedCredentials): PlaintextCredent
   decrypted += decipher.final('utf8');
 
   return JSON.parse(decrypted);
+}
+
+export function encryptSecret(secret: PlaintextSecret): EncryptedCredentials {
+  const json = JSON.stringify(secret);
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, getKey(), iv);
+  let encrypted = cipher.update(json, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const tag = cipher.getAuthTag().toString('hex');
+  return { iv: iv.toString('hex'), encrypted, tag };
+}
+
+export function decryptSecret(data: EncryptedCredentials): PlaintextSecret {
+  const decipher = createDecipheriv(ALGORITHM, getKey(), Buffer.from(data.iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(data.tag, 'hex'));
+  let decrypted = decipher.update(data.encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return JSON.parse(decrypted) as PlaintextSecret;
 }
