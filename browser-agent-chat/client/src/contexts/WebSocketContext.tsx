@@ -265,8 +265,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const explore = useCallback((agentId: string) => {
     setStatus('working');
+    addMessage('system', 'Explore & Learn started...');
     send({ type: 'explore', agentId });
-  }, [send]);
+  }, [send, addMessage]);
 
   const resetSuggestionCount = useCallback(() => {
     setPendingSuggestionCount(0);
