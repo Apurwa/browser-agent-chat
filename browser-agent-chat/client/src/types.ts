@@ -123,7 +123,8 @@ export type ClientMessage =
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'credential_provided'; credentialId: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -139,7 +140,8 @@ export type ServerMessage =
   | { type: 'sessionRestore'; messages: ChatMessage[] }
   | { type: 'metrics'; metrics: StartupMetrics }
   | { type: 'sessionCrashed' }
-  | { type: 'taskInterrupted'; task: string };
+  | { type: 'taskInterrupted'; task: string }
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === Chat ===
 

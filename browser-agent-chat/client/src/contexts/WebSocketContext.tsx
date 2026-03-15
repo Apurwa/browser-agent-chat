@@ -21,6 +21,8 @@ interface WebSocketState {
   explore: (agentId: string) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
+  pendingCredentialRequest: { agentId: string; domain: string; strategy: string } | null;
+  sendCredentialProvided: (credentialId: string) => void;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -44,6 +46,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
+  const [pendingCredentialRequest, setPendingCredentialRequest] = useState<{ agentId: string; domain: string; strategy: string } | null>(null);
 
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
@@ -150,6 +153,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         }]);
         // Status stays as-is (likely 'idle' from the recovered session snapshot)
         break;
+      case 'credential_needed': {
+        const m = msg as { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
+        setPendingCredentialRequest({ agentId: m.agentId, domain: m.domain, strategy: m.strategy });
+        break;
+      }
     }
   }, [addMessage]);
 
@@ -276,6 +284,13 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     setPendingSuggestionCount(c => Math.max(0, c - 1));
   }, []);
 
+  const sendCredentialProvided = useCallback((credentialId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'credential_provided', credentialId }));
+    }
+    setPendingCredentialRequest(null);
+  }, []);
+
   const value: WebSocketState = {
     connected,
     status,
@@ -293,6 +308,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     explore,
     resetSuggestionCount,
     decrementSuggestionCount,
+    pendingCredentialRequest,
+    sendCredentialProvided,
   };
 
   return (
