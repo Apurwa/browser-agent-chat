@@ -14,11 +14,14 @@ interface WebSocketState {
   findingsCount: number;
   pendingSuggestionCount: number;
   activeAgentId: string | null;
+  activeTaskId: string | null;
+  lastCompletedTask: { taskId: string; success: boolean; stepCount: number; durationMs: number } | null;
   startAgent: (agentId: string) => void;
   resumeSession: (agentId: string) => void;
   sendTask: (content: string) => void;
   stopAgent: () => void;
   explore: (agentId: string) => void;
+  sendFeedback: (taskId: string, rating: 'positive' | 'negative', correction?: string) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
 }
@@ -44,6 +47,13 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
   const [pendingSuggestionCount, setPendingSuggestionCount] = useState(0);
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [lastCompletedTask, setLastCompletedTask] = useState<{
+    taskId: string;
+    success: boolean;
+    stepCount: number;
+    durationMs: number;
+  } | null>(null);
 
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
@@ -94,9 +104,18 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       case 'error':
         addMessage('system', `Error: ${(msg as any).message}`);
         break;
-      case 'taskComplete':
-        addMessage('system', (msg as any).success ? 'Task completed.' : 'Task failed.');
+      case 'taskStarted':
+        setActiveTaskId((msg as any).taskId);
         break;
+      case 'taskComplete': {
+        const taskId = (msg as any).taskId ?? activeTaskId ?? '';
+        const stepCount = (msg as any).stepCount ?? 0;
+        const durationMs = (msg as any).durationMs ?? 0;
+        setLastCompletedTask({ taskId, success: (msg as any).success, stepCount, durationMs });
+        setActiveTaskId(null);
+        // Don't add system message here — TaskCompletionCard handles display
+        break;
+      }
       case 'finding': {
         const finding = (msg as any).finding as Finding;
         setFindings(prev => [...prev, finding]);
@@ -268,6 +287,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     send({ type: 'explore', agentId });
   }, [send]);
 
+  const sendFeedback = useCallback((taskId: string, rating: 'positive' | 'negative', correction?: string) => {
+    send({ type: 'taskFeedback', task_id: taskId, rating, correction });
+    setLastCompletedTask(null);
+  }, [send]);
+
   const resetSuggestionCount = useCallback(() => {
     setPendingSuggestionCount(0);
   }, []);
@@ -286,11 +310,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     findingsCount: findings.length,
     pendingSuggestionCount,
     activeAgentId,
+    activeTaskId,
+    lastCompletedTask,
     startAgent,
     resumeSession,
     sendTask,
     stopAgent,
     explore,
+    sendFeedback,
     resetSuggestionCount,
     decrementSuggestionCount,
   };
