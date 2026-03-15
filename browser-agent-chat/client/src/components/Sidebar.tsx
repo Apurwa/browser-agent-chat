@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useTheme } from '../contexts/ThemeContext';
 import { useWS } from '../contexts/WebSocketContext';
+import { useHealth } from '../contexts/HealthContext';
 import {
   FlaskConical,
   Bug,
@@ -12,6 +13,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Activity,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +27,7 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
   const { id } = useParams();
   const { theme, toggleTheme } = useTheme();
   const { pendingSuggestionCount } = useWS();
+  const { langfuseEnabled } = useHealth();
   const [expanded, setExpanded] = useState(() => {
     try { return localStorage.getItem('sidebar-expanded') === 'true'; } catch { return false; }
   });
@@ -84,6 +87,16 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
         <ClipboardCheck size={18} />
         {expanded && <span className="sidebar-label">Evals</span>}
       </button>
+
+      {langfuseEnabled && (
+        <button
+          className={`sidebar-item${isActive('traces') ? ' active' : ''}${disabled ? ' disabled' : ''}`}
+          onClick={() => navTo('traces')}
+        >
+          <Activity size={18} />
+          {expanded && <span className="sidebar-label">Traces</span>}
+        </button>
+      )}
 
       <div className="sidebar-spacer" />
 

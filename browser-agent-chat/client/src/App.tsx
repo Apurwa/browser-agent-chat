@@ -9,6 +9,15 @@ import FindingsDashboard from './components/FindingsDashboard';
 import MemoryViewer from './components/MemoryViewer';
 import AgentSettings from './components/AgentSettings';
 import EvalDashboard from './components/EvalDashboard';
+import ObservabilityPanel from './components/ObservabilityPanel';
+import { useHealth } from './contexts/HealthContext';
+
+function TracesGuard() {
+  const { langfuseEnabled, loading } = useHealth();
+  if (loading) return <div className="loading-screen">Loading...</div>;
+  if (!langfuseEnabled) return <Navigate to="testing" replace />;
+  return <ObservabilityPanel />;
+}
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -27,6 +36,7 @@ export default function App() {
         <Route path="/agents/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
         <Route path="/agents/:id/settings" element={<ProtectedRoute><AgentSettings /></ProtectedRoute>} />
         <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
+        <Route path="/agents/:id/traces" element={<ProtectedRoute><TracesGuard /></ProtectedRoute>} />
         <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
         <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
       </Routes>
