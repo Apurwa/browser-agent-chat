@@ -322,6 +322,7 @@ export interface FlowSuggestionData {
   steps: FlowStep[];
   checkpoints: Checkpoint[];
   criticality: Criticality;
+  discovered_at_url?: string;
 }
 
 export interface BehaviorSuggestionData {

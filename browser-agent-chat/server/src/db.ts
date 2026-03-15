@@ -507,6 +507,30 @@ export async function acceptSuggestion(suggestionId: string): Promise<boolean> {
     }
     if (feature) {
       await createFlow(feature.id, agentId, fd.name, fd.steps, fd.checkpoints, fd.criticality);
+
+      // Link feature to nav node if discovery URL is known
+      if (fd.discovered_at_url) {
+        try {
+          const urlPattern = normalizeUrl(fd.discovered_at_url);
+          const { data: node } = await supabase!
+            .from('nav_nodes')
+            .select('id')
+            .eq('agent_id', agentId)
+            .eq('url_pattern', urlPattern)
+            .maybeSingle();
+
+          if (node) {
+            await supabase!
+              .from('nav_node_features')
+              .upsert(
+                { nav_node_id: node.id, feature_id: feature.id },
+                { onConflict: 'nav_node_id,feature_id', ignoreDuplicates: true }
+              );
+          }
+        } catch (err) {
+          console.warn('[DB] Failed to link flow feature to nav node:', err);
+        }
+      }
     }
   } else if (type === 'behavior') {
     const fd = suggData as BehaviorSuggestionData;

@@ -49,6 +49,18 @@ class StepTimer {
   get total(): number { return Date.now() - this.t0; }
 }
 
+/**
+ * Playwright's page.url() doesn't update after SPA navigation (history.pushState)
+ * when connected via CDP. Evaluate location.href in browser context instead.
+ */
+async function getLivePageUrl(page: { evaluate: (fn: () => string) => Promise<string>; url: () => string }): Promise<string> {
+  try {
+    return await page.evaluate(new Function('return location.href') as () => string);
+  } catch {
+    return page.url();
+  }
+}
+
 export async function createAgent(
   broadcast: (msg: ServerMessage) => void,
   cdpEndpoint: string,
@@ -117,7 +129,7 @@ export async function createAgent(
   let lastAction: { label: string; selector?: string; rawTarget?: string } | null = null;
 
   // Get initial page URL for graph tracking
-  const currentPageUrl = connector.getHarness().page.url();
+  const currentPageUrl = await getLivePageUrl(connector.getHarness().page);
   let previousUrl: string | null = currentPageUrl;
 
   // Helper to get screenshot as base64
@@ -171,6 +183,13 @@ export async function createAgent(
       // Parse MEMORY_JSON → create suggestions (not direct features)
       const memUpdates = parseMemoryUpdates(thought);
       for (const update of memUpdates) {
+        // Attach current URL so accepted suggestions link to nav nodes on the App Map
+        if ((update.type === 'feature' || update.type === 'flow')) {
+          const data = update.data as { discovered_at_url?: string };
+          if (!data.discovered_at_url) {
+            data.discovered_at_url = session.currentUrl || undefined;
+          }
+        }
         const suggestion = await createSuggestion(
           agentId, update.type, update.data, sessionId
         );
@@ -211,6 +230,39 @@ export async function createAgent(
       }
     } catch (err) {
       console.error('Failed to capture screenshot:', err);
+    }
+
+    // Detect URL changes after each action (click may navigate)
+    // magnitude-core's 'nav' event only fires for agent.nav(), not click-based navigation
+    try {
+      // Small delay to let SPA routing settle after a click
+      await new Promise(r => setTimeout(r, 500));
+      const currentUrl = await getLivePageUrl(connector.getHarness().page);
+      console.log(`[NAV-DETECT] actionDone: prev=${previousUrl} curr=${currentUrl} action=${actionName}`);
+      if (currentUrl && currentUrl !== previousUrl && !currentUrl.startsWith('about:')) {
+        console.log(`[NAV-DETECT] URL changed! Recording navigation: ${previousUrl} → ${currentUrl}`);
+        broadcast({ type: 'nav', url: currentUrl });
+
+        if (agentId) {
+          const action = lastAction?.label;
+          const selector = lastAction?.selector;
+          const rawTarget = lastAction?.rawTarget;
+          lastAction = null;
+
+          let title = '';
+          try {
+            title = await connector.getHarness().page.title();
+          } catch {}
+
+          recordNavigation(agentId, previousUrl, currentUrl, action, selector, title, rawTarget).catch((err) => {
+            console.error('[NAV-DETECT] recordNavigation failed:', err);
+          });
+        }
+        previousUrl = currentUrl;
+        session.currentUrl = currentUrl;
+      }
+    } catch (err) {
+      console.error('[NAV-DETECT] URL check failed:', err);
     }
   });
 
@@ -257,6 +309,18 @@ export async function createAgent(
   broadcast({ type: 'status', status: 'idle' });
   broadcast({ type: 'nav', url: currentPageUrl });
 
+  // Record the initial page as a nav node so App Map always has at least one node
+  if (agentId && currentPageUrl && !currentPageUrl.startsWith('about:')) {
+    let initialTitle = '';
+    try {
+      initialTitle = await connector.getHarness().page.title();
+    } catch {}
+    console.log(`[NAV-DETECT] Recording initial page: ${currentPageUrl} title="${initialTitle}"`);
+    recordNavigation(agentId, null, currentPageUrl, undefined, undefined, initialTitle).catch((err) => {
+      console.error('[NAV-DETECT] Initial page recording failed:', err);
+    });
+  }
+
   return session;
 }
 
@@ -283,7 +347,7 @@ export async function handleLoginDetection(
     return;
   }
 
-  const loginUrl = page.url();
+  const loginUrl = await getLivePageUrl(page);
 
   // 1. Check muscle memory for this domain first
   const patterns = await getLearnedPatterns(agentId, detection.domain);
@@ -311,7 +375,7 @@ export async function handleLoginDetection(
       if (success) {
         broadcast({ type: 'thought', content: 'Login successful (replayed from muscle memory).' });
         broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
-        broadcast({ type: 'nav', url: page.url() });
+        broadcast({ type: 'nav', url: await getLivePageUrl(page) });
         return;
       }
       broadcast({ type: 'thought', content: 'Muscle memory replay failed. Trying vault...' });
@@ -352,7 +416,7 @@ export async function handleLoginDetection(
     if (result.success) {
       broadcast({ type: 'thought', content: 'Login successful.' });
       broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
-      broadcast({ type: 'nav', url: page.url() });
+      broadcast({ type: 'nav', url: await getLivePageUrl(page) });
       // Record muscle memory for future replays
       await recordLoginPatternWithCredential(agentId, detection.domain, credential.id, detection.strategy, detection.selectors).catch(() => {});
     } else {
@@ -408,7 +472,7 @@ export async function handleLoginDetection(
     if (result.success) {
       broadcast({ type: 'thought', content: 'Login successful.' });
       broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
-      broadcast({ type: 'nav', url: page.url() });
+      broadcast({ type: 'nav', url: await getLivePageUrl(page) });
       // Record muscle memory
       await recordLoginPatternWithCredential(agentId, detection.domain, credentialId, detection.strategy, detection.selectors).catch(() => {});
     } else {
@@ -567,6 +631,7 @@ async function createSuggestionsFromExtraction(
         steps: flow.steps.map((s, i) => ({ order: i + 1, description: s })),
         checkpoints: [],
         criticality: flow.criticality,
+        discovered_at_url: session.currentUrl || undefined,
       },
       session.sessionId
     );
@@ -651,7 +716,7 @@ export async function executeTask(
             try {
               const buf = await session.connector.getHarness().page.screenshot({ type: 'png' });
               broadcast({ type: 'screenshot', data: buf.toString('base64') });
-              broadcast({ type: 'nav', url: session.connector.getHarness().page.url() });
+              broadcast({ type: 'nav', url: await getLivePageUrl(session.connector.getHarness().page) });
             } catch {}
 
             // If the task was just navigation, we're done
