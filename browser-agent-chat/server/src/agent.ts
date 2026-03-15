@@ -98,6 +98,17 @@ export async function createAgent(
   timer.step('start_browser_agent');
   const connector = agent.require(BrowserConnector);
 
+  // Bypass CSP (including Trusted Types) so magnitude-core's evaluate() calls
+  // that set innerHTML don't fail on sites with strict Content-Security-Policy.
+  try {
+    const page = connector.getHarness().page;
+    const cdpSession = await page.context().newCDPSession(page);
+    await cdpSession.send('Page.setBypassCSP', { enabled: true });
+    console.log('[AGENT] CSP bypass enabled via CDP');
+  } catch (err) {
+    console.warn('[AGENT] Failed to bypass CSP:', err);
+  }
+
   // Set a sensible default viewport before any page interaction.
   // The client overrides this with actual panel dimensions via the 'viewport' message.
   try {
