@@ -16,7 +16,8 @@ export function connect(url?: string): void {
 
 // -- Session CRUD --
 
-const DEFAULT_TTL = () => parseInt(process.env.SESSION_TTL_SECONDS || '600', 10);
+const ABSOLUTE_TIMEOUT = () => parseInt(process.env.ABSOLUTE_TIMEOUT_SECONDS || '1800', 10);
+const SAFETY_TTL = () => ABSOLUTE_TIMEOUT() + 300; // 35 min safety net
 
 export async function getSession(agentId: string): Promise<RedisSession | null> {
   const data = await redis.hgetall(`session:${agentId}`);
@@ -32,6 +33,7 @@ export async function getSession(agentId: string): Promise<RedisSession | null> 
     lastTask: data.lastTask || '',
     createdAt: parseInt(data.createdAt, 10),
     lastActivityAt: parseInt(data.lastActivityAt, 10),
+    detachedAt: parseInt(data.detachedAt, 10) || 0,
   };
 }
 
@@ -52,7 +54,7 @@ export async function deleteSession(agentId: string): Promise<void> {
 }
 
 export async function refreshTTL(agentId: string): Promise<void> {
-  const ttl = DEFAULT_TTL();
+  const ttl = SAFETY_TTL();
   const expiryScore = Date.now() + ttl * 1000;
   await redis.pipeline()
     .expire(`session:${agentId}`, ttl)
@@ -61,6 +63,10 @@ export async function refreshTTL(agentId: string): Promise<void> {
     .zadd('session:expiry', expiryScore, agentId)
     .hset(`session:${agentId}`, 'lastActivityAt', String(Date.now()))
     .exec();
+}
+
+export async function updateLastActivity(agentId: string): Promise<void> {
+  await redis.hset(`session:${agentId}`, 'lastActivityAt', String(Date.now()));
 }
 
 export async function listSessions(): Promise<string[]> {

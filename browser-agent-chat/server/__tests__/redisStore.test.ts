@@ -49,6 +49,7 @@ import {
   pollExpiredSessions,
   shutdown,
   refreshTTL,
+  updateLastActivity,
 } from '../src/redisStore.js';
 
 describe('redisStore — session CRUD', () => {
@@ -76,6 +77,7 @@ describe('redisStore — session CRUD', () => {
       lastTask: '',
       createdAt: '1710000000000',
       lastActivityAt: '1710000000000',
+      detachedAt: '0',
     });
 
     const result = await getSession('proj-1');
@@ -90,6 +92,7 @@ describe('redisStore — session CRUD', () => {
       lastTask: '',
       createdAt: 1710000000000,
       lastActivityAt: 1710000000000,
+      detachedAt: 0,
     });
   });
 
@@ -223,6 +226,23 @@ describe('redisStore — expiry polling', () => {
     const pipeline = mockRedis.pipeline();
     await refreshTTL('proj-1');
     expect(mockRedis.pipeline).toHaveBeenCalled();
+  });
+});
+
+describe('redisStore — updateLastActivity', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    connect('redis://localhost:6379');
+  });
+
+  it('calls hset with only lastActivityAt field', async () => {
+    const agentId = 'test-agent';
+    await updateLastActivity(agentId);
+    expect(mockRedis.hset).toHaveBeenCalledWith(
+      `session:${agentId}`,
+      'lastActivityAt',
+      expect.stringMatching(/^\d+$/)
+    );
   });
 });
 
