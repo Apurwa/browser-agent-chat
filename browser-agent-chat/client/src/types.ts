@@ -119,10 +119,9 @@ export interface StartupMetrics {
 
 export type ClientMessage =
   | { type: 'start'; agentId: string; resumeUrl?: string }
-  | { type: 'resume'; agentId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
-  | { type: 'stop' }
+  | { type: 'restart'; agentId: string }
   | { type: 'ping' }
   | { type: 'taskFeedback'; task_id: string; rating: 'positive' | 'negative'; correction?: string }
   | { type: 'credential_provided'; credentialId: string };
@@ -146,7 +145,10 @@ export type ServerMessage =
   | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number; transition: 'active' | 'dominant' }
   | { type: 'patternStale'; name: string; reason: string }
   | { type: 'feedbackAck'; taskId: string; rating: 'positive' | 'negative'; clustered: boolean; clusterName?: string; clusterProgress?: { current: number; needed: number } }
-  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string }
+  | { type: 'session_evicted'; agentId: string; reason: 'capacity' }
+  | { type: 'session_expiring'; remainingSeconds: number }
+  | { type: 'session_new'; agentId: string };
 
 // === Chat ===
 

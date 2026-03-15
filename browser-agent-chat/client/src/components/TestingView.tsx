@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useLocation, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
@@ -14,28 +14,14 @@ export default function TestingView() {
   const { getAccessToken } = useAuth();
   const [activeTab, setActiveTab] = useState<'chat' | 'map'>('chat');
   const [featuresCount, setFeaturesCount] = useState(0);
-  const location = useLocation();
-  const navigate = useNavigate();
-  const isAutoStart = location.state?.autoStart === true;
 
-  // On mount: try to resume an existing session for this agent
-  // Skip if autoStart — we'll start a fresh agent instead
-  useEffect(() => {
-    if (id && ws.activeAgentId !== id && !isAutoStart) {
-      ws.resumeSession(id);
-    }
+  // Unconditional auto-connect on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  // Auto-start agent when navigating from Home with autoStart flag
   useEffect(() => {
-    if (id && isAutoStart) {
+    if (id) {
       ws.startAgent(id);
-      // Clear the state to prevent re-triggering on refresh
-      navigate(location.pathname, { replace: true, state: {} });
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isAutoStart]);
+  }, [id]);
 
   useEffect(() => {
     if (!id) return;
@@ -82,9 +68,7 @@ export default function TestingView() {
                 showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
                 lastCompletedTask={ws.lastCompletedTask}
                 onExplore={() => id && ws.explore(id)}
-                onStartAgent={() => ws.startAgent(id!)}
                 onSendTask={ws.sendTask}
-                onStopAgent={ws.stopAgent}
                 onFeedback={ws.sendFeedback}
               />
               <BrowserView

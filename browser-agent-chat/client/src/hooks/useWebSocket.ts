@@ -106,13 +106,9 @@ export function useWebSocket() {
     send({ type: 'task', content });
   }, [send, addMessage]);
 
-  const stopAgent = useCallback(() => {
-    send({ type: 'stop' });
-  }, [send]);
-
   return {
     connected, status, screenshot, currentUrl, messages, findings,
     findingsCount: findings.length, startupMetrics,
-    startAgent, sendTask, stopAgent,
+    startAgent, sendTask,
   };
 }

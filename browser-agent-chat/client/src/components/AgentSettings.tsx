@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useVault } from '../hooks/useVault';
+import { useWS } from '../contexts/WebSocketContext';
 import * as vaultApi from '../lib/vaultApi';
 import type { BoundCredential } from '../types/assistant';
 import Sidebar from './Sidebar';
@@ -11,6 +12,7 @@ export default function AgentSettings() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { getAccessToken } = useAuth();
+  const ws = useWS();
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [context, setContext] = useState('');
@@ -131,6 +133,24 @@ export default function AgentSettings() {
         <button className="btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
+
+        <section className="settings-section">
+          <h2>Session</h2>
+          <p className="settings-hint">
+            If the browser appears frozen or unresponsive, restart the agent session.
+          </p>
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              if (confirm('Restart the agent? This will end the current browser session.')) {
+                ws.sendRestart(id!);
+                navigate(`/testing/${id}`);
+              }
+            }}
+          >
+            Restart Agent
+          </button>
+        </section>
 
         <section className="settings-danger">
           <h2>Danger Zone</h2>

@@ -97,6 +97,21 @@ sessionManager.onBroadcast((agentId, msg) => {
   }
 });
 
+// Register beforeEvict hook for active task cleanup
+sessionManager.setBeforeEvictHook(async (agentId: string) => {
+  const taskEntry = activeTasks.get(agentId);
+  if (taskEntry) {
+    const agent = sessionManager.getAgent(agentId);
+    if (agent) {
+      try { await agent.close(); } catch { /* agent may already be closed */ }
+    }
+    try {
+      await updateTask(taskEntry.taskId, { status: 'cancelled', completed_at: new Date().toISOString() });
+    } catch { /* best effort */ }
+    activeTasks.delete(agentId);
+  }
+});
+
 // Broadcast a ServerMessage to all WebSocket clients connected to an agent.
 // Used by eval routes and any future server-initiated push.
 export function broadcastToAgent(agentId: string, msg: ServerMessage): void {
@@ -128,6 +143,10 @@ wss.on('connection', (ws: WebSocket) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'pong' }));
       }
+      const agentId = clientAgents.get(ws);
+      if (agentId) {
+        redisStore.updateLastActivity(agentId);
+      }
       return;
     }
 
@@ -135,11 +154,12 @@ wss.on('connection', (ws: WebSocket) => {
       console.log('[START] Starting agent for:', msg.agentId);
 
       const prevAgentId = clientAgents.get(ws);
-      if (prevAgentId) {
+      if (prevAgentId && prevAgentId !== msg.agentId) {
         sessionManager.removeClient(prevAgentId, ws);
         clientAgents.delete(ws);
       }
 
+      // Fast path: reattach to existing session
       const hasExisting = await sessionManager.hasSession(msg.agentId);
       if (hasExisting && sessionManager.getAgent(msg.agentId)) {
         console.log('[START] Reattaching to existing session');
@@ -147,6 +167,11 @@ wss.on('connection', (ws: WebSocket) => {
         clientAgents.set(ws, msg.agentId);
         await sessionManager.sendSnapshot(msg.agentId, ws);
         return;
+      }
+
+      // Clean up stale Redis data if agent is dead
+      if (hasExisting) {
+        await sessionManager.destroySession(msg.agentId);
       }
 
       ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
@@ -166,6 +191,9 @@ wss.on('connection', (ws: WebSocket) => {
 
         clientUserIds.set(ws, agent.user_id);
 
+        // Ensure capacity before creating new browser
+        await sessionManager.ensureCapacity();
+
         const dbSessionId = await createSession(agent.id);
 
         const agentSession = await sessionManager.createSession(
@@ -174,9 +202,11 @@ wss.on('connection', (ws: WebSocket) => {
 
         sessionManager.addClient(msg.agentId, ws);
 
-        // Tell client the agent is ready
+        // Signal new session to client
+        ws.send(JSON.stringify({ type: 'session_new', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
+        // Login detection (async, non-blocking)
         {
           const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
           const loginPage = agentSession.connector.getHarness().page;
@@ -189,21 +219,6 @@ wss.on('connection', (ws: WebSocket) => {
         clientAgents.delete(ws);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
-        ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
-      }
-
-    } else if (msg.type === 'resume') {
-      const prevAgentId = clientAgents.get(ws);
-      if (prevAgentId && prevAgentId !== msg.agentId) {
-        sessionManager.removeClient(prevAgentId, ws);
-      }
-
-      const exists = await sessionManager.hasSession(msg.agentId);
-      if (exists) {
-        sessionManager.addClient(msg.agentId, ws);
-        clientAgents.set(ws, msg.agentId);
-        await sessionManager.sendSnapshot(msg.agentId, ws);
-      } else {
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       }
 
@@ -264,21 +279,46 @@ wss.on('connection', (ws: WebSocket) => {
       };
       executeTask(agentSession, msg.content, taskBroadcast);
 
-    } else if (msg.type === 'stop') {
-      const agentId = clientAgents.get(ws);
-      if (agentId) {
-        // Cancel any active task
-        const activeTask = activeTasks.get(agentId);
-        if (activeTask) {
-          updateTask(activeTask.taskId, { status: 'cancelled', completed_at: new Date().toISOString() })
-            .catch(err => console.error('[TASK] Failed to cancel task:', err));
-          activeTasks.delete(agentId);
+    } else if (msg.type === 'restart') {
+      const agentId = msg.agentId;
+      console.log('[RESTART] Restarting agent:', agentId);
+
+      // Use beforeEvict hook for task cleanup (same as eviction path)
+      await sessionManager.callBeforeEvictHook(agentId);
+      await sessionManager.destroySession(agentId);
+
+      await sessionManager.ensureCapacity();
+
+      try {
+        const agent = await getAgent(agentId);
+        if (!agent) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
+          return;
         }
 
-        await sessionManager.destroySession(agentId);
-        for (const [client, aid] of clientAgents) {
-          if (aid === agentId) clientAgents.delete(client);
+        clientUserIds.set(ws, agent.user_id);
+        clientAgents.set(ws, agentId);
+
+        const dbSessionId = await createSession(agent.id);
+        const agentSession = await sessionManager.createSession(agentId, agent.url, dbSessionId);
+        sessionManager.addClient(agentId, ws);
+
+        ws.send(JSON.stringify({ type: 'session_new', agentId } as ServerMessage));
+        ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
+
+        // Login detection (async, non-blocking)
+        {
+          const loginBroadcast = sessionManager.makeBroadcast(agentId);
+          const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginDone = handleLoginDetection(loginPage, agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
+            console.error('[LOGIN] Background login error:', err);
+          });
         }
+      } catch (err) {
+        console.error('[RESTART] Error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to restart agent';
+        ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
+        ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       }
     } else if (msg.type === 'explore') {
       const agentId = clientAgents.get(ws);
@@ -379,7 +419,7 @@ wss.on('connection', (ws: WebSocket) => {
     if (agentId) {
       sessionManager.removeClient(agentId, ws);
       clientAgents.delete(ws);
-      activeTasks.delete(agentId);  // Clean up to prevent memory leak
+      // DO NOT delete activeTasks here — task continues running server-side
     }
     clientUserIds.delete(ws);
   });
