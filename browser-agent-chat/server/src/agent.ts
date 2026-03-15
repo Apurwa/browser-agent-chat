@@ -7,9 +7,13 @@ import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
 import { recordNavigation, getGraph } from './nav-graph.js';
 import type { LearnedPattern } from './types.js';
-import { loadPatterns, replayLogin, replayNavigation, recordLoginPattern, markSuccess, incrementFailures, findNodeByUrlOrTitle } from './muscle-memory.js';
+import { loadPatterns, replayLogin, replayNavigation, markSuccess, incrementFailures, findNodeByUrlOrTitle, getLearnedPatterns, injectCredentials, recordLoginPatternWithCredential } from './muscle-memory.js';
 import { getLangfuse } from './langfuse.js';
 import type { LangfuseTraceClient } from 'langfuse';
+import { detectLoginPage } from './login-detector.js';
+import { executeStandardLogin, verifyLoginSuccess } from './login-strategy.js';
+import { getCredentialForAgent, getCredential, decryptForInjection, pendingCredentialRequests } from './vault.js';
+import type { PlaintextSecret } from './types.js';
 
 export interface AgentSession {
   agent: BrowserAgent;
@@ -256,91 +260,164 @@ export async function createAgent(
   return session;
 }
 
-export async function executeLogin(
-  session: AgentSession,
-  credentials: { username: string; password: string },
-  broadcast: (msg: ServerMessage) => void
+/**
+ * Detect login pages and handle credential injection.
+ * Flow: detect → muscle memory → vault resolution → ask user → inject → record pattern.
+ * LLM never sees credentials — Playwright fills fields directly.
+ */
+export async function handleLoginDetection(
+  page: any,
+  agentId: string,
+  userId: string,
+  broadcast: (msg: ServerMessage) => void,
 ): Promise<void> {
-  const page = session.connector.getHarness().page;
-  const loginUrl = page.url(); // Capture login URL before any navigation
+  const detection = await detectLoginPage(page);
 
-  const langfuse = getLangfuse();
-  const trace = langfuse?.trace({
-    name: 'login',
-    sessionId: session.sessionId ?? undefined,
-    metadata: { agentId: session.agentId },
-    input: { username: credentials.username },
-  }) ?? null;
-  session.currentTrace = trace;
+  if (!detection.isLoginPage) return;
 
-  // 1. Try muscle memory replay first
-  if (session.patterns.length > 0) {
-    broadcast({ type: 'thought', content: 'Replaying saved login pattern...' });
-    const replaySpan = trace?.span({ name: 'muscle-memory-login-replay' });
+  broadcast({ type: 'thought', content: `Login page detected (confidence: ${detection.score}). Looking up credentials...` });
 
-    const startTime = Date.now();
-    const success = await replayLogin(page, session.patterns, credentials);
-    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-    if (success) {
-      replaySpan?.end({ output: { success: true, elapsed } });
-      const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
-      if (pattern) markSuccess(pattern.id).catch(() => {});
-
-      broadcast({ type: 'thought', content: `Logged in via muscle memory (${elapsed}s)` });
-      broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
-      broadcast({ type: 'nav', url: page.url() });
-      trace?.update({ output: { success: true, method: 'muscle-memory', elapsed } });
-      session.currentTrace = null;
-      return;
-    }
-
-    // Replay failed — increment failures
-    replaySpan?.end({ output: { success: false, elapsed } });
-    const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
-    if (pattern) {
-      incrementFailures(pattern.id, pattern.consecutive_failures).catch(() => {});
-    }
-    broadcast({ type: 'thought', content: 'Saved login pattern failed, using AI agent...' });
-  } else {
-    broadcast({ type: 'thought', content: 'Logging in...' });
-  }
-
-  // 2. Fall back to LLM agent
-  try {
-    const span = trace?.span({ name: 'agent-act-login' });
-    await session.agent.act(`Log in with username "${credentials.username}" and password "${credentials.password}"`);
-    span?.end({ output: { success: true } });
-    console.log('[LOGIN] Done, URL:', page.url());
-  } catch (err) {
-    console.error('[LOGIN] Failed:', err);
-    trace?.update({ output: { success: false, error: String(err) } });
-    session.currentTrace = null;
-    broadcast({ type: 'error', message: 'Auto-login failed. You can log in via chat.' });
+  // Guard: only standard_form is supported in MVP
+  if (detection.strategy !== 'standard_form' && detection.strategy !== 'unknown') {
+    broadcast({ type: 'thought', content: `Detected ${detection.strategy} login flow (not yet supported). Skipping automatic login.` });
     return;
   }
 
-  // 3. Capture post-login state
-  try {
-    const buf = await page.screenshot({ type: 'png' });
-    broadcast({ type: 'screenshot', data: buf.toString('base64') });
-    broadcast({ type: 'nav', url: page.url() });
+  const loginUrl = page.url();
 
-    const onLogin = /\/(login|signin|sign-in|auth)\b/i.test(page.url())
-      || await page.locator('input[type="password"]').isVisible().catch(() => false);
-    broadcast({ type: 'thought', content: onLogin
-      ? 'Could not log in. Please log in via chat.'
-      : 'Logged in successfully' });
-    trace?.update({ output: { success: !onLogin, method: 'llm', url: page.url() } });
+  // 1. Check muscle memory for this domain first
+  const patterns = await getLearnedPatterns(agentId, detection.domain);
+  const loginPattern = patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
 
-    // 4. Record login pattern for next time (background, fire-and-forget)
-    if (!onLogin && session.agentId) {
-      recordLoginPattern(page, session.agentId, loginUrl).catch(err => {
-        console.error('[MUSCLE-MEMORY] Background recording error:', err);
-      });
+  if (loginPattern?.credential_id) {
+    broadcast({ type: 'thought', content: 'Found saved login pattern. Replaying...' });
+    const secret = await decryptForInjection(loginPattern.credential_id, userId, agentId);
+    if (secret) {
+      const cred = await getCredential(loginPattern.credential_id, userId);
+      const steps = injectCredentials(loginPattern.steps, secret, (cred?.metadata ?? {}) as { username?: string });
+      // Zero secret immediately
+      (secret as any).password = null;
+      (secret as any).apiKey = null;
+      // Execute the replay steps via Playwright
+      for (const step of steps) {
+        if (step.action === 'fill' && step.selector && step.value) {
+          await page.fill(step.selector, step.value);
+        } else if (step.action === 'click' && step.selector) {
+          await page.click(step.selector);
+        }
+      }
+      await page.waitForLoadState('networkidle').catch(() => {});
+      const success = await verifyLoginSuccess(page, loginUrl);
+      if (success) {
+        broadcast({ type: 'thought', content: 'Login successful (replayed from muscle memory).' });
+        broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
+        broadcast({ type: 'nav', url: page.url() });
+        return;
+      }
+      broadcast({ type: 'thought', content: 'Muscle memory replay failed. Trying vault...' });
     }
-  } catch {}
-  session.currentTrace = null;
+  }
+
+  // 2. Try to find credential via agent bindings + domain
+  const credential = await getCredentialForAgent(agentId, detection.domain);
+
+  if (credential) {
+    // Domain verification (exfiltration prevention)
+    const pageHostname = new URL(loginUrl).hostname;
+    if (!credential.domains.includes(pageHostname)) {
+      broadcast({ type: 'thought', content: `Domain mismatch: page is ${pageHostname} but credential is for ${credential.domains.join(', ')}. Skipping injection.` });
+      return;
+    }
+
+    // Decrypt and inject
+    const secret = await decryptForInjection(credential.id, userId, agentId);
+    if (!secret) {
+      broadcast({ type: 'thought', content: 'Failed to decrypt credentials.' });
+      return;
+    }
+
+    broadcast({ type: 'thought', content: 'Injecting credentials...' });
+    const result = await executeStandardLogin(
+      page,
+      detection.selectors,
+      secret,
+      credential.metadata as { username?: string },
+      loginUrl,
+    );
+
+    // Zero secret
+    (secret as any).password = null;
+    (secret as any).apiKey = null;
+
+    if (result.success) {
+      broadcast({ type: 'thought', content: 'Login successful.' });
+      broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
+      broadcast({ type: 'nav', url: page.url() });
+      // Record muscle memory for future replays
+      await recordLoginPatternWithCredential(agentId, detection.domain, credential.id, detection.strategy, detection.selectors).catch(() => {});
+    } else {
+      broadcast({ type: 'thought', content: `Login failed: ${result.error}` });
+    }
+    return;
+  }
+
+  // 3. No credential found — ask user
+  broadcast({ type: 'thought', content: `No credentials found for ${detection.domain}. Asking you to provide them...` });
+
+  const CREDENTIAL_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+  try {
+    const credentialId = await Promise.race([
+      new Promise<string>((resolve, reject) => {
+        // Key by agentId — each agent can have one pending request
+        pendingCredentialRequests.set(agentId, { resolve, reject });
+        broadcast({
+          type: 'credential_needed',
+          agentId,
+          domain: detection.domain,
+          strategy: detection.strategy,
+        });
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Credential request timed out')), CREDENTIAL_TIMEOUT)
+      ),
+    ]);
+    pendingCredentialRequests.delete(agentId);
+
+    // User provided credential — decrypt and inject
+    const secret = await decryptForInjection(credentialId, userId, agentId);
+    if (!secret) {
+      broadcast({ type: 'thought', content: 'Failed to decrypt provided credentials.' });
+      return;
+    }
+
+    const cred = await getCredential(credentialId, userId);
+
+    broadcast({ type: 'thought', content: 'Injecting provided credentials...' });
+    const result = await executeStandardLogin(
+      page,
+      detection.selectors,
+      secret,
+      (cred?.metadata ?? {}) as { username?: string },
+      loginUrl,
+    );
+
+    // Zero secret
+    (secret as any).password = null;
+    (secret as any).apiKey = null;
+
+    if (result.success) {
+      broadcast({ type: 'thought', content: 'Login successful.' });
+      broadcast({ type: 'screenshot', data: (await page.screenshot({ type: 'png' })).toString('base64') });
+      broadcast({ type: 'nav', url: page.url() });
+      // Record muscle memory
+      await recordLoginPatternWithCredential(agentId, detection.domain, credentialId, detection.strategy, detection.selectors).catch(() => {});
+    } else {
+      broadcast({ type: 'thought', content: `Login failed: ${result.error}` });
+    }
+  } catch (err) {
+    pendingCredentialRequests.delete(agentId);
+    broadcast({ type: 'thought', content: 'Credential request timed out or was cancelled. Continuing without login.' });
+  }
 }
 
 // Schema for features extracted from the current page

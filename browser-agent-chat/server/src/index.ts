@@ -11,7 +11,7 @@ import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
 import mapRouter from './routes/map.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
-import { executeTask, executeExplore, executeLogin } from './agent.js';
+import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
 import { getAgent, createSession, createTask, updateTask } from './db.js';
 import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
@@ -158,9 +158,10 @@ wss.on('connection', (ws: WebSocket) => {
         // Tell client the agent is ready
         ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
-        if (credentials) {
+        {
           const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
-          agentSession.loginDone = executeLogin(agentSession, credentials, loginBroadcast).catch(err => {
+          const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginDone = handleLoginDetection(loginPage, msg.agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
           });
         }
