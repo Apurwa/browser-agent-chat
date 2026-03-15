@@ -12,7 +12,7 @@ export async function loadPatterns(agentId: string): Promise<LearnedPattern[]> {
     .from('learned_patterns')
     .select('*')
     .eq('agent_id', agentId)
-    .eq('status', 'active');
+    .eq('pattern_state', 'active');
 
   if (error || !data) {
     console.error('[MUSCLE-MEMORY] loadPatterns error:', error);
@@ -27,7 +27,7 @@ export async function markStale(patternId: string): Promise<void> {
 
   const { error } = await supabase!
     .from('learned_patterns')
-    .update({ status: 'stale', updated_at: new Date().toISOString() })
+    .update({ pattern_state: 'stale', updated_at: new Date().toISOString() })
     .eq('id', patternId);
 
   if (error) console.error('[MUSCLE-MEMORY] markStale error:', error);
@@ -63,7 +63,7 @@ export async function incrementFailures(patternId: string, currentFailures: numb
     updated_at: new Date().toISOString(),
   };
   if (newCount >= 3) {
-    updates.status = 'stale';
+    updates.pattern_state = 'stale';
   }
 
   const { error } = await supabase!
@@ -281,7 +281,7 @@ export async function upsertLoginPattern(
     trigger: { type: 'login', url_pattern: urlPattern },
     steps,
     consecutive_failures: 0,
-    status: 'active' as const,
+    pattern_state: 'active' as const,
     updated_at: new Date().toISOString(),
   };
 
