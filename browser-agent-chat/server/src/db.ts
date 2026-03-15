@@ -6,7 +6,9 @@ import type {
   Suggestion, FeatureSuggestionData, FlowSuggestionData, BehaviorSuggestionData, FlowStep, Checkpoint,
   ChatMessage,
   EvalCase, EvalRun, EvalResult, EvalRunTrigger, EvalRunStatus,
-  Task, StepType, ExecutionStep
+  Task, StepType, ExecutionStep,
+  TaskFeedback, LearningPoolEntry, TaskCluster, LearnedPattern,
+  FeedbackRating, PatternState
 } from './types.js';
 
 // === Agents ===
@@ -796,5 +798,307 @@ export async function getStepsByTask(taskId: string): Promise<ExecutionStep[]> {
     .eq('task_id', taskId)
     .order('step_order', { ascending: true });
   if (error) throw error;
+  return data ?? [];
+}
+
+// --- Learning System: Task Feedback ---
+
+export async function createTaskFeedback(feedback: {
+  agent_id: string;
+  task_id: string;
+  session_id: string | null;
+  rating: FeedbackRating;
+  correction: string | null;
+}): Promise<TaskFeedback | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('task_feedback')
+    .insert(feedback)
+    .select()
+    .single();
+  if (error) { console.error('createTaskFeedback error:', error); return null; }
+  return data;
+}
+
+export async function getTaskFeedbackByTask(taskId: string): Promise<TaskFeedback | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('task_feedback')
+    .select('*')
+    .eq('task_id', taskId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+export async function listTaskFeedback(
+  agentId: string,
+  filters?: { rating?: FeedbackRating; limit?: number }
+): Promise<TaskFeedback[]> {
+  if (!isSupabaseEnabled()) return [];
+  let query = supabase!
+    .from('task_feedback')
+    .select('*')
+    .eq('agent_id', agentId)
+    .order('created_at', { ascending: false });
+  if (filters?.rating) query = query.eq('rating', filters.rating);
+  if (filters?.limit) query = query.limit(filters.limit);
+  const { data, error } = await query;
+  if (error) { console.error('listTaskFeedback error:', error); return []; }
+  return data ?? [];
+}
+
+// --- Learning System: Learning Pool ---
+
+export async function addToLearningPool(entry: {
+  task_id: string;
+  agent_id: string;
+  feedback: FeedbackRating;
+  task_prompt: string;
+  task_prompt_embedding: number[] | null;
+  task_summary: string | null;
+  task_summary_embedding: number[] | null;
+  steps: any[];
+  step_count: number;
+  duration_ms: number | null;
+  cluster_id?: string | null;
+}): Promise<LearningPoolEntry | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('learning_pool')
+    .insert(entry)
+    .select()
+    .single();
+  if (error) { console.error('addToLearningPool error:', error); return null; }
+  return data;
+}
+
+export async function listLearningPoolByCluster(
+  clusterId: string,
+  feedbackFilter?: FeedbackRating
+): Promise<LearningPoolEntry[]> {
+  if (!isSupabaseEnabled()) return [];
+  let query = supabase!
+    .from('learning_pool')
+    .select('*')
+    .eq('cluster_id', clusterId)
+    .order('created_at', { ascending: true });
+  if (feedbackFilter) query = query.eq('feedback', feedbackFilter);
+  const { data, error } = await query;
+  if (error) { console.error('listLearningPoolByCluster error:', error); return []; }
+  return data ?? [];
+}
+
+export async function updateLearningPoolCluster(
+  entryId: string,
+  clusterId: string
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const { error } = await supabase!
+    .from('learning_pool')
+    .update({ cluster_id: clusterId })
+    .eq('id', entryId);
+  if (error) console.error('updateLearningPoolCluster error:', error);
+}
+
+export async function getLearningPoolStats(agentId: string): Promise<{
+  total: number;
+  positive: number;
+  negative: number;
+  clustered: number;
+}> {
+  if (!isSupabaseEnabled()) return { total: 0, positive: 0, negative: 0, clustered: 0 };
+  const { data, error } = await supabase!
+    .from('learning_pool')
+    .select('feedback, cluster_id')
+    .eq('agent_id', agentId);
+  if (error || !data) return { total: 0, positive: 0, negative: 0, clustered: 0 };
+  return {
+    total: data.length,
+    positive: data.filter(d => d.feedback === 'positive').length,
+    negative: data.filter(d => d.feedback === 'negative').length,
+    clustered: data.filter(d => d.cluster_id !== null).length,
+  };
+}
+
+// --- Learning System: Task Clusters ---
+
+export async function createTaskCluster(cluster: {
+  agent_id: string;
+  centroid_embedding: number[];
+  task_summary: string;
+  run_count?: number;
+  app_fingerprint?: string | null;
+}): Promise<TaskCluster | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('task_clusters')
+    .insert({ ...cluster, run_count: cluster.run_count ?? 1 })
+    .select()
+    .single();
+  if (error) { console.error('createTaskCluster error:', error); return null; }
+  return data;
+}
+
+export async function getTaskCluster(clusterId: string): Promise<TaskCluster | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('task_clusters')
+    .select('*')
+    .eq('id', clusterId)
+    .single();
+  if (error) return null;
+  return data;
+}
+
+export async function listTaskClusters(agentId: string): Promise<TaskCluster[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('task_clusters')
+    .select('*')
+    .eq('agent_id', agentId)
+    .order('run_count', { ascending: false });
+  if (error) { console.error('listTaskClusters error:', error); return []; }
+  return data ?? [];
+}
+
+export async function updateTaskCluster(
+  clusterId: string,
+  updates: Partial<Pick<TaskCluster, 'centroid_embedding' | 'run_count' | 'task_summary'>>
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const { error } = await supabase!
+    .from('task_clusters')
+    .update(updates)
+    .eq('id', clusterId);
+  if (error) console.error('updateTaskCluster error:', error);
+}
+
+export async function incrementClusterRunCount(clusterId: string): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const cluster = await getTaskCluster(clusterId);
+  if (cluster) {
+    await updateTaskCluster(clusterId, { run_count: cluster.run_count + 1 });
+  }
+}
+
+// --- Learning System: Extended Pattern Functions ---
+
+export async function createTaskPattern(pattern: {
+  agent_id: string;
+  trigger: any;
+  steps: any[];
+  cluster_id: string;
+  embedding: number[] | null;
+  avg_steps: number;
+  avg_duration_ms: number;
+  success_rate: number;
+  variance: number;
+  score: number;
+  app_fingerprint?: string | null;
+}): Promise<LearnedPattern | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('learned_patterns')
+    .insert({
+      ...pattern,
+      pattern_type: 'task',
+      pattern_state: 'candidate',
+      scope: 'agent',
+      consecutive_failures: 0,
+      use_count: 0,
+    })
+    .select()
+    .single();
+  if (error) { console.error('createTaskPattern error:', error); return null; }
+  return data;
+}
+
+export async function listActivePatterns(
+  agentId: string,
+  patternType?: 'login' | 'navigation' | 'task'
+): Promise<LearnedPattern[]> {
+  if (!isSupabaseEnabled()) return [];
+  let query = supabase!
+    .from('learned_patterns')
+    .select('*')
+    .eq('agent_id', agentId)
+    .in('pattern_state', ['active', 'dominant']);
+  if (patternType) query = query.eq('pattern_type', patternType);
+  const { data, error } = await query;
+  if (error) { console.error('listActivePatterns error:', error); return []; }
+  return data ?? [];
+}
+
+export async function updatePatternState(
+  patternId: string,
+  state: PatternState,
+  updates?: Partial<Pick<LearnedPattern, 'success_rate' | 'score' | 'consecutive_failures' | 'last_verified_success' | 'use_count' | 'last_used_at'>>
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const { error } = await supabase!
+    .from('learned_patterns')
+    .update({ pattern_state: state, ...updates, updated_at: new Date().toISOString() })
+    .eq('id', patternId);
+  if (error) console.error('updatePatternState error:', error);
+}
+
+export async function listPatternsByCluster(clusterId: string): Promise<LearnedPattern[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('learned_patterns')
+    .select('*')
+    .eq('cluster_id', clusterId)
+    .not('pattern_state', 'eq', 'archived');
+  if (error) { console.error('listPatternsByCluster error:', error); return []; }
+  return data ?? [];
+}
+
+export async function deletePattern(patternId: string): Promise<boolean> {
+  if (!isSupabaseEnabled()) return false;
+  const { error } = await supabase!
+    .from('learned_patterns')
+    .delete()
+    .eq('id', patternId);
+  if (error) { console.error('deletePattern error:', error); return false; }
+  return true;
+}
+
+export async function getPatternStats(agentId: string): Promise<{
+  total: number;
+  candidate: number;
+  active: number;
+  dominant: number;
+  stale: number;
+}> {
+  if (!isSupabaseEnabled()) return { total: 0, candidate: 0, active: 0, dominant: 0, stale: 0 };
+  const { data, error } = await supabase!
+    .from('learned_patterns')
+    .select('pattern_state')
+    .eq('agent_id', agentId)
+    .eq('pattern_type', 'task')
+    .not('pattern_state', 'eq', 'archived');
+  if (error || !data) return { total: 0, candidate: 0, active: 0, dominant: 0, stale: 0 };
+  return {
+    total: data.length,
+    candidate: data.filter(d => d.pattern_state === 'candidate').length,
+    active: data.filter(d => d.pattern_state === 'active').length,
+    dominant: data.filter(d => d.pattern_state === 'dominant').length,
+    stale: data.filter(d => d.pattern_state === 'stale').length,
+  };
+}
+
+export async function listExecutionSteps(taskId: string): Promise<Array<{
+  id: string; task_id: string; step_order: number; step_type: string;
+  content: string; target: string | null; screenshot_url: string | null;
+  duration_ms: number | null; created_at: string;
+}>> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('execution_steps')
+    .select('*')
+    .eq('task_id', taskId)
+    .order('step_order', { ascending: true });
+  if (error) { console.error('listExecutionSteps error:', error); return []; }
   return data ?? [];
 }
