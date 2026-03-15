@@ -146,6 +146,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         addMessage('system', `Startup: ${m.total}ms (${summary})`);
         break;
       }
+      case 'patternLearned': {
+        const pl = msg as any;
+        addMessage('system', `Pattern learned: "${pl.name}" (${pl.runs} runs, ${Math.round(pl.success_rate * 100)}% success)`);
+        break;
+      }
+      case 'patternStale': {
+        const ps = msg as any;
+        addMessage('system', `Pattern stale: "${ps.name}" — ${ps.reason}`);
+        break;
+      }
       case 'pong':
         // Heartbeat response — no action needed
         break;

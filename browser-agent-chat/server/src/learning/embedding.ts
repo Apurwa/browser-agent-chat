@@ -1,7 +1,9 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 const anthropic = new Anthropic();
 
 /**
@@ -9,6 +11,10 @@ const anthropic = new Anthropic();
  * Returns null if the API call fails.
  */
 export async function embedText(text: string): Promise<number[] | null> {
+  if (!openai) {
+    console.warn('[EMBEDDING] OPENAI_API_KEY not set — skipping embedding');
+    return null;
+  }
   try {
     const response = await openai.embeddings.create({
       model: 'text-embedding-3-small',
@@ -26,6 +32,7 @@ export async function embedText(text: string): Promise<number[] | null> {
  */
 export async function embedBatch(texts: string[]): Promise<(number[] | null)[]> {
   if (texts.length === 0) return [];
+  if (!openai) return texts.map(() => null);
   try {
     const response = await openai.embeddings.create({
       model: 'text-embedding-3-small',

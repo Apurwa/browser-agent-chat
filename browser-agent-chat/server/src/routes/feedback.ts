@@ -5,6 +5,7 @@ import {
   getLearningPoolStats, listTaskClusters, deletePattern,
   updatePatternState,
 } from '../db.js';
+import { supabase, isSupabaseEnabled } from '../supabase.js';
 import type { PatternState } from '../types.js';
 
 const router = Router({ mergeParams: true });
@@ -24,9 +25,16 @@ router.post('/', requireAuth, async (req, res) => {
     return;
   }
 
+  // Look up the task prompt from the DB so embeddings are meaningful
+  let taskPrompt = '';
+  if (isSupabaseEnabled()) {
+    const { data } = await supabase!.from('tasks').select('prompt').eq('id', task_id).single();
+    if (data?.prompt) taskPrompt = data.prompt;
+  }
+
   const { processFeedback } = await import('../learning/pipeline.js');
   await processFeedback(
-    agentId, task_id, null, '', rating, correction ?? null,
+    agentId, task_id, null, taskPrompt, rating, correction ?? null,
     () => {}, // No broadcast for REST
   );
 

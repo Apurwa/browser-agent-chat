@@ -2,7 +2,7 @@ import { startBrowserAgent, BrowserConnector, type BrowserAgent } from 'magnitud
 import { z } from 'zod';
 import type { ServerMessage, MetricStep } from './types.js';
 import { saveMessage, createSuggestion } from './db.js';
-import { loadMemoryContext, buildTaskPrompt } from './memory-engine.js';
+import { loadMemoryContext, buildTaskPrompt, buildTaskPromptWithPatterns } from './memory-engine.js';
 import { parseFindingsFromText, processFinding } from './finding-detector.js';
 import { parseMemoryUpdates } from './suggestion-detector.js';
 import { recordNavigation, getGraph } from './nav-graph.js';
@@ -517,10 +517,19 @@ export async function executeTask(
     await saveMessage(session.sessionId, 'user', task);
   }
 
-  // Build prompt with memory context
-  const prompt = session.agentId
-    ? buildTaskPrompt(task, session.memoryContext)
-    : task;
+  // Build prompt with memory context + learned patterns
+  let prompt: string;
+  if (session.agentId) {
+    try {
+      const result = await buildTaskPromptWithPatterns(session.agentId, task);
+      prompt = result.prompt;
+    } catch {
+      // Fallback to basic prompt if pattern retrieval fails
+      prompt = buildTaskPrompt(task, session.memoryContext);
+    }
+  } else {
+    prompt = task;
+  }
 
   // Reset step counter for this task
   session.stepsHistory.length = 0;
