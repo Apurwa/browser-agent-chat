@@ -10,6 +10,7 @@ import memoryRouter from './routes/memory.js';
 import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
 import mapRouter from './routes/map.js';
+import tracesRouter from './routes/traces.js';
 import { executeTask, executeExplore, executeLogin } from './agent.js';
 import { getAgent, createSession, createTask, updateTask } from './db.js';
 import { decryptCredentials } from './crypto.js';
@@ -18,7 +19,7 @@ import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
-import { initLangfuse, shutdownLangfuse } from './langfuse.js';
+import { initLangfuse, shutdownLangfuse, isLangfuseEnabled } from './langfuse.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 import feedbackRouter from './routes/feedback.js';
 import { processFeedback } from './learning/pipeline.js';
@@ -38,6 +39,7 @@ app.get('/health', async (_req, res) => {
     status: 'ok',
     supabase: isSupabaseEnabled(),
     heygenEnabled: isHeyGenEnabled(),
+    langfuseEnabled: isLangfuseEnabled(),
     redis: redisOk,
     activeSessions: sessions.length,
   });
@@ -66,6 +68,7 @@ app.use('/api/agents/:id/suggestions', suggestionsRouter);
 app.use('/api/agents/:id/evals', evalsRouter);
 app.use('/api/agents/:id/map', mapRouter);
 app.use('/api/agents/:id/feedback', feedbackRouter);
+app.use('/api/agents/:id/traces', tracesRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
