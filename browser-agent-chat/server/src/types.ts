@@ -314,6 +314,7 @@ export interface FeatureSuggestionData {
   criticality: Criticality;
   expected_behaviors: string[];
   discovered_at_url?: string; // URL where feature was observed during exploration
+  aliases?: string[]; // Alternative names detected by entity resolver
 }
 
 export interface FlowSuggestionData {
@@ -323,6 +324,7 @@ export interface FlowSuggestionData {
   checkpoints: Checkpoint[];
   criticality: Criticality;
   discovered_at_url?: string;
+  aliases?: string[]; // Alternative names detected by entity resolver
 }
 
 export interface BehaviorSuggestionData {
