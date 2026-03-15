@@ -60,3 +60,33 @@ export async function bulkDismissSuggestionsApi(agentId: string, token: string |
   const res = await apiAuthFetch(`/api/agents/${agentId}/suggestions/dismiss-all`, token, { method: 'POST' });
   return res.ok;
 }
+
+// --- Learning System ---
+
+export async function submitFeedback(
+  agentId: string,
+  taskId: string,
+  rating: 'positive' | 'negative',
+  correction: string | undefined,
+  token: string | null,
+): Promise<boolean> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/feedback`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id: taskId, rating, correction }),
+  });
+  return res.ok;
+}
+
+export async function fetchLearningStats(agentId: string, token: string | null): Promise<any> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/feedback/stats`, token);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function fetchPatterns(agentId: string, token: string | null): Promise<any[]> {
+  const res = await apiAuthFetch(`/api/agents/${agentId}/feedback/patterns`, token);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.patterns ?? [];
+}

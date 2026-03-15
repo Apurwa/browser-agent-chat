@@ -153,18 +153,35 @@ export interface NavGraph {
 
 // === Muscle Memory ===
 
+export type PatternState = 'candidate' | 'active' | 'dominant' | 'stale' | 'archived';
+export type PatternScope = 'agent' | 'org' | 'candidate_global' | 'verified_global' | 'global';
+
 export interface LearnedPattern {
   id: string;
   agent_id: string;
-  pattern_type: 'login' | 'navigation';
+  pattern_type: 'login' | 'navigation' | 'task';
   trigger: LoginTrigger;
   steps: PlaywrightStep[];
   consecutive_failures: number;
-  status: 'active' | 'stale';
+  pattern_state: PatternState;
   use_count: number;
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  // Learning system extensions
+  scope: PatternScope;
+  embedding: number[] | null;
+  cluster_id: string | null;
+  avg_steps: number | null;
+  avg_duration_ms: number | null;
+  success_rate: number | null;
+  variance: number | null;
+  score: number | null;
+  org_id: string | null;
+  source_agent_id: string | null;
+  app_fingerprint: string | null;
+  last_verified_success: string | null;
+  portability_score: number | null;
 }
 
 export interface LoginTrigger {
@@ -177,6 +194,47 @@ export interface PlaywrightStep {
   selector: string;
   value?: string;
   waitAfter?: number;
+}
+
+// --- Learning System Types ---
+
+export type FeedbackRating = 'positive' | 'negative';
+
+export interface TaskFeedback {
+  id: string;
+  agent_id: string;
+  task_id: string;
+  session_id: string | null;
+  rating: FeedbackRating;
+  correction: string | null;
+  created_at: string;
+}
+
+export interface LearningPoolEntry {
+  id: string;
+  cluster_id: string | null;
+  task_id: string;
+  agent_id: string;
+  feedback: FeedbackRating;
+  task_prompt: string;
+  task_prompt_embedding: number[] | null;
+  task_summary: string | null;
+  task_summary_embedding: number[] | null;
+  steps: Array<{ step_order: number; step_type: string; content: string; target?: string; duration_ms?: number }>;
+  step_count: number;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export interface TaskCluster {
+  id: string;
+  agent_id: string | null;
+  org_id: string | null;
+  centroid_embedding: number[];
+  task_summary: string;
+  run_count: number;
+  app_fingerprint: string | null;
+  created_at: string;
 }
 
 // === Suggestions ===
@@ -221,7 +279,8 @@ export type ClientMessage =
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -231,7 +290,7 @@ export type ServerMessage =
   | { type: 'nav'; url: string }
   | { type: 'error'; message: string }
   | { type: 'taskStarted'; taskId: string }
-  | { type: 'taskComplete'; success: boolean; taskId?: string }
+  | { type: 'taskComplete'; success: boolean; taskId?: string; stepCount?: number; durationMs?: number }
   | { type: 'finding'; finding: Finding }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
@@ -240,7 +299,9 @@ export type ServerMessage =
   | { type: 'sessionCrashed' }
   | { type: 'taskInterrupted'; task: string }
   | { type: 'evalProgress'; runId: string; completed: number; total: number; latest: { case: string; verdict: string } }
-  | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } };
+  | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } }
+  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
+  | { type: 'patternStale'; name: string; reason: string };
 
 // === API Request/Response ===
 
