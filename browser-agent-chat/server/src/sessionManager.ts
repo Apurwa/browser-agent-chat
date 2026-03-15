@@ -223,6 +223,7 @@ export async function createSession(
     lastTask: '',
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
+    detachedAt: 0,
   });
 
   agents.set(agentId, agentSession);
@@ -322,7 +323,8 @@ export async function ensureCapacity(): Promise<void> {
   await prev;
   try {
     while (agents.size >= MAX_CONCURRENT_BROWSERS) {
-      await evictLRUSession();
+      const evicted = await evictLRUSession();
+      if (!evicted) break; // Safety: nothing left to evict
     }
   } finally {
     release!();

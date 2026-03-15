@@ -90,9 +90,13 @@ const activeTasks = new Map<string, { taskId: string; stepCount: number; started
 sessionManager.setBeforeEvictHook(async (agentId: string) => {
   const taskEntry = activeTasks.get(agentId);
   if (taskEntry) {
+    const agent = sessionManager.getAgent(agentId);
+    if (agent) {
+      try { await agent.close(); } catch { /* agent may already be closed */ }
+    }
     try {
       await updateTask(taskEntry.taskId, { status: 'cancelled', completed_at: new Date().toISOString() });
-    } catch (e) { /* best effort */ }
+    } catch { /* best effort */ }
     activeTasks.delete(agentId);
   }
 });

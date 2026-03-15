@@ -165,8 +165,6 @@ async function run() {
 
   // Cleanup
   console.log('\n--- Cleanup ---');
-  ws.send(JSON.stringify({ type: 'stop' }));
-  await new Promise(r => setTimeout(r, 1000));
   ws.close();
 
   // Delete test agent
