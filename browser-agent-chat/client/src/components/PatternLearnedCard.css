@@ -1,0 +1,152 @@
+.pattern-learned-card {
+  background: linear-gradient(135deg, var(--bg-primary), var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.pattern-learned-card:hover {
+  border-color: color-mix(in srgb, var(--brand) 50%, transparent);
+}
+
+.pattern-learned-card--dominant {
+  border-color: color-mix(in srgb, var(--brand) 50%, transparent);
+}
+
+.pattern-learned-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pattern-learned-card__icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.pattern-learned-card__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.pattern-learned-card__label {
+  font-size: 11px;
+  color: var(--brand);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pattern-learned-card__name {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pattern-learned-card__stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.pattern-learned-card__stat {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pattern-learned-card__stat--success {
+  color: #4ade80;
+}
+
+.pattern-learned-card__chevron {
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.pattern-learned-card__steps {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-secondary);
+}
+
+.pattern-learned-card__steps-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.pattern-learned-card__step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pattern-learned-card__step {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 6px;
+}
+
+.pattern-learned-card__step-num {
+  color: var(--brand);
+  min-width: 14px;
+}
+
+/* First pattern celebration */
+.pattern-learned-card--celebration {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 15%, var(--bg-primary)), color-mix(in srgb, var(--accent) 10%, var(--bg-primary)));
+  border-color: color-mix(in srgb, var(--brand) 40%, transparent);
+  text-align: center;
+  cursor: default;
+}
+
+.pattern-learned-card__celebration-icon {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+
+.pattern-learned-card__celebration-title {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.pattern-learned-card__celebration-name {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.pattern-learned-card__celebration-stats {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 10px;
+}
+
+.pattern-learned-card__celebration-stat {
+  font-size: 11px;
+}
+
+.pattern-learned-card__celebration-stat--runs {
+  color: var(--text-muted);
+}
+
+.pattern-learned-card__celebration-stat--success {
+  color: #4ade80;
+}
+
+.pattern-learned-card__celebration-stat--steps {
+  color: var(--accent);
+}
