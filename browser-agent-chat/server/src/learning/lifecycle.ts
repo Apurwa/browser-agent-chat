@@ -24,30 +24,25 @@ export async function checkActivation(
   if ((pattern.success_rate ?? 0) < ACTIVATION_SUCCESS_RATE) return false;
 
   // Check cluster has enough runs
-  if (pattern.cluster_id) {
-    const cluster = await getTaskCluster(pattern.cluster_id);
-    if (cluster && cluster.run_count < 5) return false;
-  }
+  let cluster = pattern.cluster_id ? await getTaskCluster(pattern.cluster_id) : null;
+  if (cluster && cluster.run_count < 5) return false;
 
   await updatePatternState(pattern.id, 'active', {
     last_verified_success: new Date().toISOString(),
   });
 
   // Broadcast activation milestone
-  if (broadcast && pattern.cluster_id) {
-    const cluster = await getTaskCluster(pattern.cluster_id);
-    if (cluster) {
-      const steps = (pattern.steps as Array<{ action: string }>).map(s => s.action);
-      broadcast({
-        type: 'patternLearned',
-        name: cluster.task_summary,
-        steps,
-        success_rate: pattern.success_rate ?? 0,
-        avg_steps: pattern.avg_steps ?? steps.length,
-        runs: cluster.run_count,
-        transition: 'active',
-      });
-    }
+  if (broadcast && cluster) {
+    const steps = (pattern.steps as Array<{ action: string }>).map(s => s.action);
+    broadcast({
+      type: 'patternLearned',
+      name: cluster.task_summary,
+      steps,
+      success_rate: pattern.success_rate ?? 0,
+      avg_steps: pattern.avg_steps ?? steps.length,
+      runs: cluster.run_count,
+      transition: 'active',
+    });
   }
 
   // Check if this should become dominant

@@ -82,7 +82,7 @@ export default function TaskCompletionCard({
         <div className="task-completion-card__confirmation">
           <div className="task-completion-card__confirmation-check">
             <span className="task-completion-card__check-icon">✓</span>
-            <span className={`task-completion-card__check-text ${stage > 1 ? 'task-completion-card__check-text--pool' : ''}`}>
+            <span className="task-completion-card__check-text">
               {stage > 1 && submittedRating === 'positive' ? 'Added to learning pool' : 'Feedback recorded'}
             </span>
           </div>
