@@ -1,6 +1,7 @@
 import { listFeatures } from './db.js';
 import { getGraph, serializeGraph } from './nav-graph.js';
 import type { Feature, Flow } from './types.js';
+import { retrievePatterns, formatPatternsForPrompt } from './learning/retrieval.js';
 
 /**
  * Serialize project memory into a text prompt context block.
@@ -75,4 +76,31 @@ export async function loadMemoryContext(agentId: string): Promise<string> {
     return memoryBlock + '\n\n' + graphBlock;
   }
   return memoryBlock;
+}
+
+/**
+ * Build a task prompt enriched with learned patterns.
+ * Wraps loadMemoryContext + buildTaskPrompt + pattern retrieval.
+ */
+export async function buildTaskPromptWithPatterns(
+  agentId: string,
+  userMessage: string,
+): Promise<{ prompt: string; patternIds: string[] }> {
+  // Load existing memory context (features + nav graph)
+  const memoryContext = await loadMemoryContext(agentId);
+
+  // Retrieve learned patterns via semantic similarity
+  const retrieved = await retrievePatterns(agentId, userMessage);
+  const patternBlock = formatPatternsForPrompt(retrieved);
+  const patternIds = retrieved.map(r => r.pattern.id);
+
+  // Combine memory context with pattern block
+  const enrichedContext = patternBlock
+    ? `${memoryContext}\n\n${patternBlock}`
+    : memoryContext;
+
+  // Build the full prompt using existing function signature
+  const prompt = buildTaskPrompt(userMessage, enrichedContext);
+
+  return { prompt, patternIds };
 }
