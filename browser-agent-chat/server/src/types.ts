@@ -360,8 +360,9 @@ export type ServerMessage =
   | { type: 'taskInterrupted'; task: string }
   | { type: 'evalProgress'; runId: string; completed: number; total: number; latest: { case: string; verdict: string } }
   | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } }
-  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
+  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number; transition: 'active' | 'dominant' }
   | { type: 'patternStale'; name: string; reason: string }
+  | { type: 'feedbackAck'; taskId: string; rating: FeedbackRating; clustered: boolean; clusterName?: string; clusterProgress?: { current: number; needed: number } }
   | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === API Request/Response ===

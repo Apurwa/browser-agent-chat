@@ -143,8 +143,9 @@ export type ServerMessage =
   | { type: 'metrics'; metrics: StartupMetrics }
   | { type: 'sessionCrashed' }
   | { type: 'taskInterrupted'; task: string }
-  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
+  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number; transition: 'active' | 'dominant' }
   | { type: 'patternStale'; name: string; reason: string }
+  | { type: 'feedbackAck'; taskId: string; rating: 'positive' | 'negative'; clustered: boolean; clusterName?: string; clusterProgress?: { current: number; needed: number } }
   | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === Chat ===
@@ -155,4 +156,12 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   finding?: Finding;
+  patternData?: {
+    name: string;
+    steps: string[];
+    successRate: number;
+    runs: number;
+    transition: 'active' | 'dominant';
+    isCelebration: boolean;
+  };
 }
