@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
+import { HealthProvider } from './contexts/HealthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import LoginPage from './components/LoginPage';
 import Home from './components/Home';
@@ -17,16 +18,18 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
-      <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-      <Route path="/agents/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
-      <Route path="/agents/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
-      <Route path="/agents/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
-      <Route path="/agents/:id/settings" element={<ProtectedRoute><AgentSettings /></ProtectedRoute>} />
-      <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
-      <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
-      <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
-    </Routes>
+    <HealthProvider>
+      <Routes>
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
+        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/agents/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
+        <Route path="/agents/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
+        <Route path="/agents/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
+        <Route path="/agents/:id/settings" element={<ProtectedRoute><AgentSettings /></ProtectedRoute>} />
+        <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
+        <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
+        <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
+      </Routes>
+    </HealthProvider>
   );
 }
