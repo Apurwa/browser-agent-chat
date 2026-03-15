@@ -2,7 +2,7 @@ import {
   updatePatternState, listPatternsByCluster, listActivePatterns,
   getTaskCluster,
 } from '../db.js';
-import type { LearnedPattern, PatternState } from '../types.js';
+import type { LearnedPattern, PatternState, ServerMessage } from '../types.js';
 
 const ACTIVATION_USE_COUNT = 3;
 const ACTIVATION_SUCCESS_RATE = 0.8;
@@ -15,7 +15,10 @@ const UNUSED_DAYS = 60;
 /**
  * Check if a candidate pattern should be activated.
  */
-export async function checkActivation(pattern: LearnedPattern): Promise<boolean> {
+export async function checkActivation(
+  pattern: LearnedPattern,
+  broadcast?: (msg: ServerMessage) => void,
+): Promise<boolean> {
   if (pattern.pattern_state !== 'candidate') return false;
   if (pattern.use_count < ACTIVATION_USE_COUNT) return false;
   if ((pattern.success_rate ?? 0) < ACTIVATION_SUCCESS_RATE) return false;
@@ -30,8 +33,25 @@ export async function checkActivation(pattern: LearnedPattern): Promise<boolean>
     last_verified_success: new Date().toISOString(),
   });
 
+  // Broadcast activation milestone
+  if (broadcast && pattern.cluster_id) {
+    const cluster = await getTaskCluster(pattern.cluster_id);
+    if (cluster) {
+      const steps = (pattern.steps as Array<{ action: string }>).map(s => s.action);
+      broadcast({
+        type: 'patternLearned',
+        name: cluster.task_summary,
+        steps,
+        success_rate: pattern.success_rate ?? 0,
+        avg_steps: pattern.avg_steps ?? steps.length,
+        runs: cluster.run_count,
+        transition: 'active',
+      });
+    }
+  }
+
   // Check if this should become dominant
-  await checkDominance(pattern);
+  await checkDominance(pattern, broadcast);
 
   return true;
 }
@@ -39,7 +59,10 @@ export async function checkActivation(pattern: LearnedPattern): Promise<boolean>
 /**
  * Check if a pattern should become dominant in its cluster.
  */
-async function checkDominance(pattern: LearnedPattern): Promise<void> {
+async function checkDominance(
+  pattern: LearnedPattern,
+  broadcast?: (msg: ServerMessage) => void,
+): Promise<void> {
   if (!pattern.cluster_id) return;
 
   const clusterPatterns = await listPatternsByCluster(pattern.cluster_id);
@@ -62,6 +85,23 @@ async function checkDominance(pattern: LearnedPattern): Promise<void> {
   // Promote best to dominant
   if (best.pattern_state !== 'dominant') {
     await updatePatternState(best.id, 'dominant');
+
+    // Broadcast dominance milestone
+    if (broadcast && best.cluster_id) {
+      const cluster = await getTaskCluster(best.cluster_id);
+      if (cluster) {
+        const steps = (best.steps as Array<{ action: string }>).map(s => s.action);
+        broadcast({
+          type: 'patternLearned',
+          name: cluster.task_summary,
+          steps,
+          success_rate: best.success_rate ?? 0,
+          avg_steps: best.avg_steps ?? steps.length,
+          runs: cluster.run_count,
+          transition: 'dominant',
+        });
+      }
+    }
   }
 }
 
@@ -96,7 +136,10 @@ export async function recordPatternFailure(pattern: LearnedPattern): Promise<boo
 /**
  * Record a pattern success. Reset failure count, update metrics.
  */
-export async function recordPatternSuccess(pattern: LearnedPattern): Promise<void> {
+export async function recordPatternSuccess(
+  pattern: LearnedPattern,
+  broadcast?: (msg: ServerMessage) => void,
+): Promise<void> {
   const newUseCount = pattern.use_count + 1;
   const newSuccessRate = pattern.use_count > 0
     ? ((pattern.success_rate ?? 1) * pattern.use_count + 1) / newUseCount
@@ -113,7 +156,7 @@ export async function recordPatternSuccess(pattern: LearnedPattern): Promise<voi
 
   // Check activation for candidates
   if (pattern.pattern_state === 'candidate') {
-    await checkActivation({ ...pattern, use_count: newUseCount, success_rate: newSuccessRate });
+    await checkActivation({ ...pattern, use_count: newUseCount, success_rate: newSuccessRate }, broadcast);
   }
 }
 
