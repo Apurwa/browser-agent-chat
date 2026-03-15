@@ -227,6 +227,12 @@ wss.on('connection', (ws: WebSocket) => {
 
       const baseBroadcast = sessionManager.makeBroadcast(agentId);
       const taskBroadcast = (broadcastMsg: ServerMessage) => {
+        // Count steps for all agent events (thought, action, screenshot, nav)
+        const activeTask = activeTasks.get(agentId);
+        if (activeTask && broadcastMsg.type !== 'taskComplete' && broadcastMsg.type !== 'status') {
+          activeTask.stepCount++;
+        }
+
         // Intercept taskComplete to update task record and enrich with metadata
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);

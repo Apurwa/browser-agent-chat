@@ -1,9 +1,9 @@
 import { memo } from 'react';
-import { BaseEdge, getStraightPath, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, getSmoothStepPath, type EdgeProps } from '@xyflow/react';
 
 function NavEdge(props: EdgeProps) {
-  const { sourceX, sourceY, targetX, targetY, data } = props;
-  const [edgePath] = getStraightPath({ sourceX, sourceY, targetX, targetY });
+  const { sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data } = props;
+  const [edgePath] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 8 });
   const isUnexplored = (data as Record<string, unknown>)?.isUnexplored === true;
 
   return (
