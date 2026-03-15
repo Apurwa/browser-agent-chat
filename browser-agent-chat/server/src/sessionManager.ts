@@ -9,11 +9,16 @@ import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
 // -- Configuration --
 
 const MAX_CONCURRENT_BROWSERS = parseInt(process.env.MAX_CONCURRENT_BROWSERS || '3', 10);
+const DETACHED_TIMEOUT_SECONDS = parseInt(process.env.DETACHED_TIMEOUT_SECONDS || '120', 10);
+const ABSOLUTE_TIMEOUT_SECONDS = parseInt(process.env.ABSOLUTE_TIMEOUT_SECONDS || '1800', 10);
 
 // -- Local state (thin cache, NOT source of truth — Redis is) --
 
 const agents = new Map<string, AgentSession>();
 const wsClients = new Map<string, Set<WebSocket>>();
+const detachedTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const absoluteTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const warningTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 // -- Before-evict hook (for activeTasks cleanup) --
 
@@ -33,6 +38,53 @@ export function _resetLocalState(): void {
   wsClients.clear();
   onBeforeEvict = null;
   capacityLock = Promise.resolve();
+  // Clear all timers
+  for (const t of detachedTimers.values()) clearTimeout(t);
+  detachedTimers.clear();
+  for (const t of absoluteTimers.values()) clearTimeout(t);
+  absoluteTimers.clear();
+  for (const t of warningTimers.values()) clearTimeout(t);
+  warningTimers.clear();
+}
+
+// -- Detached & absolute timeout helpers --
+
+function startDetachedTimer(agentId: string): void {
+  // Store detachedAt in Redis for crash recovery
+  redisStore.setSession(agentId, { detachedAt: Date.now() } as Partial<RedisSession>).catch(() => {});
+
+  const timer = setTimeout(async () => {
+    detachedTimers.delete(agentId);
+    if (onBeforeEvict) await onBeforeEvict(agentId);
+    await destroySession(agentId);
+  }, DETACHED_TIMEOUT_SECONDS * 1000);
+
+  detachedTimers.set(agentId, timer);
+}
+
+function startAbsoluteTimeout(agentId: string): void {
+  // Warning at 5 minutes before expiry
+  const warningMs = (ABSOLUTE_TIMEOUT_SECONDS - 300) * 1000;
+  if (warningMs > 0) {
+    const warnTimer = setTimeout(() => {
+      warningTimers.delete(agentId);
+      broadcastToClients(agentId, {
+        type: 'session_expiring',
+        remainingSeconds: 300,
+      });
+    }, warningMs);
+    warningTimers.set(agentId, warnTimer);
+  }
+
+  // Destroy at absolute timeout
+  const absTimer = setTimeout(async () => {
+    absoluteTimers.delete(agentId);
+    warningTimers.delete(agentId);
+    if (onBeforeEvict) await onBeforeEvict(agentId);
+    await destroySession(agentId);
+  }, ABSOLUTE_TIMEOUT_SECONDS * 1000);
+
+  absoluteTimers.set(agentId, absTimer);
 }
 
 // -- WebSocket client management --
@@ -49,13 +101,27 @@ export function addClient(agentId: string, ws: WebSocket): void {
   }
   clients.add(ws);
   redisStore.refreshTTL(agentId).catch(() => {});
+
+  // Cancel detached timer if reconnecting
+  const timer = detachedTimers.get(agentId);
+  if (timer) {
+    clearTimeout(timer);
+    detachedTimers.delete(agentId);
+    redisStore.setSession(agentId, { detachedAt: 0 } as Partial<RedisSession>).catch(() => {});
+  }
 }
 
 export function removeClient(agentId: string, ws: WebSocket): void {
   const clients = wsClients.get(agentId);
   if (!clients) return;
   clients.delete(ws);
-  if (clients.size === 0) wsClients.delete(agentId);
+  if (clients.size === 0) {
+    wsClients.delete(agentId);
+    // Only start detached timer if the agent still exists (not already destroyed)
+    if (agents.has(agentId)) {
+      startDetachedTimer(agentId);
+    }
+  }
 }
 
 export function broadcastToClients(agentId: string, msg: ServerMessage): void {
@@ -160,12 +226,21 @@ export async function createSession(
   });
 
   agents.set(agentId, agentSession);
+  startAbsoluteTimeout(agentId);
   return agentSession;
 }
 
 // -- Destroy session --
 
 export async function destroySession(agentId: string): Promise<void> {
+  // Clean up timers
+  const detTimer = detachedTimers.get(agentId);
+  if (detTimer) { clearTimeout(detTimer); detachedTimers.delete(agentId); }
+  const absTimer = absoluteTimers.get(agentId);
+  if (absTimer) { clearTimeout(absTimer); absoluteTimers.delete(agentId); }
+  const warnTimer = warningTimers.get(agentId);
+  if (warnTimer) { clearTimeout(warnTimer); warningTimers.delete(agentId); }
+
   const session = await redisStore.getSession(agentId);
 
   // Remove from local maps
@@ -279,6 +354,7 @@ export async function recoverSession(agentId: string): Promise<boolean> {
           broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined
         );
         agents.set(agentId, agentSession);
+        startAbsoluteTimeout(agentId);
 
         // Update status based on what was happening before crash
         if (session.status === 'working') {

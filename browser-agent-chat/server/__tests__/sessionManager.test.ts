@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock redisStore
 vi.mock('../src/redisStore.js', () => ({
@@ -176,6 +176,7 @@ const mockRedisSession = {
   lastTask: '',
   createdAt: 1710000000000,
   lastActivityAt: 1710000000000,
+  detachedAt: 0,
 };
 
 describe('sessionManager — recovery', () => {
@@ -425,5 +426,119 @@ describe('sessionManager — LRU eviction', () => {
 
     await callBeforeEvictHook('test-agent');
     expect(hook).toHaveBeenCalledWith('test-agent');
+  });
+});
+
+describe('sessionManager — detached timeout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    _resetLocalState();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('starts detached timer when last client disconnects', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    const mockWs = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWs);
+    vi.clearAllMocks();
+
+    removeClient('agent-a', mockWs);
+
+    // Should have set detachedAt in Redis
+    expect(redisStore.setSession).toHaveBeenCalledWith(
+      'agent-a',
+      expect.objectContaining({ detachedAt: expect.any(Number) })
+    );
+  });
+
+  it('cancels detached timer when client reconnects', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    const mockWs1 = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWs1);
+    removeClient('agent-a', mockWs1);
+    vi.clearAllMocks();
+
+    // Reconnect
+    const mockWs2 = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWs2);
+
+    // Should reset detachedAt to 0
+    expect(redisStore.setSession).toHaveBeenCalledWith(
+      'agent-a',
+      expect.objectContaining({ detachedAt: 0 })
+    );
+
+    // Advance past detached timeout — session should NOT be destroyed
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(redisStore.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it('destroys session when detached timer fires', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    const mockWs = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWs);
+    removeClient('agent-a', mockWs);
+    vi.clearAllMocks();
+
+    // Mock getSession for destroySession
+    (redisStore.getSession as any).mockResolvedValueOnce({
+      ...mockRedisSession,
+      browserPid: 12345,
+      cdpPort: 19300,
+      dbSessionId: 'db-a',
+    });
+
+    // Advance past detached timeout (120s)
+    await vi.advanceTimersByTimeAsync(121_000);
+
+    expect(redisStore.deleteSession).toHaveBeenCalledWith('agent-a');
+  });
+});
+
+describe('sessionManager — absolute timeout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    _resetLocalState();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('sends session_expiring warning 5 minutes before expiry', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    const mockWs = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWs);
+    vi.clearAllMocks();
+
+    // Advance to 25 minutes (warning point for 30min timeout)
+    await vi.advanceTimersByTimeAsync(1500_000); // 25 * 60 * 1000
+
+    expect(mockWs.send).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"session_expiring"')
+    );
+  });
+
+  it('destroys session when absolute timeout fires', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    vi.clearAllMocks();
+
+    // Mock getSession for destroySession
+    (redisStore.getSession as any).mockResolvedValueOnce({
+      ...mockRedisSession,
+      browserPid: 12345,
+      cdpPort: 19300,
+      dbSessionId: 'db-a',
+    });
+
+    // Advance past absolute timeout (30 min = 1800s)
+    await vi.advanceTimersByTimeAsync(1801_000);
+
+    expect(redisStore.deleteSession).toHaveBeenCalledWith('agent-a');
   });
 });
