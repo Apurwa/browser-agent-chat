@@ -53,6 +53,15 @@
   --badge-green-text: #86efac;
   --badge-red-bg: rgba(239, 68, 68, 0.15);
   --badge-red-text: #fca5a5;
+  /* Chart color palette — dark theme */
+  --chart-color-1: #3b82f6;
+  --chart-color-2: #eab308;
+  --chart-color-3: #22c55e;
+  --chart-color-4: #ef4444;
+  --chart-color-5: #a855f7;
+  --chart-color-6: #f97316;
+  --chart-color-7: #06b6d4;
+  --chart-color-8: #ec4899;
 }
 
 [data-theme="light"] {
@@ -97,6 +106,15 @@
   --badge-green-text: #16a34a;
   --badge-red-bg: #fee2e2;
   --badge-red-text: #dc2626;
+  /* Chart color palette — light theme */
+  --chart-color-1: #2563eb;
+  --chart-color-2: #ca8a04;
+  --chart-color-3: #16a34a;
+  --chart-color-4: #dc2626;
+  --chart-color-5: #9333ea;
+  --chart-color-6: #ea580c;
+  --chart-color-7: #0891b2;
+  --chart-color-8: #db2777;
 }
 
 * {
