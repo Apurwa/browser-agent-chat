@@ -35,8 +35,10 @@ export async function executeStandardLogin(
       await page.click(selectors.submit);
     }
 
-    // Wait for navigation
+    // Wait for navigation/SPA route change — try multiple strategies
     await page.waitForLoadState('networkidle').catch(() => {});
+    // Extra wait for SPAs that do client-side routing after submit
+    await page.waitForTimeout(2000);
 
     // Verify success
     const success = await verifyLoginSuccess(page, loginUrl);
@@ -48,18 +50,32 @@ export async function executeStandardLogin(
 
 /**
  * Check if login succeeded by verifying URL changed or password field disappeared.
+ * Uses page.evaluate(location.href) for SPA-aware URL detection.
  */
 export async function verifyLoginSuccess(page: any, loginUrl: string): Promise<boolean> {
-  const currentUrl = page.url();
+  // Use evaluate for SPA-aware URL (page.url() can be stale after client-side routing)
+  const currentUrl = await page.evaluate('location.href').catch(() => page.url());
 
   // URL changed away from login page
   if (currentUrl !== loginUrl) return true;
 
-  // Same URL but check if password field is gone (runs in browser context)
-  const hasPasswordField = await page.evaluate(`(() => {
+  // Same URL but check multiple signals (runs in browser context)
+  const loginGone = await page.evaluate(`(() => {
     const pw = document.querySelector('input[type="password"]');
-    return pw !== null && pw.offsetParent !== null;
+    const pwVisible = pw !== null && pw.offsetParent !== null;
+    if (!pwVisible) return true;
+
+    // Check for error messages that indicate a failed login
+    const errorTexts = ['invalid', 'incorrect', 'wrong', 'failed', 'error', 'denied'];
+    const alerts = [...document.querySelectorAll('[role="alert"], .error, .alert-danger, .alert-error')];
+    const hasError = alerts.some(el => {
+      const text = (el.textContent || '').toLowerCase();
+      return errorTexts.some(e => text.includes(e));
+    });
+    if (hasError) return false;
+
+    return false;
   })()`);
 
-  return !hasPasswordField;
+  return loginGone;
 }
