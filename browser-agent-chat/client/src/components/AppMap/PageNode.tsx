@@ -31,48 +31,39 @@ function getHighestCriticality(features: Array<{ criticality: string }>): string
 function PageNode({ data }: NodeProps) {
   const d = data as PageNodeData;
   const featureCount = d.features.length;
-  const radius = Math.max(20, Math.min(40, 20 + featureCount * 4));
-  const borderColor = CRITICALITY_COLORS[getHighestCriticality(d.features)] || '#334155';
+  const borderColor = CRITICALITY_COLORS[getHighestCriticality(d.features)] || 'var(--border-secondary)';
   const pendingCount = d.pendingSuggestions.length;
   const isUnexplored = featureCount === 0 && pendingCount === 0;
 
   return (
     <div className={`page-node ${d.isNew ? 'page-node--new' : ''} ${d.isSelected ? 'page-node--selected' : ''} ${isUnexplored ? 'page-node--unexplored' : ''}`}>
       <Handle type="target" position={Position.Top} className="page-node-handle" />
-      <svg width={radius * 2 + 16} height={radius * 2 + 16} viewBox={`0 0 ${radius * 2 + 16} ${radius * 2 + 16}`}>
-        {d.isSelected && (
-          <>
-            <circle cx={radius + 8} cy={radius + 8} r={radius + 6} fill="none" stroke={borderColor} strokeWidth={1} opacity={0.3} />
-            <circle cx={radius + 8} cy={radius + 8} r={radius + 10} fill="none" stroke={borderColor} strokeWidth={0.5} opacity={0.15} />
-          </>
-        )}
-        <circle cx={radius + 8} cy={radius + 8} r={radius} fill="var(--bg-card, #221F1A)" stroke={borderColor}
-          strokeWidth={isUnexplored ? 1 : 2} strokeDasharray={isUnexplored ? '4' : 'none'} />
-        <text x={radius + 8} y={radius + 5} textAnchor="middle" fill="var(--text-primary, #F5F0E8)" fontSize={featureCount > 3 ? 9 : 10} fontWeight={d.isSelected ? 'bold' : 'normal'}>
-          {d.pageTitle || 'Untitled'}
-        </text>
-        <text x={radius + 8} y={radius + 17} textAnchor="middle" fill="var(--text-dim, #858078)" fontSize={7}>
-          {d.urlPattern}
-        </text>
-        {featureCount > 0 && (
-          <>
-            <circle cx={radius * 2 - 2} cy={12} r={9} fill={borderColor} />
-            <text x={radius * 2 - 2} y={16} textAnchor="middle" fill="white" fontSize={9} fontWeight="bold">
+
+      <div className="page-node-card" style={{ borderLeftColor: borderColor }}>
+        <div className="page-node-header">
+          <span className="page-node-title" title={d.pageTitle || 'Untitled'}>
+            {d.pageTitle || 'Untitled'}
+          </span>
+          {featureCount > 0 && (
+            <span className="page-node-badge" style={{ background: borderColor }}>
               {featureCount}
-            </text>
-          </>
-        )}
+            </span>
+          )}
+        </div>
+        <span className="page-node-url" title={d.urlPattern}>
+          {d.urlPattern}
+        </span>
         {isUnexplored && (
-          <text x={radius + 8} y={radius + 28} textAnchor="middle" fill="var(--text-dimmer, #656058)" fontSize={7}>
-            unexplored
-          </text>
+          <span className="page-node-unexplored-label">unexplored</span>
         )}
-      </svg>
+      </div>
+
       {pendingCount > 0 && (
         <div className="page-node-pending" title={`${pendingCount} pending suggestion(s)`}>
           {pendingCount}
         </div>
       )}
+
       <Handle type="source" position={Position.Bottom} className="page-node-handle" />
     </div>
   );

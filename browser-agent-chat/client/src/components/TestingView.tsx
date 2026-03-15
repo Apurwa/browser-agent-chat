@@ -69,7 +69,7 @@ export default function TestingView() {
               className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
               onClick={() => setActiveTab('map')}
             >
-              App Map
+              App Graph
             </button>
           </div>
           {activeTab === 'chat' ? (

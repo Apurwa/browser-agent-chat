@@ -73,8 +73,8 @@ function layoutNodes(mapNodes: MapNode[], mapEdges: MapEdge[]): Node[] {
     byDepth.get(d)!.push(n);
   }
 
-  const Y_GAP = 120;
-  const X_GAP = 160;
+  const Y_GAP = 180;
+  const X_GAP = 220;
   const nodes: Node[] = [];
 
   for (const [d, group] of byDepth) {
@@ -202,12 +202,12 @@ export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) 
           minZoom={0.3}
           maxZoom={2}
         >
-          <Background color="#1e293b" gap={20} size={1} />
+          <Background color="var(--border-subtle, #252218)" gap={24} size={1} />
           <Controls showInteractive={false} />
           <MiniMap
-            nodeColor="#22d3ee"
-            maskColor="rgba(0,0,0,0.7)"
-            style={{ background: '#0a0a1a', border: '1px solid #1e293b' }}
+            nodeColor="var(--brand, #3D6B4F)"
+            maskColor="rgba(0,0,0,0.5)"
+            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-primary)' }}
           />
         </ReactFlow>
       </div>

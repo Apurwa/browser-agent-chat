@@ -68,7 +68,7 @@
   background: var(--bg-hover);
 }
 
-/* Page Node */
+/* Page Node — Card Style */
 .page-node {
   position: relative;
   cursor: pointer;
@@ -80,33 +80,112 @@
   height: 6px;
 }
 
-.page-node--new svg circle:first-of-type {
-  animation: node-pulse 2s ease-in-out 5;
+.page-node-card {
+  width: 160px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-left: 3px solid var(--border-secondary);
+  border-radius: 8px;
+  padding: 8px 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-@keyframes node-pulse {
-  0%, 100% { filter: drop-shadow(0 0 4px rgba(212, 135, 77, 0.3)); }
-  50% { filter: drop-shadow(0 0 12px rgba(212, 135, 77, 0.6)); }
+.page-node--selected .page-node-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
 }
 
-.page-node--unexplored {
-  opacity: 0.6;
+.page-node-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
 }
 
-.page-node-pending {
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  background: var(--accent);
-  color: var(--bg-primary);
-  font-size: 8px;
-  font-weight: bold;
-  width: 16px;
-  height: 16px;
+.page-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.page-node-badge {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 9px;
+  font-weight: bold;
+  color: #fff;
+}
+
+.page-node-url {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.page-node-unexplored-label {
+  display: block;
+  font-size: 9px;
+  color: var(--text-dimmer);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+.page-node--new .page-node-card {
+  animation: node-pulse 2s ease-in-out 3;
+}
+
+@keyframes node-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(212, 135, 77, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(212, 135, 77, 0.5); }
+}
+
+.page-node--unexplored .page-node-card {
+  opacity: 0.6;
+  border-style: dashed;
+}
+
+.page-node-pending {
+  position: absolute;
+  top: -6px;
+  left: -6px;
+  background: var(--accent);
+  color: var(--bg-primary);
+  font-size: 8px;
+  font-weight: bold;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+/* Edge Label */
+.app-graph-edge-label {
+  font-size: 9px;
+  color: var(--text-dimmer);
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Detail Panel */
