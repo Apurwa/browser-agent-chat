@@ -95,8 +95,10 @@ export async function buildTaskPromptWithPatterns(
   const patternIds = retrieved.map(r => r.pattern.id);
 
   // Combine memory context with pattern block
+  const patternInstruction = `If you recognize this task from your learned patterns, mention it naturally in your first thought — for example: "I've done this before, I know a good approach." Do NOT list the learned steps mechanically; just let the knowledge guide your actions.`;
+
   const enrichedContext = patternBlock
-    ? `${memoryContext}\n\n${patternBlock}`
+    ? `${memoryContext}\n\n${patternBlock}\n\n${patternInstruction}`
     : memoryContext;
 
   // Build the full prompt using existing function signature
