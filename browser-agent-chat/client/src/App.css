@@ -38,6 +38,21 @@
   --accent-light: rgba(212, 135, 77, 0.12);
   --scrollbar-thumb: #3A3530;
   --scrollbar-thumb-hover: #504B43;
+  /* Observability badge variables — dark theme */
+  --color-success: #4ade80;
+  --color-error: #f87171;
+  --accent-color: #60a5fa;
+  --accent-bg: rgba(96, 165, 250, 0.1);
+  --badge-blue-bg: rgba(59, 130, 246, 0.2);
+  --badge-blue-text: #93c5fd;
+  --badge-pink-bg: rgba(236, 72, 153, 0.2);
+  --badge-pink-text: #f9a8d4;
+  --badge-indigo-bg: rgba(99, 102, 241, 0.2);
+  --badge-indigo-text: #a5b4fc;
+  --badge-green-bg: rgba(34, 197, 94, 0.2);
+  --badge-green-text: #86efac;
+  --badge-red-bg: rgba(239, 68, 68, 0.15);
+  --badge-red-text: #fca5a5;
 }
 
 [data-theme="light"] {
@@ -67,6 +82,21 @@
   --accent-light: rgba(212, 135, 77, 0.08);
   --scrollbar-thumb: #D5D0CA;
   --scrollbar-thumb-hover: #B5B0AA;
+  /* Observability badge variables — light theme */
+  --color-success: #22c55e;
+  --color-error: #ef4444;
+  --accent-color: #3b82f6;
+  --accent-bg: rgba(59, 130, 246, 0.08);
+  --badge-blue-bg: #dbeafe;
+  --badge-blue-text: #1d4ed8;
+  --badge-pink-bg: #fce7f3;
+  --badge-pink-text: #be185d;
+  --badge-indigo-bg: #e0e7ff;
+  --badge-indigo-text: #4338ca;
+  --badge-green-bg: #dcfce7;
+  --badge-green-text: #16a34a;
+  --badge-red-bg: #fee2e2;
+  --badge-red-text: #dc2626;
 }
 
 * {
@@ -1101,6 +1131,7 @@ body {
   flex-shrink: 0;
   max-height: 38vh;
   overflow-y: auto;
+  overflow-x: hidden;
   border-bottom: 1px solid var(--border-primary);
   background:
     linear-gradient(180deg, rgba(124, 92, 255, 0.04) 0%, transparent 100%);
@@ -1154,7 +1185,7 @@ body {
 
 .mv-suggestions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 10px;
   padding: 14px 20px 16px;
 }
