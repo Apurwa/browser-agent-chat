@@ -378,6 +378,27 @@ describe('sessionManager — LRU eviction', () => {
     expect(redisStore.deleteSession).not.toHaveBeenCalled();
   });
 
+  it('ensureCapacity evicts until under MAX_CONCURRENT_BROWSERS', async () => {
+    // Default MAX_CONCURRENT_BROWSERS=3, create 3 sessions to hit limit
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    await createSession('agent-b', 'http://b.com', 'db-b');
+    await createSession('agent-c', 'http://c.com', 'db-c');
+    vi.clearAllMocks();
+
+    // Mock getSession calls: eviction query for 3 agents, then destroySession reads
+    (redisStore.getSession as any)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 1000 }) // agent-a (oldest)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 2000 }) // agent-b
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 3000 }) // agent-c
+      .mockResolvedValueOnce({ ...mockRedisSession, browserPid: 12345, cdpPort: 19300, dbSessionId: 'db-a' }); // destroySession for agent-a
+
+    await ensureCapacity();
+
+    // Should have evicted 1 session (3 >= 3, evict until < 3)
+    expect(redisStore.deleteSession).toHaveBeenCalledWith('agent-a');
+    expect(redisStore.deleteSession).toHaveBeenCalledTimes(1);
+  });
+
   it('beforeEvict hook is called before destroy', async () => {
     const hook = vi.fn().mockResolvedValue(undefined);
     setBeforeEvictHook(hook);

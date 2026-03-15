@@ -32,6 +32,7 @@ export function _resetLocalState(): void {
   agents.clear();
   wsClients.clear();
   onBeforeEvict = null;
+  capacityLock = Promise.resolve();
 }
 
 // -- WebSocket client management --
