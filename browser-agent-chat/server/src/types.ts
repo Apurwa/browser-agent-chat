@@ -22,6 +22,62 @@ export interface PlaintextCredentials {
   password: string;
 }
 
+// --- Credential Vault Types ---
+
+export interface PlaintextSecret {
+  password?: string;
+  apiKey?: string;
+}
+
+export interface VaultEntry {
+  id: string;
+  user_id: string;
+  label: string;
+  credential_type: string;
+  metadata: { username?: string; notes?: string };
+  domains: string[];
+  scope: string;
+  version: number;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_by_agent: string | null;
+  created_by_agent: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoundCredential extends VaultEntry {
+  usage_context: string | null;
+  priority: number;
+  binding_id: string;
+}
+
+export interface LoginDetectionResult {
+  score: number;
+  isLoginPage: boolean;
+  selectors: {
+    username: string | null;
+    password: string | null;
+    submit: string | null;
+  };
+  domain: string;
+  strategy: 'standard_form' | 'two_step' | 'unknown';
+}
+
+export interface LoginPattern {
+  domain: string;
+  credential_id: string;
+  strategy: 'standard_form';
+  username_selector: string;
+  password_selector: string;
+  submit_selector: string;
+}
+
+export interface LoginResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface Feature {
   id: string;
   agent_id: string;
@@ -165,6 +221,8 @@ export interface LearnedPattern {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  domain?: string;
+  credential_id?: string;  // Reference to credentials_vault.id
 }
 
 export interface LoginTrigger {
@@ -221,7 +279,8 @@ export type ClientMessage =
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'credential_provided'; credentialId: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -240,7 +299,8 @@ export type ServerMessage =
   | { type: 'sessionCrashed' }
   | { type: 'taskInterrupted'; task: string }
   | { type: 'evalProgress'; runId: string; completed: number; total: number; latest: { case: string; verdict: string } }
-  | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } };
+  | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } }
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === API Request/Response ===
 
