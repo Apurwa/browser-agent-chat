@@ -22,6 +22,62 @@ export interface PlaintextCredentials {
   password: string;
 }
 
+// --- Credential Vault Types ---
+
+export interface PlaintextSecret {
+  password?: string;
+  apiKey?: string;
+}
+
+export interface VaultEntry {
+  id: string;
+  user_id: string;
+  label: string;
+  credential_type: string;
+  metadata: { username?: string; notes?: string };
+  domains: string[];
+  scope: string;
+  version: number;
+  use_count: number;
+  last_used_at: string | null;
+  last_used_by_agent: string | null;
+  created_by_agent: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BoundCredential extends VaultEntry {
+  usage_context: string | null;
+  priority: number;
+  binding_id: string;
+}
+
+export interface LoginDetectionResult {
+  score: number;
+  isLoginPage: boolean;
+  selectors: {
+    username: string | null;
+    password: string | null;
+    submit: string | null;
+  };
+  domain: string;
+  strategy: 'standard_form' | 'two_step' | 'unknown';
+}
+
+export interface LoginPattern {
+  domain: string;
+  credential_id: string;
+  strategy: 'standard_form';
+  username_selector: string;
+  password_selector: string;
+  submit_selector: string;
+}
+
+export interface LoginResult {
+  success: boolean;
+  error?: string;
+}
+
 export interface Feature {
   id: string;
   agent_id: string;
@@ -182,6 +238,8 @@ export interface LearnedPattern {
   app_fingerprint: string | null;
   last_verified_success: string | null;
   portability_score: number | null;
+  domain?: string;
+  credential_id?: string;  // Reference to credentials_vault.id
 }
 
 export interface LoginTrigger {
@@ -280,7 +338,8 @@ export type ClientMessage =
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
   | { type: 'ping' }
-  | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string };
+  | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string }
+  | { type: 'credential_provided'; credentialId: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -301,7 +360,8 @@ export type ServerMessage =
   | { type: 'evalProgress'; runId: string; completed: number; total: number; latest: { case: string; verdict: string } }
   | { type: 'evalComplete'; runId: string; summary: { total: number; passed: number; failed: number; errorBreakdown: Record<string, number> } }
   | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
-  | { type: 'patternStale'; name: string; reason: string };
+  | { type: 'patternStale'; name: string; reason: string }
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === API Request/Response ===
 

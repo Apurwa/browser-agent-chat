@@ -1,0 +1,380 @@
+/* Vault page styles — uses CSS custom properties from App.css */
+
+.vault-page {
+  flex: 1;
+  padding: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+  color: var(--text-body);
+  overflow-y: auto;
+}
+
+.vault-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.vault-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vault-back-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  color: var(--text-muted);
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vault-back-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.vault-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.vault-add-btn {
+  background: var(--brand);
+  color: var(--text-primary);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.vault-add-btn:hover {
+  background: var(--brand-hover);
+}
+
+/* Search & Filter */
+.vault-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.vault-search {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  color: var(--text-body);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.vault-search::placeholder {
+  color: var(--text-dim);
+}
+
+.vault-type-filter {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  color: var(--text-body);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+/* Credential List */
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vault-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.vault-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.vault-item-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.vault-item-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+.vault-item-domains {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.vault-domain-chip {
+  background: var(--bg-secondary);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+.vault-item-stats {
+  font-size: 11px;
+  color: var(--text-dimmer);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.vault-item-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vault-action-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.vault-action-btn:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.vault-action-btn--danger:hover {
+  color: #ef4444; /* Allowlisted semantic error red — see .stylelintrc.json */
+}
+
+/* Empty State */
+.vault-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 40px 20px;
+  font-size: 14px;
+}
+
+/* Form */
+.vault-form {
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.vault-form-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+}
+
+.vault-form-row {
+  margin-bottom: 12px;
+}
+
+.vault-form-row label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.vault-form-row input,
+.vault-form-row select {
+  width: 100%;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  color: var(--text-body);
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.vault-form-row input:focus,
+.vault-form-row select:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+.vault-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.vault-form-cancel {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  color: var(--text-muted);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.vault-form-save {
+  background: var(--brand);
+  border: none;
+  color: var(--text-primary);
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.vault-form-save:hover {
+  background: var(--brand-hover);
+}
+
+.vault-form-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Domain chip input */
+.vault-domain-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 36px;
+  align-items: center;
+}
+
+.vault-domain-input input {
+  border: none;
+  background: none;
+  flex: 1;
+  min-width: 100px;
+  padding: 4px 0;
+}
+
+.vault-domain-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.vault-domain-tag button {
+  background: none;
+  border: none;
+  color: var(--text-dimmer);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1;
+}
+
+.vault-domain-tag button:hover {
+  color: #ef4444;
+}
+
+/* Change password button */
+.vault-change-pw-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+  color: var(--accent);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* Linked credentials in settings */
+.linked-credentials {
+  margin-top: 16px;
+}
+
+.linked-cred-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.linked-cred-label {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.linked-cred-domains {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.linked-cred-unlink {
+  background: none;
+  border: none;
+  color: var(--text-dimmer);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.linked-cred-unlink:hover {
+  color: #ef4444;
+}
+
+.link-cred-btn {
+  background: var(--bg-hover);
+  border: 1px dashed var(--border-secondary);
+  color: var(--accent);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  width: 100%;
+  font-family: inherit;
+  margin-top: 8px;
+}
+
+.link-cred-btn:hover {
+  background: var(--bg-active);
+}

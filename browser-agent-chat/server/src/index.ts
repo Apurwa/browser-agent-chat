@@ -11,9 +11,10 @@ import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
 import mapRouter from './routes/map.js';
 import tracesRouter from './routes/traces.js';
-import { executeTask, executeExplore, executeLogin } from './agent.js';
+import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
+import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
+import { pendingCredentialRequests } from './vault.js';
 import { getAgent, createSession, createTask, updateTask } from './db.js';
-import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
@@ -69,12 +70,17 @@ app.use('/api/agents/:id/evals', evalsRouter);
 app.use('/api/agents/:id/map', mapRouter);
 app.use('/api/agents/:id/feedback', feedbackRouter);
 app.use('/api/agents/:id/traces', tracesRouter);
+app.use('/api/vault', vaultRouter);
+app.use('/api/agents/:id/credentials', agentCredentialsRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
 
 // Track which agent each client is associated with
 const clientAgents = new Map<WebSocket, string>();
+
+// Track which user each client is associated with
+const clientUserIds = new Map<WebSocket, string>();
 
 // Track active tasks per agent
 const activeTasks = new Map<string, { taskId: string; stepCount: number; startedAt: number; prompt: string }>();
@@ -146,10 +152,7 @@ wss.on('connection', (ws: WebSocket) => {
           return;
         }
 
-        let credentials: { username: string; password: string } | null = null;
-        if (agent.credentials) {
-          try { credentials = decryptCredentials(agent.credentials); } catch {}
-        }
+        clientUserIds.set(ws, agent.user_id);
 
         const dbSessionId = await createSession(agent.id);
 
@@ -162,9 +165,10 @@ wss.on('connection', (ws: WebSocket) => {
         // Tell client the agent is ready
         ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
-        if (credentials) {
+        {
           const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
-          agentSession.loginDone = executeLogin(agentSession, credentials, loginBroadcast).catch(err => {
+          const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginDone = handleLoginDetection(loginPage, msg.agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
           });
         }
@@ -320,6 +324,14 @@ wss.on('connection', (ws: WebSocket) => {
         activeTasks.delete(agentId);
       }
 
+    } else if (msg.type === 'credential_provided') {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) return;
+      const pending = pendingCredentialRequests.get(agentId);
+      if (pending) {
+        pending.resolve(msg.credentialId);
+      }
+      return;
     }
   });
 
@@ -331,6 +343,7 @@ wss.on('connection', (ws: WebSocket) => {
       clientAgents.delete(ws);
       activeTasks.delete(agentId);  // Clean up to prevent memory leak
     }
+    clientUserIds.delete(ws);
   });
 });
 

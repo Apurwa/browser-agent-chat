@@ -2428,19 +2428,83 @@ select:focus {
   flex-direction: column;
   gap: 6px;
   margin-top: 8px;
-  padding: 10px;
-  background: var(--bg-secondary);
+  padding: 12px;
+  background: var(--bg-card);
   border: 1px solid var(--border-primary);
   border-radius: 8px;
+  margin-bottom: 8px;
+}
+
+.chat-cred-form-title {
+  font-weight: bold;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+  font-size: 13px;
 }
 
 .chat-cred-form input {
-  padding: 6px 10px;
+  width: 100%;
+  padding: 6px 8px;
   border: 1px solid var(--border-primary);
-  border-radius: 6px;
-  background: var(--bg-primary);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-body);
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.chat-cred-form input:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+.chat-cred-form-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.chat-cred-form-save {
+  padding: 6px 14px;
+  background: var(--brand);
+  border: none;
+  border-radius: 4px;
   color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chat-cred-form-save:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.chat-cred-form-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat-cred-form-skip {
+  padding: 6px 14px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chat-cred-form-skip:hover {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
+.chat-cred-form-error {
   font-size: 12px;
+  color: #ef4444; /* Allowlisted semantic error red — see .stylelintrc.json */
+  margin-top: 2px;
 }
 
 /* ===========================

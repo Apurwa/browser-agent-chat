@@ -67,7 +67,7 @@ describe('markStale', () => {
 
     expect(mockFrom).toHaveBeenCalledWith('learned_patterns');
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'stale',
+      pattern_state: 'stale',
     }));
   });
 });
@@ -118,7 +118,7 @@ describe('incrementFailures', () => {
 
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
       consecutive_failures: 3,
-      status: 'stale',
+      pattern_state: 'stale',
     }));
   });
 
@@ -143,7 +143,7 @@ describe('injectCredentials', () => {
       { action: 'fill', selector: 'input[type="password"]', value: '{{password}}' },
       { action: 'click', selector: 'button[type="submit"]' },
     ];
-    const result = injectCredentials(steps, { username: 'user@test.com', password: 's3cret' });
+    const result = injectCredentials(steps, { password: 's3cret' }, { username: 'user@test.com' });
     expect(result[0].value).toBe('user@test.com');
     expect(result[1].value).toBe('s3cret');
     expect(result[2].value).toBeUndefined();
@@ -153,7 +153,7 @@ describe('injectCredentials', () => {
     const steps: PlaywrightStep[] = [
       { action: 'click', selector: 'button' },
     ];
-    const result = injectCredentials(steps, { username: 'u', password: 'p' });
+    const result = injectCredentials(steps, { password: 'p' }, { username: 'u' });
     expect(result).toEqual(steps);
   });
 });
@@ -402,7 +402,7 @@ describe('replayNavigation', () => {
 describe('replayLogin', () => {
   const makePattern = (overrides?: Partial<LearnedPattern>): LearnedPattern => ({
     id: 'pat-1',
-    project_id: 'proj-1',
+    agent_id: 'agent-1',
     pattern_type: 'login',
     trigger: { type: 'login', url_pattern: '/login' },
     steps: [
@@ -421,21 +421,21 @@ describe('replayLogin', () => {
 
   it('returns false when no active login pattern exists', async () => {
     const mockPage = {} as any;
-    const result = await replayLogin(mockPage, [], { username: 'u', password: 'p' });
+    const result = await replayLogin(mockPage, [], { password: 'p' }, { username: 'u' });
     expect(result).toBe(false);
   });
 
   it('returns false when only stale patterns exist', async () => {
     const mockPage = {} as any;
     const patterns = [makePattern({ status: 'stale' })];
-    const result = await replayLogin(mockPage, patterns, { username: 'u', password: 'p' });
+    const result = await replayLogin(mockPage, patterns, { password: 'p' }, { username: 'u' });
     expect(result).toBe(false);
   });
 
   it('returns false when pattern_type is not login', async () => {
     const mockPage = {} as any;
     const patterns = [makePattern({ pattern_type: 'navigation' })];
-    const result = await replayLogin(mockPage, patterns, { username: 'u', password: 'p' });
+    const result = await replayLogin(mockPage, patterns, { password: 'p' }, { username: 'u' });
     expect(result).toBe(false);
   });
 });

@@ -124,7 +124,8 @@ export type ClientMessage =
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
   | { type: 'ping' }
-  | { type: 'taskFeedback'; task_id: string; rating: 'positive' | 'negative'; correction?: string };
+  | { type: 'taskFeedback'; task_id: string; rating: 'positive' | 'negative'; correction?: string }
+  | { type: 'credential_provided'; credentialId: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -143,7 +144,8 @@ export type ServerMessage =
   | { type: 'sessionCrashed' }
   | { type: 'taskInterrupted'; task: string }
   | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
-  | { type: 'patternStale'; name: string; reason: string };
+  | { type: 'patternStale'; name: string; reason: string }
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
 
 // === Chat ===
 

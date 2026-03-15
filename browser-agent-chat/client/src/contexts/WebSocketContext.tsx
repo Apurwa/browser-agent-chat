@@ -24,6 +24,8 @@ interface WebSocketState {
   sendFeedback: (taskId: string, rating: 'positive' | 'negative', correction?: string) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
+  pendingCredentialRequest: { agentId: string; domain: string; strategy: string } | null;
+  sendCredentialProvided: (credentialId: string) => void;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -54,6 +56,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     stepCount: number;
     durationMs: number;
   } | null>(null);
+  const [pendingCredentialRequest, setPendingCredentialRequest] = useState<{ agentId: string; domain: string; strategy: string } | null>(null);
 
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
@@ -95,6 +98,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         if ((msg as any).status === 'disconnected') {
           setActiveAgentId(null);
           activeAgentRef.current = null;
+          setPendingCredentialRequest(null);
         }
         break;
       case 'nav':
@@ -169,6 +173,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         setStatus('disconnected');
         activeAgentRef.current = null;
         setActiveAgentId(null);
+        setPendingCredentialRequest(null);
         break;
       case 'taskInterrupted':
         setMessages(prev => [...prev, {
@@ -179,6 +184,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         }]);
         // Status stays as-is (likely 'idle' from the recovered session snapshot)
         break;
+      case 'credential_needed': {
+        const m = msg as { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
+        setPendingCredentialRequest({ agentId: m.agentId, domain: m.domain, strategy: m.strategy });
+        break;
+      }
     }
   }, [addMessage]);
 
@@ -208,6 +218,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onclose = () => {
       setConnected(false);
+      setPendingCredentialRequest(null);
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
@@ -289,6 +300,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Keep screenshot and currentUrl visible — user expects to see same screen on restart
     setActiveAgentId(null);
     activeAgentRef.current = null;
+    setPendingCredentialRequest(null);
     // Keep lastUrlRef — so next start navigates back to where we were
   }, [send]);
 
@@ -333,6 +345,13 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     setPendingSuggestionCount(c => Math.max(0, c - 1));
   }, []);
 
+  const sendCredentialProvided = useCallback((credentialId: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'credential_provided', credentialId }));
+    }
+    setPendingCredentialRequest(null);
+  }, []);
+
   const value: WebSocketState = {
     connected,
     status,
@@ -353,6 +372,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     sendFeedback,
     resetSuggestionCount,
     decrementSuggestionCount,
+    pendingCredentialRequest,
+    sendCredentialProvided,
   };
 
   return (

@@ -14,6 +14,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Activity,
+  KeyRound,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -101,6 +102,14 @@ export default function Sidebar({ findingsCount = 0, disabled = false }: Sidebar
       <div className="sidebar-spacer" />
 
       {/* Bottom items */}
+      <button
+        className={`sidebar-item${location.pathname === '/vault' ? ' active' : ''}`}
+        onClick={() => navigate('/vault')}
+      >
+        <KeyRound size={18} />
+        {expanded && <span className="sidebar-label">Vault</span>}
+      </button>
+
       <button className="sidebar-item" onClick={toggleTheme}>
         {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
         {expanded && <span className="sidebar-label">{theme === 'dark' ? 'Light' : 'Dark'}</span>}
