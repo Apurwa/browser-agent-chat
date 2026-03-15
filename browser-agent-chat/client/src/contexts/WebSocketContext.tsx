@@ -4,6 +4,14 @@ import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding, S
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 const HEARTBEAT_INTERVAL = 30_000;
 
+interface FeedbackAckData {
+  taskId: string;
+  rating: 'positive' | 'negative';
+  clustered: boolean;
+  clusterName?: string;
+  clusterProgress?: { current: number; needed: number };
+}
+
 interface WebSocketState {
   connected: boolean;
   status: AgentStatus;
@@ -16,6 +24,7 @@ interface WebSocketState {
   activeAgentId: string | null;
   activeTaskId: string | null;
   lastCompletedTask: { taskId: string; success: boolean; stepCount: number; durationMs: number } | null;
+  feedbackAck: FeedbackAckData | null;
   startAgent: (agentId: string) => void;
   resumeSession: (agentId: string) => void;
   sendTask: (content: string) => void;
@@ -57,6 +66,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     durationMs: number;
   } | null>(null);
   const [pendingCredentialRequest, setPendingCredentialRequest] = useState<{ agentId: string; domain: string; strategy: string } | null>(null);
+  const [feedbackAck, setFeedbackAck] = useState<FeedbackAckData | null>(null);
 
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
@@ -110,6 +120,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         break;
       case 'taskStarted':
         setActiveTaskId((msg as any).taskId);
+        setLastCompletedTask(null);  // Clear previous card
+        setFeedbackAck(null);        // Prune ack
         break;
       case 'taskComplete': {
         const taskId = (msg as any).taskId ?? activeTaskId ?? '';
@@ -152,12 +164,48 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       }
       case 'patternLearned': {
         const pl = msg as any;
-        addMessage('system', `Pattern learned: "${pl.name}" (${pl.runs} runs, ${Math.round(pl.success_rate * 100)}% success)`);
+        const agentId = activeAgentRef.current;
+
+        // Check if this is the first pattern (localStorage)
+        const lsKey = agentId ? `learning:firstPattern:${agentId}` : null;
+        let isCelebration = false;
+        if (pl.transition === 'active' && lsKey && !localStorage.getItem(lsKey)) {
+          isCelebration = true;
+          localStorage.setItem(lsKey, 'true');
+        }
+
+        // Add as a special message type so it renders inline in the chat flow
+        const patternMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          type: 'system',
+          content: '__patternLearned__',  // Sentinel — ChatPanel renders PatternLearnedCard instead of text
+          timestamp: Date.now(),
+          patternData: {
+            name: pl.name,
+            steps: pl.steps,
+            successRate: pl.success_rate,
+            runs: pl.runs,
+            transition: pl.transition,
+            isCelebration,
+          },
+        };
+        setMessages(prev => [...prev, patternMsg]);
         break;
       }
       case 'patternStale': {
         const ps = msg as any;
         addMessage('system', `Pattern stale: "${ps.name}" — ${ps.reason}`);
+        break;
+      }
+      case 'feedbackAck': {
+        const ack = msg as any;
+        setFeedbackAck({
+          taskId: ack.taskId,
+          rating: ack.rating,
+          clustered: ack.clustered,
+          clusterName: ack.clusterName,
+          clusterProgress: ack.clusterProgress,
+        });
         break;
       }
       case 'pong':
@@ -334,7 +382,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const sendFeedback = useCallback((taskId: string, rating: 'positive' | 'negative', correction?: string) => {
     send({ type: 'taskFeedback', task_id: taskId, rating, correction });
-    setLastCompletedTask(null);
+    // Do NOT clear lastCompletedTask here — card stays visible for feedbackAck
   }, [send]);
 
   const resetSuggestionCount = useCallback(() => {
@@ -372,6 +420,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     sendFeedback,
     resetSuggestionCount,
     decrementSuggestionCount,
+    feedbackAck,
     pendingCredentialRequest,
     sendCredentialProvided,
   };

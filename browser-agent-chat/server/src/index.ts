@@ -14,7 +14,7 @@ import tracesRouter from './routes/traces.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
 import { pendingCredentialRequests } from './vault.js';
-import { getAgent, createSession, createTask, updateTask } from './db.js';
+import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
@@ -24,6 +24,7 @@ import { initLangfuse, shutdownLangfuse, isLangfuseEnabled } from './langfuse.js
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
 import feedbackRouter from './routes/feedback.js';
 import { processFeedback } from './learning/pipeline.js';
+import { MIN_CLUSTER_RUNS } from './learning/extraction.js';
 import { initLearningJobs } from './learning/jobs.js';
 
 const app = express();
@@ -308,16 +309,42 @@ wss.on('connection', (ws: WebSocket) => {
 
       // Only use stored prompt if it matches the feedback task
       const prompt = (activeTask?.taskId === msg.task_id) ? activeTask.prompt : '';
+      const broadcastFn = (broadcastMsg: ServerMessage) => broadcastToAgent(agentId, broadcastMsg);
 
-      processFeedback(
-        agentId,
-        msg.task_id,
-        agentSession?.sessionId ?? null,
-        prompt,
-        msg.rating,
-        msg.correction ?? null,
-        (broadcastMsg) => broadcastToAgent(agentId, broadcastMsg),
-      ).catch(err => console.error('[LEARNING] Feedback processing error:', err));
+      try {
+        await processFeedback(
+          agentId,
+          msg.task_id,
+          agentSession?.sessionId ?? null,
+          prompt,
+          msg.rating,
+          msg.correction ?? null,
+          broadcastFn,
+        );
+
+        // Query cluster state for the ack
+        const cluster = await getTaskClusterByTask(msg.task_id);
+
+        broadcastFn({
+          type: 'feedbackAck',
+          taskId: msg.task_id,
+          rating: msg.rating,
+          clustered: !!cluster,
+          clusterName: cluster?.task_summary,
+          clusterProgress: cluster
+            ? { current: cluster.run_count, needed: MIN_CLUSTER_RUNS }
+            : undefined,
+        });
+      } catch (err) {
+        console.error('[LEARNING] Feedback processing error:', err);
+        // Still ack so the client can show confirmation
+        broadcastFn({
+          type: 'feedbackAck',
+          taskId: msg.task_id,
+          rating: msg.rating,
+          clustered: false,
+        });
+      }
 
       // Clean up if this was the active task
       if (activeTask?.taskId === msg.task_id) {

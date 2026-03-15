@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import FindingAlert from './FindingAlert';
+import PatternLearnedCard from './PatternLearnedCard';
 import TaskCompletionCard from './TaskCompletionCard';
 import type { ChatMessage, AgentStatus } from '../types';
 import * as vaultApi from '../lib/vaultApi';
@@ -26,7 +27,7 @@ export default function ChatPanel({
   onStartAgent, onSendTask, onStopAgent, onFeedback,
 }: ChatPanelProps) {
   const { getAccessToken } = useAuth();
-  const { pendingCredentialRequest, sendCredentialProvided } = useWS();
+  const { pendingCredentialRequest, sendCredentialProvided, feedbackAck } = useWS();
 
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -119,6 +120,15 @@ export default function ChatPanel({
           <div key={msg.id} className={`chat-message chat-message-${msg.type}`}>
             {msg.type === 'finding' && msg.finding ? (
               <FindingAlert finding={msg.finding} />
+            ) : msg.patternData ? (
+              <PatternLearnedCard
+                name={msg.patternData.name}
+                steps={msg.patternData.steps}
+                successRate={msg.patternData.successRate}
+                runs={msg.patternData.runs}
+                transition={msg.patternData.transition}
+                isCelebration={msg.patternData.isCelebration}
+              />
             ) : (
               <p>{msg.content}</p>
             )}
@@ -131,6 +141,7 @@ export default function ChatPanel({
             stepCount={lastCompletedTask.stepCount}
             durationMs={lastCompletedTask.durationMs}
             onFeedback={onFeedback}
+            feedbackAck={feedbackAck}
           />
         )}
         <div ref={messagesEndRef} />

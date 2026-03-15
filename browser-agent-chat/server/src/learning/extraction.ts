@@ -2,7 +2,7 @@ import { listLearningPoolByCluster, createTaskPattern, listPatternsByCluster } f
 import { embedText } from './embedding.js';
 import type { LearningPoolEntry } from '../types.js';
 
-const MIN_CLUSTER_RUNS = 5;
+export const MIN_CLUSTER_RUNS = 5;
 const MIN_STEP_FREQUENCY = 0.4; // Step must appear in 40%+ of runs
 
 interface ExtractedStep {

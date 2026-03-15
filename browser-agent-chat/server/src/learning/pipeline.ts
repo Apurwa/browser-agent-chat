@@ -86,14 +86,6 @@ export async function processFeedback(
 
   if (result) {
     console.log(`[LEARNING] Pattern extracted for cluster "${cluster.task_summary}": ${result.steps.length} steps`);
-    // Broadcast patternLearned notification to connected clients
-    broadcast({
-      type: 'patternLearned',
-      name: cluster.task_summary,
-      steps: result.steps.map(s => s.action),
-      success_rate: result.metrics.successRate,
-      avg_steps: result.metrics.avgSteps,
-      runs: cluster.run_count,
-    });
+    // patternLearned broadcast moved to lifecycle.ts — candidate creation is silent
   }
 }

@@ -925,6 +925,22 @@ export async function updateLearningPoolCluster(
   if (error) console.error('updateLearningPoolCluster error:', error);
 }
 
+export async function getTaskClusterByTask(taskId: string): Promise<TaskCluster | null> {
+  if (!isSupabaseEnabled()) return null;
+
+  // Step 1: Find the learning pool entry for this task
+  const { data: poolEntry, error: poolError } = await supabase!
+    .from('learning_pool')
+    .select('cluster_id')
+    .eq('task_id', taskId)
+    .single();
+
+  if (poolError || !poolEntry?.cluster_id) return null;
+
+  // Step 2: Fetch the cluster
+  return getTaskCluster(poolEntry.cluster_id);
+}
+
 export async function getLearningPoolStats(agentId: string): Promise<{
   total: number;
   positive: number;
