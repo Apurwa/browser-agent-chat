@@ -466,6 +466,14 @@ export async function handleExpiry(agentId: string): Promise<void> {
 // -- Graceful shutdown --
 
 export async function shutdownAll(): Promise<void> {
+  // Clear all timers to prevent post-shutdown fires
+  for (const t of detachedTimers.values()) clearTimeout(t);
+  detachedTimers.clear();
+  for (const t of absoluteTimers.values()) clearTimeout(t);
+  absoluteTimers.clear();
+  for (const t of warningTimers.values()) clearTimeout(t);
+  warningTimers.clear();
+
   // Mark all sessions as disconnected in Redis (browsers survive)
   const agentIds = Array.from(agents.keys());
   for (const agentId of agentIds) {
