@@ -25,16 +25,17 @@ interface WebSocketState {
   activeTaskId: string | null;
   lastCompletedTask: { taskId: string; success: boolean; stepCount: number; durationMs: number } | null;
   feedbackAck: FeedbackAckData | null;
-  startAgent: (agentId: string) => void;
-  resumeSession: (agentId: string) => void;
+  startAgent: (agentId: string, isReconnect?: boolean) => void;
   sendTask: (content: string) => void;
-  stopAgent: () => void;
+  sendRestart: (agentId: string) => void;
   explore: (agentId: string) => void;
   sendFeedback: (taskId: string, rating: 'positive' | 'negative', correction?: string) => void;
   resetSuggestionCount: () => void;
   decrementSuggestionCount: () => void;
   pendingCredentialRequest: { agentId: string; domain: string; strategy: string } | null;
   sendCredentialProvided: (credentialId: string) => void;
+  sessionWarning: string | null;
+  sessionEvicted: boolean;
 }
 
 const WebSocketContext = createContext<WebSocketState | null>(null);
@@ -67,9 +68,28 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   } | null>(null);
   const [pendingCredentialRequest, setPendingCredentialRequest] = useState<{ agentId: string; domain: string; strategy: string } | null>(null);
   const [feedbackAck, setFeedbackAck] = useState<FeedbackAckData | null>(null);
+  const [sessionWarning, setSessionWarning] = useState<string | null>(null);
+  const [sessionEvicted, setSessionEvicted] = useState<boolean>(false);
 
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
+  const pendingTasksRef = useRef<string[]>([]);
+
+  // Track the last URL so we can resume at the same page after reconnect
+  const lastUrlRef = useRef<string | null>(null);
+
+  // pendingExploreRef: if set, send explore once we reach 'idle' status after auto-start
+  const pendingExploreRef = useRef<string | null>(null);
+
+  const send = useCallback((msg: ClientMessage) => {
+    const ready = wsRef.current?.readyState;
+    console.log('[WS] send', msg.type, 'readyState:', ready);
+    if (ready === WebSocket.OPEN) {
+      wsRef.current!.send(JSON.stringify(msg));
+    } else {
+      console.warn('[WS] send DROPPED — socket not open, readyState:', ready);
+    }
+  }, []);
 
   const addMessage = useCallback((type: ChatMessage['type'], content: string, finding?: Finding) => {
     setMessages(prev => [...prev, {
@@ -103,13 +123,16 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         break;
       case 'status':
         setStatus((msg as any).status);
-        // Note: 'disconnected' from server (e.g. idle timeout, error) clears active agent
-        // but preserves screenshot/currentUrl/messages so stop→start feels seamless.
-        if ((msg as any).status === 'disconnected') {
-          setActiveAgentId(null);
-          activeAgentRef.current = null;
-          setPendingCredentialRequest(null);
+        // Drain pending tasks when session is ready
+        if ((msg as any).status === 'idle' && pendingTasksRef.current.length > 0) {
+          const pending = pendingTasksRef.current;
+          pendingTasksRef.current = [];
+          for (const content of pending) {
+            send({ type: 'task', content });
+          }
         }
+        // IMPORTANT: Do NOT clear activeAgentId/activeAgentRef on server-sent 'disconnected'
+        // The always-connected model keeps activeAgentRef set so reconnect can re-establish
         break;
       case 'nav':
         setCurrentUrl((msg as any).url);
@@ -237,8 +260,58 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         setPendingCredentialRequest({ agentId: m.agentId, domain: m.domain, strategy: m.strategy });
         break;
       }
+      case 'session_evicted':
+        setStatus('disconnected');
+        setSessionEvicted(true);
+        activeAgentRef.current = null;
+        break;
+      case 'session_expiring':
+        setSessionWarning(`Session expires in ${Math.floor((msg as any).remainingSeconds / 60)} minutes.`);
+        break;
+      case 'session_new':
+        // Reset all session-bound state for fresh session
+        setMessages([]);
+        setScreenshot(null);
+        setCurrentUrl(null);
+        setFindings([]);
+        setPendingSuggestionCount(0);
+        setActiveTaskId(null);
+        setLastCompletedTask(null);
+        setFeedbackAck(null);
+        setPendingCredentialRequest(null);
+        setSessionWarning(null);
+        setSessionEvicted(false);
+        break;
     }
-  }, [addMessage]);
+  }, [addMessage, send]);
+
+  const startAgent = useCallback((agentId: string, isReconnect = false) => {
+    // Clear stale state if switching agents
+    if (activeAgentRef.current && activeAgentRef.current !== agentId) {
+      setMessages([]);
+      setScreenshot(null);
+      setCurrentUrl(null);
+      setFindings([]);
+      setPendingSuggestionCount(0);
+      setActiveTaskId(null);
+      setLastCompletedTask(null);
+      setFeedbackAck(null);
+      lastUrlRef.current = null;
+    }
+
+    activeAgentRef.current = agentId;
+    setActiveAgentId(agentId);
+
+    if (!isReconnect) {
+      setStatus('working');
+    }
+
+    send({ type: 'start', agentId, resumeUrl: lastUrlRef.current || undefined });
+  }, [send]);
+
+  // Use a ref so connect's onopen can call the latest startAgent without a dep cycle
+  const startAgentRef = useRef(startAgent);
+  startAgentRef.current = startAgent;
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -256,9 +329,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         }
       }, HEARTBEAT_INTERVAL);
 
-      // If we had an active agent, try to resume
+      // Auto-reconnect: re-establish session
       if (activeAgentRef.current) {
-        ws.send(JSON.stringify({ type: 'resume', agentId: activeAgentRef.current }));
+        startAgentRef.current(activeAgentRef.current, /* isReconnect */ true);
       }
     };
 
@@ -291,82 +364,32 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     };
   }, [connect]);
 
-  const send = useCallback((msg: ClientMessage) => {
-    const ready = wsRef.current?.readyState;
-    console.log('[WS] send', msg.type, 'readyState:', ready);
-    if (ready === WebSocket.OPEN) {
-      wsRef.current!.send(JSON.stringify(msg));
-    } else {
-      console.warn('[WS] send DROPPED — socket not open, readyState:', ready);
-    }
-  }, []);
-
-  // Track the last URL so we can resume at the same page after stop→start
-  const lastUrlRef = useRef<string | null>(null);
-
-  const startAgent = useCallback((agentId: string) => {
-    // If switching to a different agent, clear stale state from the previous one
-    if (activeAgentRef.current !== agentId) {
-      setMessages([]);
-      setFindings([]);
-      setScreenshot(null);
-      setCurrentUrl(null);
-      setPendingSuggestionCount(0);
-      lastUrlRef.current = null;
-    }
-    setStatus('working');
-    setActiveAgentId(agentId);
-    activeAgentRef.current = agentId;
-    // If we have a last-known URL for this agent, tell server to navigate there
-    const resumeUrl = lastUrlRef.current || undefined;
-    send({ type: 'start', agentId, resumeUrl });
-  }, [send]);
-
-  const resumeSession = useCallback((agentId: string) => {
-    // If switching to a different agent, clear stale state from the previous one
-    if (activeAgentRef.current !== agentId) {
-      setMessages([]);
-      setFindings([]);
-      setScreenshot(null);
-      setCurrentUrl(null);
-      setPendingSuggestionCount(0);
-      lastUrlRef.current = null;
-    }
-    setActiveAgentId(agentId);
-    activeAgentRef.current = agentId;
-    send({ type: 'resume', agentId });
-  }, [send]);
-
   const sendTask = useCallback((content: string) => {
     addMessage('user', content);
-    send({ type: 'task', content });
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      send({ type: 'task', content });
+    } else {
+      pendingTasksRef.current.push(content);
+    }
   }, [send, addMessage]);
 
-  const stopAgent = useCallback(() => {
-    send({ type: 'stop' });
-    setStatus('disconnected');
-    // Keep screenshot and currentUrl visible — user expects to see same screen on restart
-    setActiveAgentId(null);
-    activeAgentRef.current = null;
-    setPendingCredentialRequest(null);
-    // Keep lastUrlRef — so next start navigates back to where we were
+  const sendRestart = useCallback((agentId: string) => {
+    send({ type: 'restart', agentId });
+    setStatus('working');
   }, [send]);
-
-  // pendingExploreRef: if set, send explore once we reach 'idle' status after auto-start
-  const pendingExploreRef = useRef<string | null>(null);
 
   const explore = useCallback((agentId: string) => {
     setStatus('working');
-    addMessage('system', 'Explore & Learn started...');
 
-    // If no active session on server, start the agent first, then explore on idle
     if (!activeAgentRef.current || activeAgentRef.current !== agentId) {
+      // Auto-start path — defer explore message until session is ready
       pendingExploreRef.current = agentId;
       setActiveAgentId(agentId);
       activeAgentRef.current = agentId;
       const resumeUrl = lastUrlRef.current || undefined;
       send({ type: 'start', agentId, resumeUrl });
     } else {
+      addMessage('system', 'Explore & Learn started...');
       send({ type: 'explore', agentId });
     }
   }, [send, addMessage]);
@@ -376,9 +399,10 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     if (status === 'idle' && pendingExploreRef.current) {
       const agentId = pendingExploreRef.current;
       pendingExploreRef.current = null;
+      addMessage('system', 'Explore & Learn started...');
       send({ type: 'explore', agentId });
     }
-  }, [status, send]);
+  }, [status, send, addMessage]);
 
   const sendFeedback = useCallback((taskId: string, rating: 'positive' | 'negative', correction?: string) => {
     send({ type: 'taskFeedback', task_id: taskId, rating, correction });
@@ -413,9 +437,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     activeTaskId,
     lastCompletedTask,
     startAgent,
-    resumeSession,
     sendTask,
-    stopAgent,
+    sendRestart,
     explore,
     sendFeedback,
     resetSuggestionCount,
@@ -423,6 +446,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     feedbackAck,
     pendingCredentialRequest,
     sendCredentialProvided,
+    sessionWarning,
+    sessionEvicted,
   };
 
   return (
