@@ -223,10 +223,12 @@ wss.on('connection', (ws: WebSocket) => {
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);
           if (activeTask) {
-            // Enrich with metadata for client-side feedback
-            (broadcastMsg as any).taskId = activeTask.taskId;
-            (broadcastMsg as any).stepCount = activeTask.stepCount;
-            (broadcastMsg as any).durationMs = Date.now() - activeTask.startedAt;
+            const enriched: ServerMessage = {
+              ...broadcastMsg,
+              taskId: activeTask.taskId,
+              stepCount: activeTask.stepCount,
+              durationMs: Date.now() - activeTask.startedAt,
+            };
 
             const success = broadcastMsg.success;
             updateTask(activeTask.taskId, {
@@ -235,6 +237,8 @@ wss.on('connection', (ws: WebSocket) => {
               completed_at: new Date().toISOString(),
             }).catch(err => console.error('[TASK] Failed to update task:', err));
             // Don't delete from activeTasks yet — need it for feedback
+            baseBroadcast(enriched);
+            return;
           }
         }
         baseBroadcast(broadcastMsg);
@@ -295,17 +299,20 @@ wss.on('connection', (ws: WebSocket) => {
       const activeTask = activeTasks.get(agentId);
       const agentSession = sessionManager.getAgent(agentId);
 
+      // Only use stored prompt if it matches the feedback task
+      const prompt = (activeTask?.taskId === msg.task_id) ? activeTask.prompt : '';
+
       processFeedback(
         agentId,
         msg.task_id,
         agentSession?.sessionId ?? null,
-        activeTask?.prompt ?? '',
+        prompt,
         msg.rating,
         msg.correction ?? null,
         (broadcastMsg) => broadcastToAgent(agentId, broadcastMsg),
       ).catch(err => console.error('[LEARNING] Feedback processing error:', err));
 
-      // Now safe to clean up
+      // Clean up if this was the active task
       if (activeTask?.taskId === msg.task_id) {
         activeTasks.delete(agentId);
       }
@@ -319,6 +326,7 @@ wss.on('connection', (ws: WebSocket) => {
     if (agentId) {
       sessionManager.removeClient(agentId, ws);
       clientAgents.delete(ws);
+      activeTasks.delete(agentId);  // Clean up to prevent memory leak
     }
   });
 });
@@ -371,7 +379,11 @@ async function startup(): Promise<void> {
   server.listen(PORT, () => {
     console.log(`[STARTUP] Server running on http://localhost:${PORT}`);
     console.log('[STARTUP] WebSocket server ready');
-    initLearningJobs();
+    try {
+      initLearningJobs();
+    } catch (err) {
+      console.error('[STARTUP] Learning jobs init error:', err);
+    }
   });
 }
 
