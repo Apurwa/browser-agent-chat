@@ -15,23 +15,21 @@ interface ChatPanelProps {
   showExplore: boolean;
   lastCompletedTask: { taskId: string; success: boolean; stepCount: number; durationMs: number } | null;
   onExplore: () => void;
-  onStartAgent: () => void;
   onSendTask: (content: string) => void;
-  onStopAgent: () => void;
   onFeedback: (taskId: string, rating: 'positive' | 'negative', correction?: string) => void;
 }
 
 export default function ChatPanel({
   agentId: _agentId, messages, status, currentUrl,
   showExplore, lastCompletedTask, onExplore,
-  onStartAgent, onSendTask, onStopAgent, onFeedback,
+  onSendTask, onFeedback,
 }: ChatPanelProps) {
   const { getAccessToken } = useAuth();
-  const { pendingCredentialRequest, sendCredentialProvided, feedbackAck } = useWS();
+  const { pendingCredentialRequest, sendCredentialProvided, feedbackAck, sessionWarning, sessionEvicted, sendRestart, startAgent } = useWS();
 
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const isActive = status === 'idle' || status === 'working';
+  const inputDisabled = status === 'crashed' || status === 'error';
 
   const prevStatus = useRef<AgentStatus>(status);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -94,7 +92,7 @@ export default function ChatPanel({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !isActive) return;
+    if (!input.trim() || inputDisabled) return;
     onSendTask(input.trim());
     setInput('');
   };
@@ -106,10 +104,14 @@ export default function ChatPanel({
           <span className={`status-dot status-${status}`} />
           <span className="status-text">{status}</span>
         </div>
-        {isActive ? (
-          <button className="btn-stop" onClick={onStopAgent}>Stop</button>
-        ) : (
-          <button className="btn-primary btn-sm" onClick={onStartAgent}>Start Agent</button>
+        {status === 'disconnected' && !sessionEvicted && (
+          <span className="chat-status-indicator reconnecting">Reconnecting...</span>
+        )}
+        {sessionEvicted && (
+          <button className="btn-primary btn-sm" onClick={() => startAgent(_agentId)}>Reconnect</button>
+        )}
+        {(status === 'crashed' || status === 'error') && (
+          <button className="btn-primary btn-sm" onClick={() => sendRestart(_agentId)}>Restart</button>
         )}
       </div>
 
@@ -190,15 +192,19 @@ export default function ChatPanel({
         </div>
       )}
 
+      {sessionWarning && (
+        <div className="chat-status-banner warning">{sessionWarning}</div>
+      )}
+
       <form className="chat-input" onSubmit={handleSubmit}>
         <input
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={status === 'working' ? 'Type a message (will send when ready)...' : 'Send a message...'}
-          disabled={!isActive}
+          placeholder={inputDisabled ? 'Session error — restart to continue' : status === 'working' ? 'Type a message (will send when ready)...' : 'Send a message...'}
+          disabled={inputDisabled}
         />
-        <button type="submit" disabled={!input.trim() || !isActive}>→</button>
+        <button type="submit" disabled={!input.trim() || inputDisabled}>→</button>
       </form>
     </div>
   );
