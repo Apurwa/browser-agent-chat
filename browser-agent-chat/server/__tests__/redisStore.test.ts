@@ -243,6 +243,9 @@ describe('redisStore — updateLastActivity', () => {
       'lastActivityAt',
       expect.stringMatching(/^\d+$/)
     );
+    // Verify it did NOT call pipeline (which refreshTTL does)
+    // This confirms updateLastActivity doesn't reset TTL
+    expect(mockRedis.pipeline).not.toHaveBeenCalled();
   });
 });
 
