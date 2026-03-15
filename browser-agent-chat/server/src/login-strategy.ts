@@ -37,11 +37,16 @@ export async function executeStandardLogin(
 
     // Wait for navigation/SPA route change — try multiple strategies
     await page.waitForLoadState('networkidle').catch(() => {});
-    // Extra wait for SPAs that do client-side routing after submit
-    await page.waitForTimeout(2000);
 
-    // Verify success
-    const success = await verifyLoginSuccess(page, loginUrl);
+    // Poll for URL change or password field disappearance (up to 8 seconds)
+    // SPAs often take several seconds to redirect after login
+    let success = false;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await page.waitForTimeout(2000);
+      success = await verifyLoginSuccess(page, loginUrl);
+      if (success) break;
+    }
+
     return { success, error: success ? undefined : 'Login verification failed' };
   } catch (err) {
     return { success: false, error: (err as Error).message };
