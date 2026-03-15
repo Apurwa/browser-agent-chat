@@ -208,3 +208,42 @@ describe('isDuplicate', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('real-world dedup scenarios', () => {
+  const existingFeatures = [
+    'Main Navigation',
+    'User Profile',
+    'Dashboard Analytics',
+    'Account Settings',
+    'Login Form',
+  ];
+
+  it('catches LLM naming variations (canonical match)', () => {
+    expect(isDuplicate('Navigation Menu', existingFeatures)).not.toBeNull();
+    expect(isDuplicate('Top Navigation', existingFeatures)).not.toBeNull();
+    expect(isDuplicate('Login Authentication Form', existingFeatures)).not.toBeNull();
+  });
+
+  it('catches fuzzy matches above threshold', () => {
+    expect(isDuplicate('Account Settings Panel', existingFeatures)).not.toBeNull();
+  });
+
+  it('allows genuinely different features', () => {
+    expect(isDuplicate('Shopping Cart', existingFeatures)).toBeNull();
+    expect(isDuplicate('Payment Processing', existingFeatures)).toBeNull();
+    expect(isDuplicate('File Upload', existingFeatures)).toBeNull();
+  });
+
+  it('does not false-positive on partial word overlap', () => {
+    expect(isDuplicate('User Billing', existingFeatures)).toBeNull();
+  });
+
+  it('handles edge cases', () => {
+    expect(isDuplicate('', existingFeatures)).toBeNull();
+    expect(isDuplicate('  ', existingFeatures)).toBeNull();
+  });
+
+  it('does not match when both inputs canonicalize to empty', () => {
+    expect(isDuplicate('Main Top', ['Primary Header'])).toBeNull();
+  });
+});
