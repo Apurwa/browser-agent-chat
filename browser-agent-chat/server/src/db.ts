@@ -1,5 +1,6 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
 import { normalizeUrl } from './nav-graph.js';
+import { isDuplicate } from './entity-resolver.js';
 import type {
   Agent, Feature, Flow, Finding, Session, Message,
   EncryptedCredentials, Criticality, FindingType, FindingStatus, ReproStep,
@@ -358,37 +359,93 @@ export async function createSuggestion(
   const name = 'name' in data ? (data as any).name : ('feature_name' in data ? (data as any).feature_name : null);
 
   if (name) {
-    // Check for existing pending suggestion with same type and matching identity
-    const { data: pendingDupes } = await supabase!
+    // Level 1: Check for existing pending/dismissed suggestions with same type
+    const { data: existingSuggs } = await supabase!
       .from('memory_suggestions')
-      .select('id, data')
+      .select('id, data, status')
       .eq('agent_id', agentId)
       .eq('type', type)
-      .eq('status', 'pending');
+      .in('status', ['pending', 'dismissed']);
 
-    if (pendingDupes) {
-      let isDupe = false;
+    if (existingSuggs) {
       if (type === 'behavior') {
-        // For behaviors, check both feature_name AND behavior text
+        // For behaviors, check both feature_name AND behavior text (exact match)
         const bd = data as BehaviorSuggestionData;
-        isDupe = pendingDupes.some((s: any) =>
+        const isDupe = existingSuggs.some((s: any) =>
           s.data?.feature_name?.toLowerCase() === bd.feature_name.toLowerCase()
           && s.data?.behavior === bd.behavior
         );
+        if (isDupe) {
+          console.log(`[DEDUP] Skipping duplicate behavior suggestion: "${bd.behavior}" for feature "${bd.feature_name}"`);
+          return null;
+        }
       } else {
-        // For features/flows, check by name
-        isDupe = pendingDupes.some((s: any) => {
-          const sName = s.data?.name;
-          return sName && sName.toLowerCase() === name.toLowerCase();
-        });
+        // For features/flows, use fuzzy entity resolver
+        const pendingNames: string[] = existingSuggs
+          .filter((s: any) => s.data?.name)
+          .map((s: any) => s.data.name as string);
+
+        // Also include aliases stored in each suggestion's data
+        const aliasNames: string[] = [];
+        for (const s of existingSuggs) {
+          const aliases = (s.data as any)?.aliases;
+          if (Array.isArray(aliases)) {
+            aliasNames.push(...aliases);
+          }
+        }
+
+        const allPendingNames = [...pendingNames, ...aliasNames];
+        const match = allPendingNames.length > 0 ? isDuplicate(name, allPendingNames) : null;
+
+        if (match) {
+          // Find the original suggestion that owns this name (not an alias match)
+          const matchedSugg = existingSuggs.find((s: any) => s.data?.name === match.matchedName);
+
+          if (matchedSugg && matchedSugg.status === 'pending') {
+            // Add the new name as an alias on the existing pending suggestion
+            const currentAliases: string[] = (matchedSugg.data as any)?.aliases ?? [];
+            if (!currentAliases.includes(name)) {
+              const updatedData = { ...(matchedSugg.data as any), aliases: [...currentAliases, name] };
+              await supabase!
+                .from('memory_suggestions')
+                .update({ data: updatedData })
+                .eq('id', matchedSugg.id);
+              console.log(`[DEDUP] Added alias "${name}" to pending suggestion "${match.matchedName}" (method=${match.method}, similarity=${match.similarity.toFixed(2)})`);
+            }
+          } else {
+            console.log(`[DEDUP] Skipping duplicate ${type} suggestion: "${name}" matches "${match.matchedName}" (method=${match.method}, similarity=${match.similarity.toFixed(2)})`);
+          }
+          return null;
+        }
       }
-      if (isDupe) return null;
     }
 
-    // Check for already-accepted entities
+    // Level 2: Check for already-accepted entities
     if (type === 'feature') {
-      const existing = await findFeatureByName(agentId, name);
-      if (existing) return null;
+      const { data: acceptedFeatures } = await supabase!
+        .from('memory_features')
+        .select('name')
+        .eq('agent_id', agentId);
+
+      const acceptedNames: string[] = (acceptedFeatures ?? []).map((f: any) => f.name as string);
+
+      // Also include aliases from pending/dismissed suggestions for broader coverage
+      const aliasNames: string[] = [];
+      if (existingSuggs) {
+        for (const s of existingSuggs) {
+          const aliases = (s.data as any)?.aliases;
+          if (Array.isArray(aliases)) {
+            aliasNames.push(...aliases);
+          }
+        }
+      }
+
+      const allKnownNames = [...acceptedNames, ...aliasNames];
+      const match = allKnownNames.length > 0 ? isDuplicate(name, allKnownNames) : null;
+      if (match) {
+        console.log(`[DEDUP] Skipping feature suggestion: "${name}" matches accepted feature "${match.matchedName}" (method=${match.method}, similarity=${match.similarity.toFixed(2)})`);
+        return null;
+      }
     }
 
     if (type === 'flow') {
@@ -396,15 +453,17 @@ export async function createSuggestion(
       const fd = data as FlowSuggestionData;
       const feature = await findFeatureByName(agentId, fd.feature_name);
       if (feature) {
-        const escaped = fd.name.replace(/%/g, '\\%').replace(/_/g, '\\_');
-        const { data: existingFlow } = await supabase!
+        const { data: existingFlows } = await supabase!
           .from('memory_flows')
-          .select('id')
-          .eq('feature_id', feature.id)
-          .ilike('name', escaped)
-          .limit(1)
-          .maybeSingle();
-        if (existingFlow) return null;
+          .select('name')
+          .eq('feature_id', feature.id);
+
+        const flowNames: string[] = (existingFlows ?? []).map((f: any) => f.name as string);
+        const match = flowNames.length > 0 ? isDuplicate(fd.name, flowNames) : null;
+        if (match) {
+          console.log(`[DEDUP] Skipping flow suggestion: "${fd.name}" matches accepted flow "${match.matchedName}" under feature "${fd.feature_name}" (method=${match.method}, similarity=${match.similarity.toFixed(2)})`);
+          return null;
+        }
       }
     }
 
@@ -412,6 +471,7 @@ export async function createSuggestion(
       const bd = data as BehaviorSuggestionData;
       const feature = await findFeatureByName(agentId, bd.feature_name);
       if (feature && feature.expected_behaviors?.includes(bd.behavior)) {
+        console.log(`[DEDUP] Skipping behavior suggestion: identical behavior already accepted for feature "${bd.feature_name}"`);
         return null; // Identical behavior already accepted
       }
     }
