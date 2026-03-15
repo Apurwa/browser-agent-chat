@@ -20,6 +20,9 @@ import * as browserManager from './browserManager.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 import { initLangfuse, shutdownLangfuse } from './langfuse.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
+import feedbackRouter from './routes/feedback.js';
+import { processFeedback } from './learning/pipeline.js';
+import { initLearningJobs } from './learning/jobs.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -62,6 +65,7 @@ app.use('/api/agents/:id/memory', memoryRouter);
 app.use('/api/agents/:id/suggestions', suggestionsRouter);
 app.use('/api/agents/:id/evals', evalsRouter);
 app.use('/api/agents/:id/map', mapRouter);
+app.use('/api/agents/:id/feedback', feedbackRouter);
 
 // WebSocket server
 const wss = new WebSocketServer({ server });
@@ -70,7 +74,7 @@ const wss = new WebSocketServer({ server });
 const clientAgents = new Map<WebSocket, string>();
 
 // Track active tasks per agent
-const activeTasks = new Map<string, { taskId: string; stepCount: number }>();
+const activeTasks = new Map<string, { taskId: string; stepCount: number; startedAt: number; prompt: string }>();
 
 // Broadcast a ServerMessage to all WebSocket clients connected to an agent.
 // Used by eval routes and any future server-initiated push.
@@ -206,7 +210,7 @@ wss.on('connection', (ws: WebSocket) => {
       if (agentSession.sessionId) {
         try {
           const taskId = await createTask(agentSession.sessionId, agentId, msg.content);
-          activeTasks.set(agentId, { taskId, stepCount: 0 });
+          activeTasks.set(agentId, { taskId, stepCount: 0, startedAt: Date.now(), prompt: msg.content });
           broadcastToAgent(agentId, { type: 'taskStarted', taskId });
         } catch (err) {
           console.error('[TASK] Failed to create task:', err);
@@ -215,17 +219,22 @@ wss.on('connection', (ws: WebSocket) => {
 
       const baseBroadcast = sessionManager.makeBroadcast(agentId);
       const taskBroadcast = (broadcastMsg: ServerMessage) => {
-        // Intercept taskComplete to update task record
+        // Intercept taskComplete to update task record and enrich with metadata
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);
           if (activeTask) {
+            // Enrich with metadata for client-side feedback
+            (broadcastMsg as any).taskId = activeTask.taskId;
+            (broadcastMsg as any).stepCount = activeTask.stepCount;
+            (broadcastMsg as any).durationMs = Date.now() - activeTask.startedAt;
+
             const success = broadcastMsg.success;
             updateTask(activeTask.taskId, {
               status: success ? 'completed' : 'failed',
               success,
               completed_at: new Date().toISOString(),
             }).catch(err => console.error('[TASK] Failed to update task:', err));
-            activeTasks.delete(agentId);
+            // Don't delete from activeTasks yet — need it for feedback
           }
         }
         baseBroadcast(broadcastMsg);
@@ -278,6 +287,28 @@ wss.on('connection', (ws: WebSocket) => {
 
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
       executeExplore(agentSession, agent?.context || null, exploreBroadcast);
+
+    } else if (msg.type === 'taskFeedback') {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) return;
+
+      const activeTask = activeTasks.get(agentId);
+      const agentSession = sessionManager.getAgent(agentId);
+
+      processFeedback(
+        agentId,
+        msg.task_id,
+        agentSession?.sessionId ?? null,
+        activeTask?.prompt ?? '',
+        msg.rating,
+        msg.correction ?? null,
+        (broadcastMsg) => broadcastToAgent(agentId, broadcastMsg),
+      ).catch(err => console.error('[LEARNING] Feedback processing error:', err));
+
+      // Now safe to clean up
+      if (activeTask?.taskId === msg.task_id) {
+        activeTasks.delete(agentId);
+      }
 
     }
   });
@@ -340,6 +371,7 @@ async function startup(): Promise<void> {
   server.listen(PORT, () => {
     console.log(`[STARTUP] Server running on http://localhost:${PORT}`);
     console.log('[STARTUP] WebSocket server ready');
+    initLearningJobs();
   });
 }
 
