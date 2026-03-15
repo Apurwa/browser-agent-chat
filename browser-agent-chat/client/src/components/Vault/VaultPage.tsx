@@ -1,7 +1,10 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useVault } from '../../hooks/useVault';
 import * as vaultApi from '../../lib/vaultApi';
+import Sidebar from '../Sidebar';
 import VaultForm from './VaultForm';
 import './Vault.css';
 
@@ -18,6 +21,7 @@ function timeAgo(dateStr: string | null): string {
 }
 
 export default function VaultPage() {
+  const navigate = useNavigate();
   const { getAccessToken } = useAuth();
   const { credentials, loading, error, createCredential, updateCredential, deleteCredential, refresh } = useVault();
   const [showForm, setShowForm] = useState(false);
@@ -82,15 +86,32 @@ export default function VaultPage() {
     setConfirmDelete(null);
   };
 
-  if (loading) return <div className="vault-page"><div className="vault-empty">Loading credentials...</div></div>;
-  if (error) return <div className="vault-page"><div className="vault-empty">Error: {error}</div></div>;
+  if (loading) return (
+    <div className="app-layout">
+      <Sidebar disabled />
+      <div className="vault-page"><div className="vault-empty">Loading credentials...</div></div>
+    </div>
+  );
+  if (error) return (
+    <div className="app-layout">
+      <Sidebar disabled />
+      <div className="vault-page"><div className="vault-empty">Error: {error}</div></div>
+    </div>
+  );
 
   return (
-    <div className="vault-page">
-      <div className="vault-header">
-        <h1 className="vault-title">Credential Vault</h1>
-        <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); }}>+ Add Credential</button>
-      </div>
+    <div className="app-layout">
+      <Sidebar disabled />
+      <div className="vault-page">
+        <div className="vault-header">
+          <div className="vault-header-left">
+            <button className="vault-back-btn" onClick={() => navigate('/')} title="Back to Home">
+              <ArrowLeft size={18} />
+            </button>
+            <h1 className="vault-title">Credential Vault</h1>
+          </div>
+          <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); }}>+ Add Credential</button>
+        </div>
 
       {showForm && (
         <VaultForm
@@ -156,6 +177,7 @@ export default function VaultPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
