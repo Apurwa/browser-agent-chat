@@ -1,29 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import FindingAlert from './FindingAlert';
 import type { ChatMessage, AgentStatus } from '../types';
-
-const LOGIN_KEYWORDS = ['login', 'sign in', 'sign-in', 'log in', 'authentication', 'username and password', 'credentials'];
-const INTENT_KEYWORDS = ['need', 'require', 'see', 'found', 'ask', 'provide', 'enter'];
+import * as vaultApi from '../lib/vaultApi';
+import { useAuth } from '../hooks/useAuth';
+import { useWS } from '../contexts/WebSocketContext';
 
 interface ChatPanelProps {
   agentId: string;
   messages: ChatMessage[];
   status: AgentStatus;
   currentUrl: string | null;
-  hasCredentials: boolean;
   showExplore: boolean;
   onExplore: () => void;
   onStartAgent: () => void;
   onSendTask: (content: string) => void;
   onStopAgent: () => void;
-  onSaveCredentials: (username: string, password: string) => Promise<void>;
 }
 
 export default function ChatPanel({
   agentId: _agentId, messages, status, currentUrl,
-  hasCredentials, showExplore, onExplore,
-  onStartAgent, onSendTask, onStopAgent, onSaveCredentials,
+  showExplore, onExplore,
+  onStartAgent, onSendTask, onStopAgent,
 }: ChatPanelProps) {
+  const { getAccessToken } = useAuth();
+  const { pendingCredentialRequest, sendCredentialProvided } = useWS();
+
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isActive = status === 'idle' || status === 'working';
@@ -31,43 +32,26 @@ export default function ChatPanel({
   const prevStatus = useRef<AgentStatus>(status);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const credentialPromptShown = useRef(false);
-  const [showCredForm, setShowCredForm] = useState(false);
   const [credUsername, setCredUsername] = useState('');
   const [credPassword, setCredPassword] = useState('');
-  const [credSaving, setCredSaving] = useState(false);
-  const [credPromptMsgId, setCredPromptMsgId] = useState<string | null>(null);
+  const [credLabel, setCredLabel] = useState('');
 
-  // Detect login-related thoughts
-  useEffect(() => {
-    if (credentialPromptShown.current || hasCredentials) return;
-    const lastMsg = messages[messages.length - 1];
-    if (!lastMsg || lastMsg.type !== 'agent') return;
-    const lower = lastMsg.content.toLowerCase();
-    const hasLogin = LOGIN_KEYWORDS.some(k => lower.includes(k));
-    const hasIntent = INTENT_KEYWORDS.some(k => lower.includes(k));
-    if (hasLogin && hasIntent) {
-      credentialPromptShown.current = true;
-      setCredPromptMsgId(lastMsg.id);
+  const handleCredentialSubmit = async () => {
+    const token = await getAccessToken();
+    const result = await vaultApi.createCredential(token, {
+      label: credLabel || pendingCredentialRequest!.domain,
+      credential_type: 'username_password',
+      secret: { password: credPassword },
+      metadata: { username: credUsername },
+      domains: [pendingCredentialRequest!.domain],
+    });
+    if (result) {
+      await vaultApi.bindToAgent(token, result.id, pendingCredentialRequest!.agentId);
+      sendCredentialProvided(result.id);
     }
-  }, [messages, hasCredentials]);
-
-  const handleCredSubmit = async () => {
-    if (!credUsername || !credPassword) return;
-    setCredSaving(true);
-    try {
-      await onSaveCredentials(credUsername, credPassword);
-      setShowCredForm(false);
-      setCredPromptMsgId(null);
-    } catch {
-      // Credentials save failed — form stays open for retry
-    } finally {
-      setCredSaving(false);
-    }
-  };
-
-  const handleCredSkip = () => {
-    setCredPromptMsgId(null);
+    setCredUsername('');
+    setCredPassword('');
+    setCredLabel('');
   };
 
   useEffect(() => {
@@ -115,21 +99,6 @@ export default function ChatPanel({
             ) : (
               <p>{msg.content}</p>
             )}
-            {msg.id === credPromptMsgId && !showCredForm && (
-              <div className="chat-cred-prompt">
-                <button className="btn-primary btn-sm" onClick={() => setShowCredForm(true)}>Add credentials</button>
-                <button className="btn-secondary btn-sm" onClick={handleCredSkip}>Skip</button>
-              </div>
-            )}
-            {msg.id === credPromptMsgId && showCredForm && (
-              <div className="chat-cred-form">
-                <input type="text" placeholder="Username / email" value={credUsername} onChange={e => setCredUsername(e.target.value)} />
-                <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} />
-                <button className="btn-primary btn-sm" onClick={handleCredSubmit} disabled={credSaving || !credUsername || !credPassword}>
-                  {credSaving ? 'Saving...' : 'Save & Login'}
-                </button>
-              </div>
-            )}
           </div>
         ))}
         <div ref={messagesEndRef} />
@@ -150,6 +119,20 @@ export default function ChatPanel({
           </button>
           <button className="chat-suggestion-chip" onClick={() => { onSendTask('Test form validation'); setShowSuggestions(false); }}>
             Test form validation
+          </button>
+        </div>
+      )}
+
+      {pendingCredentialRequest && (
+        <div className="chat-cred-form" style={{ padding: '12px', background: 'var(--bg-card)', border: '1px solid var(--border-primary)', borderRadius: '8px', marginBottom: '8px' }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-primary)' }}>
+            Credentials needed for <strong>{pendingCredentialRequest.domain}</strong>
+          </div>
+          <input type="text" placeholder="Label (optional)" value={credLabel} onChange={e => setCredLabel(e.target.value)} style={{ width: '100%', marginBottom: '4px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
+          <input type="text" placeholder="Username" value={credUsername} onChange={e => setCredUsername(e.target.value)} autoComplete="off" style={{ width: '100%', marginBottom: '4px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
+          <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} autoComplete="new-password" style={{ width: '100%', marginBottom: '8px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
+          <button onClick={handleCredentialSubmit} disabled={!credUsername.trim() || !credPassword.trim()} style={{ padding: '6px 14px', background: 'var(--brand)', border: 'none', borderRadius: '4px', color: 'var(--text-primary)', cursor: 'pointer' }}>
+            Save & Login
           </button>
         </div>
       )}

@@ -14,7 +14,6 @@ export default function TestingView() {
   const { getAccessToken } = useAuth();
   const [activeTab, setActiveTab] = useState<'chat' | 'map'>('chat');
   const [featuresCount, setFeaturesCount] = useState(0);
-  const [hasCredentials, setHasCredentials] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const isAutoStart = location.state?.autoStart === true;
@@ -53,31 +52,6 @@ export default function TestingView() {
     })();
   }, [id]);
 
-  useEffect(() => {
-    if (!id) return;
-    (async () => {
-      try {
-        const token = await getAccessToken();
-        const res = await apiAuthFetch(`/api/agents/${id}`, token);
-        if (res.ok) {
-          const agent = await res.json();
-          setHasCredentials(agent.hasCredentials);
-        }
-      } catch { /* ignore */ }
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  const handleSaveCredentials = async (username: string, password: string) => {
-    const token = await getAccessToken();
-    const res = await apiAuthFetch(`/api/agents/${id}`, token, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ credentials: { username, password } }),
-    });
-    if (!res.ok) throw new Error('Failed to save credentials');
-    setHasCredentials(true);
-  };
 
   return (
     <div className="app-layout">
@@ -105,13 +79,11 @@ export default function TestingView() {
                 messages={ws.messages}
                 status={ws.status}
                 currentUrl={ws.currentUrl}
-                hasCredentials={hasCredentials}
                 showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
                 onExplore={() => id && ws.explore(id)}
                 onStartAgent={() => ws.startAgent(id!)}
                 onSendTask={ws.sendTask}
                 onStopAgent={ws.stopAgent}
-                onSaveCredentials={handleSaveCredentials}
               />
               <BrowserView
                 screenshot={ws.screenshot}
