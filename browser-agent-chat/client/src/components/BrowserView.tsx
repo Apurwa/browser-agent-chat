@@ -1,3 +1,4 @@
+import { useRef, useEffect } from 'react';
 import type { AgentStatus } from '../types';
 
 interface BrowserViewProps {
@@ -8,6 +9,14 @@ interface BrowserViewProps {
 
 export function BrowserView({ screenshot, currentUrl, status }: BrowserViewProps) {
   const isStarting = status === 'working' && !screenshot;
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // Update img.src directly to avoid React re-render on every screencast frame
+  useEffect(() => {
+    if (imgRef.current && screenshot) {
+      imgRef.current.src = screenshot;
+    }
+  }, [screenshot]);
 
   return (
     <div className="browser-view">
@@ -28,7 +37,7 @@ export function BrowserView({ screenshot, currentUrl, status }: BrowserViewProps
       <div className="browser-content">
         {screenshot ? (
           <img
-            src={screenshot}
+            ref={imgRef}
             alt="Browser view"
             className={`browser-screenshot${status === 'working' ? ' browser-screenshot-reconnecting' : ''}`}
           />

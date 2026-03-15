@@ -49,6 +49,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScreenshotTimeRef = useRef<number>(0);
 
   const [connected, setConnected] = useState(false);
   const [status, setStatus] = useState<AgentStatus>('disconnected');
@@ -98,9 +99,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         addMessage('agent', `Action: ${a.action}${a.target ? ` → ${a.target}` : ''}`);
         break;
       }
-      case 'screenshot':
-        setScreenshot(`data:image/png;base64,${(msg as any).data}`);
+      case 'screenshot': {
+        // Throttle: skip frames if last update was < 100ms ago (~10fps max)
+        const now = Date.now();
+        if (now - lastScreenshotTimeRef.current < 100) break;
+        lastScreenshotTimeRef.current = now;
+        setScreenshot(`data:image/jpeg;base64,${(msg as any).data}`);
         break;
+      }
       case 'status':
         setStatus((msg as any).status);
         // Note: 'disconnected' from server (e.g. idle timeout, error) clears active agent
