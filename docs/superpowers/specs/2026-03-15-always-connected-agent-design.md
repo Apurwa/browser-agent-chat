@@ -57,10 +57,16 @@ Remove:
 4. Server responds with snapshot or creates new session
 
 On WS reconnect (existing 3s backoff auto-reconnect):
-- If `activeAgentRef.current` is set, auto-send `{ type: 'start', agentId }` to re-establish session
+- If `activeAgentRef.current` is set, auto-send `{ type: 'start', agentId }` to re-establish session (do NOT send `resumeUrl` — the server has the current URL in the session; sending a stale client-side URL would be wrong)
 - This makes reconnection seamless — user sees brief "Reconnecting..." then back to normal
+- **Race condition handling:** If the detached timer fires during reconnect (session destroyed between disconnect and reconnect), the server treats the `start` as a new session creation. The client sees a brief "Starting agent..." then normal operation. No silent state loss — the server always responds with either `snapshot` (reattach) or `status: 'idle'` (new session), so the client knows which path was taken
 
 Remove the `'stop'` client message type. Add `'restart'` message type for the settings page restart button.
+
+Handle new server messages:
+- `session_evicted` — Show toast "Session ended — another agent needed the slot. Click to reconnect." Set status to `'disconnected'`. On click, call `startAgent(agentId)`.
+- `session_expiring` — Show non-blocking banner with countdown. Clear banner if session is restarted.
+- `session_new` — Server signals it created a new session (not reattached). Client resets messages/screenshot/currentUrl to avoid showing stale data from a previous session.
 
 ### 2. Server-Side Session Lifecycle
 
@@ -98,41 +104,55 @@ evictLRUSession():
   1. Get all active sessions from local sessions Map
   2. Sort by lastActivityAt ascending (oldest first)
   3. Prefer evicting sessions with NO attached WS client
-     - Find oldest detached session → destroy it → return
+     - Find oldest detached session → notify evicted client (see below) → destroy it → return
   4. If all sessions have clients, evict the oldest overall
-     - destroy it → return
+     - Notify evicted client → destroy it → return
 ```
+
+**Eviction notification:** Before destroying a session that has an attached WS client, send `{ type: 'session_evicted', agentId, reason: 'capacity' }` to the client. The client displays a toast: "Session ended — another agent needed the slot. Click to reconnect." Clicking re-triggers `startAgent(agentId)`.
 
 New function `ensureCapacity()`:
 ```
-ensureCapacity():
-  count = sessions.size
-  while count >= MAX_CONCURRENT_BROWSERS:
-    evictLRUSession()
-    count--
+async ensureCapacity():
+  // Use a module-level mutex (e.g., simple promise chain or async-mutex)
+  // to prevent concurrent startAgent calls from both evicting
+  await acquireLock('capacity')
+  try:
+    count = sessions.size
+    while count >= MAX_CONCURRENT_BROWSERS:
+      evictLRUSession()
+      count--
+  finally:
+    releaseLock('capacity')
 ```
 
-Called before `createSession()` in the unified start handler.
+Called before `createSession()` in the unified start handler. The mutex prevents two concurrent `startAgent` calls from both reading `sessions.size`, both deciding to evict, and double-evicting.
 
 Track attached WS clients per session — add a `Set<WebSocket>` to the session data, updated when clients attach/detach.
 
-#### Two-Tier Idle Timeout (redisStore.ts)
+**Active task cleanup on eviction:** When evicting a session, check if the session has an active task running. If so, cancel the task (via `agent.stop()`) before destroying the session. This prevents orphaned Magnitude agent processes.
+
+#### Two-Tier Idle Timeout (sessionManager.ts)
 
 Replace the current flat `SESSION_TTL_SECONDS` (10 min) with:
 
 **Tier 1 — Detached timeout (2 min):**
-- When the last WS client disconnects from a session (tracked via `ws.on('close')`), start a 2-minute timer.
-- If a client reconnects within 2 min, cancel the timer.
+- When the last WS client disconnects from a session (tracked via `ws.on('close')`), start a **local `setTimeout`** (not Redis polling).
+- Store the timer handle in the session's in-memory data.
+- If a client reconnects within 2 min, `clearTimeout` the handle.
 - If timer fires, destroy the session.
-- Implementation: Store `detachedAt` timestamp in Redis. Expiry polling (already runs every 30s) checks `detachedAt + 120s < now`.
+- Also store `detachedAt` timestamp in Redis for crash recovery (on server restart, check `detachedAt + 120s < now` during recovery sweep).
 
 **Tier 2 — Absolute timeout (30 min):**
 - No session lives longer than 30 minutes from creation, regardless of activity.
-- Implementation: Store `createdAt` in Redis (already stored). Expiry polling checks `createdAt + 1800s < now`.
+- Implementation: Store `createdAt` in Redis (already stored). **Local `setTimeout`** set at session creation fires after 30 min.
+- **5-minute warning:** At 25 minutes, send `{ type: 'session_expiring', remainingSeconds: 300 }` to attached clients. Client shows a non-blocking banner: "Session expires in 5 minutes. Your work will be saved."
 
 **While WS client is connected:**
 - No idle timeout. Heartbeat pings (every 30s) update `lastActivityAt` for LRU ordering but do NOT affect timeouts.
 - The absolute 30-min cap still applies.
+
+**Redis `detachedAt` field:** Add `detachedAt: number | null` to the `RedisSession` type in `redisStore.ts`. Set to `Date.now()` when last client detaches, cleared to `null` when a client reattaches.
 
 Remove `SESSION_TTL_SECONDS` env var. Add:
 - `DETACHED_TIMEOUT_SECONDS` (default 120)
@@ -180,19 +200,20 @@ Frozen browser (edge case)
 |------|--------|
 | `client/src/components/TestingView.tsx` | Remove conditional start/resume, always call startAgent |
 | `client/src/components/ChatPanel.tsx` | Remove Stop/Start buttons, always-enabled input |
-| `client/src/contexts/WebSocketContext.tsx` | Remove stopAgent/resumeSession, auto-reconnect startAgent |
+| `client/src/contexts/WebSocketContext.tsx` | Remove stopAgent/resumeSession, auto-reconnect startAgent, handle session_evicted/session_expiring/session_new messages |
 | `client/src/components/AgentSettings.tsx` | Add "Restart Agent" button |
-| `server/src/index.ts` | Merge start/resume handlers, remove stop, add restart |
-| `server/src/sessionManager.ts` | Add evictLRUSession, ensureCapacity, track attached clients |
-| `server/src/redisStore.ts` | Two-tier timeout (detached + absolute), new env vars |
-| `client/src/types.ts` | Remove 'stop' message, add 'restart' message |
+| `server/src/index.ts` | Merge start/resume handlers, remove stop, add restart, send session_evicted/session_expiring/session_new messages |
+| `server/src/sessionManager.ts` | Add evictLRUSession (with mutex), ensureCapacity, track attached clients, active task cleanup on eviction, local setTimeout for detached/absolute timeouts |
+| `server/src/redisStore.ts` | Add `detachedAt` field to RedisSession type, new env vars (DETACHED_TIMEOUT_SECONDS, ABSOLUTE_TIMEOUT_SECONDS, MAX_CONCURRENT_BROWSERS) |
+| `client/src/types.ts` | Remove 'stop' message, add 'restart'/'session_evicted'/'session_expiring'/'session_new' messages |
 | `server/src/types.ts` | Same message type changes |
 
 ### 5. What We're NOT Changing
 
 - Browser warm pool (already works well)
-- Session recovery on server restart (already handles this)
-- Redis session storage (just adding fields)
+- Session recovery on server restart (already handles this — detachedAt crash recovery added for timeout consistency)
+- Redis session storage (just adding `detachedAt` field)
 - Magnitude agent lifecycle (unchanged)
 - Login detection flow (unchanged)
 - WebSocket heartbeat/reconnect (leveraging existing)
+- `explore()` flow — currently creates its own agent/browser internally. This is compatible with always-connected because `explore()` manages its own lifecycle independent of user sessions. No changes needed.
