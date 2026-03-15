@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import FindingAlert from './FindingAlert';
+import TaskCompletionCard from './TaskCompletionCard';
 import type { ChatMessage, AgentStatus } from '../types';
 
 const LOGIN_KEYWORDS = ['login', 'sign in', 'sign-in', 'log in', 'authentication', 'username and password', 'credentials'];
@@ -12,17 +13,19 @@ interface ChatPanelProps {
   currentUrl: string | null;
   hasCredentials: boolean;
   showExplore: boolean;
+  lastCompletedTask: { taskId: string; success: boolean; stepCount: number; durationMs: number } | null;
   onExplore: () => void;
   onStartAgent: () => void;
   onSendTask: (content: string) => void;
   onStopAgent: () => void;
+  onFeedback: (taskId: string, rating: 'positive' | 'negative', correction?: string) => void;
   onSaveCredentials: (username: string, password: string) => Promise<void>;
 }
 
 export default function ChatPanel({
   agentId: _agentId, messages, status, currentUrl,
-  hasCredentials, showExplore, onExplore,
-  onStartAgent, onSendTask, onStopAgent, onSaveCredentials,
+  hasCredentials, showExplore, lastCompletedTask, onExplore,
+  onStartAgent, onSendTask, onStopAgent, onFeedback, onSaveCredentials,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -132,6 +135,15 @@ export default function ChatPanel({
             )}
           </div>
         ))}
+        {lastCompletedTask && (
+          <TaskCompletionCard
+            taskId={lastCompletedTask.taskId}
+            success={lastCompletedTask.success}
+            stepCount={lastCompletedTask.stepCount}
+            durationMs={lastCompletedTask.durationMs}
+            onFeedback={onFeedback}
+          />
+        )}
         <div ref={messagesEndRef} />
       </div>
 

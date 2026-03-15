@@ -107,10 +107,12 @@ export default function TestingView() {
                 currentUrl={ws.currentUrl}
                 hasCredentials={hasCredentials}
                 showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
+                lastCompletedTask={ws.lastCompletedTask}
                 onExplore={() => id && ws.explore(id)}
                 onStartAgent={() => ws.startAgent(id!)}
                 onSendTask={ws.sendTask}
                 onStopAgent={ws.stopAgent}
+                onFeedback={ws.sendFeedback}
                 onSaveCredentials={handleSaveCredentials}
               />
               <BrowserView
