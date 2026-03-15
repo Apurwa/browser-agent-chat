@@ -35,23 +35,43 @@ export default function ChatPanel({
   const [credUsername, setCredUsername] = useState('');
   const [credPassword, setCredPassword] = useState('');
   const [credLabel, setCredLabel] = useState('');
+  const [credSaving, setCredSaving] = useState(false);
+  const [credError, setCredError] = useState<string | null>(null);
 
   const handleCredentialSubmit = async () => {
-    const token = await getAccessToken();
-    const result = await vaultApi.createCredential(token, {
-      label: credLabel || pendingCredentialRequest!.domain,
-      credential_type: 'username_password',
-      secret: { password: credPassword },
-      metadata: { username: credUsername },
-      domains: [pendingCredentialRequest!.domain],
-    });
-    if (result) {
-      await vaultApi.bindToAgent(token, result.id, pendingCredentialRequest!.agentId);
-      sendCredentialProvided(result.id);
+    setCredSaving(true);
+    setCredError(null);
+    try {
+      const token = await getAccessToken();
+      const result = await vaultApi.createCredential(token, {
+        label: credLabel || pendingCredentialRequest!.domain,
+        credential_type: 'username_password',
+        secret: { password: credPassword },
+        metadata: { username: credUsername },
+        domains: [pendingCredentialRequest!.domain],
+      });
+      if (result) {
+        await vaultApi.bindToAgent(token, result.id, pendingCredentialRequest!.agentId);
+        sendCredentialProvided(result.id);
+        setCredUsername('');
+        setCredPassword('');
+        setCredLabel('');
+      } else {
+        setCredError('Failed to save credential. Please try again.');
+      }
+    } catch (err) {
+      setCredError(err instanceof Error ? err.message : 'An unexpected error occurred.');
+    } finally {
+      setCredSaving(false);
     }
+  };
+
+  const handleCredentialSkip = () => {
+    sendCredentialProvided('');
     setCredUsername('');
     setCredPassword('');
     setCredLabel('');
+    setCredError(null);
   };
 
   useEffect(() => {
@@ -124,16 +144,26 @@ export default function ChatPanel({
       )}
 
       {pendingCredentialRequest && (
-        <div className="chat-cred-form" style={{ padding: '12px', background: 'var(--bg-card)', border: '1px solid var(--border-primary)', borderRadius: '8px', marginBottom: '8px' }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-primary)' }}>
+        <div className="chat-cred-form">
+          <div className="chat-cred-form-title">
             Credentials needed for <strong>{pendingCredentialRequest.domain}</strong>
           </div>
-          <input type="text" placeholder="Label (optional)" value={credLabel} onChange={e => setCredLabel(e.target.value)} style={{ width: '100%', marginBottom: '4px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
-          <input type="text" placeholder="Username" value={credUsername} onChange={e => setCredUsername(e.target.value)} autoComplete="off" style={{ width: '100%', marginBottom: '4px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
-          <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} autoComplete="new-password" style={{ width: '100%', marginBottom: '8px', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)', borderRadius: '4px', color: 'var(--text-body)' }} />
-          <button onClick={handleCredentialSubmit} disabled={!credUsername.trim() || !credPassword.trim()} style={{ padding: '6px 14px', background: 'var(--brand)', border: 'none', borderRadius: '4px', color: 'var(--text-primary)', cursor: 'pointer' }}>
-            Save & Login
-          </button>
+          <input type="text" placeholder="Label (optional)" value={credLabel} onChange={e => setCredLabel(e.target.value)} />
+          <input type="text" placeholder="Username" value={credUsername} onChange={e => setCredUsername(e.target.value)} autoComplete="off" />
+          <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} autoComplete="new-password" />
+          {credError && <div className="chat-cred-form-error">{credError}</div>}
+          <div className="chat-cred-form-actions">
+            <button
+              className="chat-cred-form-save"
+              onClick={handleCredentialSubmit}
+              disabled={credSaving || !credUsername.trim() || !credPassword.trim()}
+            >
+              {credSaving ? 'Saving...' : 'Save & Login'}
+            </button>
+            <button className="chat-cred-form-skip" onClick={handleCredentialSkip} disabled={credSaving}>
+              Skip
+            </button>
+          </div>
         </div>
       )}
 

@@ -88,6 +88,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         if ((msg as any).status === 'disconnected') {
           setActiveAgentId(null);
           activeAgentRef.current = null;
+          setPendingCredentialRequest(null);
         }
         break;
       case 'nav':
@@ -143,6 +144,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         setStatus('disconnected');
         activeAgentRef.current = null;
         setActiveAgentId(null);
+        setPendingCredentialRequest(null);
         break;
       case 'taskInterrupted':
         setMessages(prev => [...prev, {
@@ -187,6 +189,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onclose = () => {
       setConnected(false);
+      setPendingCredentialRequest(null);
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
@@ -268,6 +271,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Keep screenshot and currentUrl visible — user expects to see same screen on restart
     setActiveAgentId(null);
     activeAgentRef.current = null;
+    setPendingCredentialRequest(null);
     // Keep lastUrlRef — so next start navigates back to where we were
   }, [send]);
 
