@@ -313,7 +313,7 @@ export async function replayLogin(
   credentials: { username: string; password: string },
 ): Promise<boolean> {
   const pattern = patterns.find(
-    p => p.pattern_type === 'login' && p.status === 'active'
+    p => p.pattern_type === 'login' && p.pattern_state === 'active'
   );
   if (!pattern) return false;
 

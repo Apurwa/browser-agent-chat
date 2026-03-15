@@ -284,7 +284,7 @@ export async function executeLogin(
 
     if (success) {
       replaySpan?.end({ output: { success: true, elapsed } });
-      const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
+      const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.pattern_state === 'active');
       if (pattern) markSuccess(pattern.id).catch(() => {});
 
       broadcast({ type: 'thought', content: `Logged in via muscle memory (${elapsed}s)` });
@@ -297,7 +297,7 @@ export async function executeLogin(
 
     // Replay failed — increment failures
     replaySpan?.end({ output: { success: false, elapsed } });
-    const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.status === 'active');
+    const pattern = session.patterns.find(p => p.pattern_type === 'login' && p.pattern_state === 'active');
     if (pattern) {
       incrementFailures(pattern.id, pattern.consecutive_failures).catch(() => {});
     }
