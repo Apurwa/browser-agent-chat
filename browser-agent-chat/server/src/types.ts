@@ -174,6 +174,7 @@ export interface RedisSession {
   lastTask: string;
   createdAt: number;
   lastActivityAt: number;
+  detachedAt: number;  // 0 = not detached, Date.now() = detach timestamp
 }
 
 export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted';
@@ -334,10 +335,9 @@ export interface BehaviorSuggestionData {
 
 export type ClientMessage =
   | { type: 'start'; agentId: string; resumeUrl?: string }
-  | { type: 'resume'; agentId: string }
+  | { type: 'restart'; agentId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
-  | { type: 'stop' }
   | { type: 'ping' }
   | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string }
   | { type: 'credential_provided'; credentialId: string };
@@ -363,7 +363,10 @@ export type ServerMessage =
   | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number; transition: 'active' | 'dominant' }
   | { type: 'patternStale'; name: string; reason: string }
   | { type: 'feedbackAck'; taskId: string; rating: FeedbackRating; clustered: boolean; clusterName?: string; clusterProgress?: { current: number; needed: number } }
-  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string };
+  | { type: 'credential_needed'; agentId: string; domain: string; strategy: string }
+  | { type: 'session_evicted'; agentId: string; reason: 'capacity' }
+  | { type: 'session_expiring'; remainingSeconds: number }
+  | { type: 'session_new'; agentId: string };
 
 // === API Request/Response ===
 
