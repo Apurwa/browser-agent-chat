@@ -60,10 +60,20 @@ Remove:
 3. Send `{ type: 'start', agentId }` to server (no `resumeUrl` — server has the current URL in session)
 4. Server responds with `snapshot` (reattach) or `session_new` + `status: 'idle'` (new session)
 
-On WS reconnect (existing 3s backoff auto-reconnect):
-- If `activeAgentRef.current` is set, auto-send `{ type: 'start', agentId }` to re-establish session (do NOT send `resumeUrl` — the server has the current URL in the session; sending a stale client-side URL would be wrong)
+On WS reconnect (`ws.onopen` after auto-reconnect with existing 3s backoff):
+```
+ws.onopen = () => {
+  if (activeAgentRef.current) {
+    startAgent(activeAgentRef.current, /* isReconnect */ true)
+  }
+}
+```
+- Passes `isReconnect=true` so `startAgent` skips the optimistic `setStatus('working')`, avoiding UI flicker on every WS blip
+- Does NOT send `resumeUrl` — the server has the current URL in the session
 - This makes reconnection seamless — user sees brief "Reconnecting..." then back to normal
-- **Race condition handling:** If the detached timer fires during reconnect (session destroyed between disconnect and reconnect), the server treats the `start` as a new session creation. The client sees a brief "Starting agent..." then normal operation. No silent state loss — the server always responds with either `snapshot` (reattach) or `status: 'idle'` (new session), so the client knows which path was taken
+- **Race condition handling:** If the detached timer fires during reconnect (session destroyed between disconnect and reconnect), the server treats the `start` as a new session creation. The client receives `session_new` + `status: 'idle'` and resets state. No silent state loss — the server always responds with either `snapshot` (reattach) or `session_new` + `status: 'idle'` (new session), so the client knows which path was taken
+
+**Local task queue for disconnected state:** Add a `pendingTasksRef = useRef<string[]>([])` in WebSocketContext. When status is `disconnected` and user submits a task, push to `pendingTasksRef` instead of sending over WS. On `ws.onopen`, after reconnect `startAgent` completes (receives `snapshot` or `session_new`), drain `pendingTasksRef` by sending each task as a `{ type: 'task' }` message. If the session was evicted during disconnect, the drain happens after the new session is created — tasks execute in the new (contextless) session, which is acceptable since the alternative is silently dropping them.
 
 Remove the `'stop'` client message type. Add `'restart'` message type for the settings page restart button.
 
@@ -98,14 +108,16 @@ Remove the separate `msg.type === 'resume'` handler entirely.
 Remove the `msg.type === 'stop'` handler. Add `msg.type === 'restart'`:
 ```
 On { type: 'restart', agentId }:
-  1. Cancel active task if running (check activeTasks Map, call agent.stop(),
-     update task DB record to 'cancelled', remove from activeTasks Map)
+  1. Cancel active task via beforeEvict hook (same hook used by eviction —
+     checks activeTasks, calls agent.close(), updates DB, removes from Map)
   2. destroySession(agentId)
   3. await ensureCapacity() — restart freed a slot, but check anyway for safety
   4. Create new session (browser + agent)
   5. Send { type: 'session_new', agentId } + status: 'idle' to client
   6. Run login detection (async, non-blocking)
 ```
+
+Note: `restart` also cancels any in-flight `explore()` because `explore()` uses the same agent — `agent.close()` terminates the Magnitude process, ending the explore. The explore result will be incomplete, which is acceptable for a user-initiated restart.
 
 #### LRU Eviction (sessionManager.ts)
 
@@ -135,19 +147,46 @@ async ensureCapacity():
   // to prevent concurrent startAgent calls from both evicting
   await acquireLock('capacity')
   try:
-    count = agents.size
-    while count >= MAX_CONCURRENT_BROWSERS:
-      evictLRUSession()
-      count--
+    while agents.size >= MAX_CONCURRENT_BROWSERS:
+      await evictLRUSession()  // MUST await — destroySession is async (kills browser, deletes Redis)
+      // Re-read agents.size on next iteration (don't manually decrement — destroySession
+      // removes from agents Map, so agents.size reflects reality after each await)
   finally:
     releaseLock('capacity')
 ```
 
-Called before `createSession()` in the unified start handler. The mutex prevents two concurrent `startAgent` calls from both reading `sessions.size`, both deciding to evict, and double-evicting.
+Called before `createSession()` in the unified start handler. The mutex prevents two concurrent `startAgent` calls from both reading `agents.size`, both deciding to evict, and double-evicting.
 
-Track attached WS clients per session — add a `Set<WebSocket>` to the session data, updated when clients attach/detach.
+**WS client tracking:** The existing `wsClients` Map in `sessionManager.ts` (maps agentId → Set<WebSocket>) and `clientAgents` Map in `index.ts` (maps ws → agentId) already provide dual tracking. `evictLRUSession()` uses `wsClients.get(agentId)?.size === 0` to identify detached sessions. No new data structure needed — the existing `addClient`/`removeClient` in `sessionManager.ts` already maintain `wsClients`, and `index.ts` maintains `clientAgents`. Both must stay in sync (they already are via the `ws.on('close')` handler).
 
-**Active task cleanup on eviction:** When evicting a session, check if the session has an active task running. If so, cancel the task (via `agent.stop()`) before destroying the session. This prevents orphaned Magnitude agent processes.
+**Active task cleanup on eviction:** `activeTasks` lives in `index.ts`, but `evictLRUSession` lives in `sessionManager.ts`. To bridge this, add a `beforeEvict` callback parameter to `sessionManager`:
+
+```
+// In sessionManager.ts
+let onBeforeEvict: ((agentId: string) => Promise<void>) | null = null
+
+export function setBeforeEvictHook(hook: (agentId: string) => Promise<void>) {
+  onBeforeEvict = hook
+}
+
+// Called inside evictLRUSession before destroySession:
+if (onBeforeEvict) await onBeforeEvict(agentId)
+```
+
+```
+// In index.ts, at startup:
+sessionManager.setBeforeEvictHook(async (agentId) => {
+  const taskEntry = activeTasks.get(agentId)
+  if (taskEntry) {
+    const agent = sessionManager.getAgent(agentId)
+    if (agent) await agent.close()  // AgentSession uses close(), not stop()
+    // Update task DB record to 'cancelled'
+    activeTasks.delete(agentId)
+  }
+})
+```
+
+This keeps `activeTasks` ownership in `index.ts` while allowing `sessionManager` to trigger cleanup. The same hook is called for both eviction and restart.
 
 #### Two-Tier Idle Timeout (sessionManager.ts)
 
@@ -169,11 +208,13 @@ Replace the current flat `SESSION_TTL_SECONDS` (10 min) with:
 - No idle timeout. Heartbeat pings (every 30s) update `lastActivityAt` for LRU ordering but do NOT affect timeouts.
 - The absolute 30-min cap still applies.
 
-**Redis `detachedAt` field:** Add `detachedAt: number` to the `RedisSession` type in `redisStore.ts`. Use `0` as the sentinel for "not detached" (avoids `null` → `"null"` serialization issue with `String(null)` in `setSession()`). Set to `Date.now()` when last client detaches, reset to `0` when a client reattaches. In `getSession()`, parse with `parseInt(val, 10) || 0`.
+**Redis `detachedAt` field:** Add `detachedAt: number` to the `RedisSession` type in `types.ts` and `redisStore.ts`. Use `0` as the sentinel for "not detached" (avoids `null` → `"null"` serialization issue with `String(null)` in `setSession()`). Set to `Date.now()` when last client detaches, reset to `0` when a client reattaches. In `getSession()` (which manually maps each field — it is NOT a generic parser), add: `detachedAt: parseInt(data.detachedAt, 10) || 0` alongside the existing field mappings.
 
 **Redis key TTL strategy:** Replace `SESSION_TTL_SECONDS` with a safety-net TTL of `ABSOLUTE_TIMEOUT_SECONDS + 300` (35 min). This ensures Redis keys are cleaned up even if the server crashes between session creation and absolute timeout. The local `setTimeout` is the primary timeout mechanism; Redis TTL is the crash-recovery fallback.
 
-**Split `refreshTTL()`:** Rename the current `refreshTTL()` to `resetSessionTTL()` (only called on session creation). Add a new `updateLastActivity(agentId)` that ONLY updates `lastActivityAt` in Redis (for LRU ordering) without resetting the key TTL or expiry sorted set. Heartbeat pings call `updateLastActivity()`, not `resetSessionTTL()`.
+**LRU activity tracking:** Currently heartbeat pings do NOT update `lastActivityAt` — they only respond with `pong`. Add a new `updateLastActivity(agentId)` function in `redisStore.ts` that ONLY updates the `lastActivityAt` field in the Redis hash (single `HSET`) without resetting key TTL or the expiry sorted set. Call `updateLastActivity()` from the ping handler in `index.ts` so that LRU eviction uses fresh activity data. The existing `refreshTTL()` remains unchanged — it's called from `setSession()` and `addClient()` during session creation/attachment, which is correct for the new safety-net TTL.
+
+**Keep `pollExpiredSessions()`:** The existing 30s polling in `redisStore.ts` remains as the crash-recovery fallback. Update its expiry check to use `ABSOLUTE_TIMEOUT_SECONDS` instead of `SESSION_TTL_SECONDS`. Local `setTimeout` is the primary timeout mechanism; the polling catches sessions orphaned by server crashes.
 
 Remove `SESSION_TTL_SECONDS` env var. Add:
 - `DETACHED_TIMEOUT_SECONDS` (default 120)
