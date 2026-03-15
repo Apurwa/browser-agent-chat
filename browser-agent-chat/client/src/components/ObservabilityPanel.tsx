@@ -97,8 +97,10 @@ export default function ObservabilityPanel() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
 
-  // Fetch trace list
+  // Fetch trace list (reset detail state when agent changes)
   useEffect(() => {
+    setSelectedTraceId(null);
+    setTraceDetail(null);
     loadTraces();
   }, [id]);
 
