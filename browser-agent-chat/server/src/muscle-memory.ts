@@ -1,6 +1,6 @@
 import { supabase, isSupabaseEnabled } from './supabase.js';
 import { getGraph, normalizeUrl } from './nav-graph.js';
-import type { LearnedPattern, PlaywrightStep, NavNode, NavEdge, NavGraph } from './types.js';
+import type { LearnedPattern, PlaywrightStep, PlaintextSecret, NavNode, NavEdge, NavGraph } from './types.js';
 
 // ─── DB Operations ────────────────────────────────────────────────
 
@@ -19,6 +19,19 @@ export async function loadPatterns(agentId: string): Promise<LearnedPattern[]> {
     return [];
   }
   return data;
+}
+
+/** Load active patterns for a specific domain (used by handleLoginDetection). */
+export async function getLearnedPatterns(agentId: string, domain: string): Promise<LearnedPattern[]> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('learned_patterns')
+    .select('*')
+    .eq('agent_id', agentId)
+    .eq('domain', domain)
+    .eq('status', 'active');
+  if (error || !data) return [];
+  return data as LearnedPattern[];
 }
 
 /** Mark a pattern as stale (stop attempting replay). */
@@ -79,16 +92,15 @@ export async function incrementFailures(patternId: string, currentFailures: numb
 /** Inject credential values into placeholder steps. */
 export function injectCredentials(
   steps: PlaywrightStep[],
-  credentials: { username: string; password: string },
+  secret: PlaintextSecret,
+  metadata: { username?: string },
 ): PlaywrightStep[] {
   return steps.map(step => {
     if (!step.value) return step;
-    return {
-      ...step,
-      value: step.value
-        .replace('{{username}}', credentials.username)
-        .replace('{{password}}', credentials.password),
-    };
+    let value = step.value;
+    if (metadata.username) value = value.replace('{{username}}', metadata.username);
+    if (secret.password) value = value.replace('{{password}}', secret.password);
+    return { ...step, value };
   });
 }
 
@@ -256,6 +268,43 @@ export async function recordLoginPattern(
   }
 }
 
+/**
+ * Record a login pattern with vault credential reference.
+ * Called by handleLoginDetection after a successful login to save the pattern for future replays.
+ */
+export async function recordLoginPatternWithCredential(
+  agentId: string,
+  domain: string,
+  credentialId: string,
+  strategy: string,
+  selectors: { username: string | null; password: string | null; submit: string | null },
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const steps: PlaywrightStep[] = [];
+  if (selectors.username) {
+    steps.push({ action: 'fill', selector: selectors.username, value: '{{username}}' });
+  }
+  if (selectors.password) {
+    steps.push({ action: 'fill', selector: selectors.password, value: '{{password}}' });
+  }
+  if (selectors.submit) {
+    steps.push({ action: 'click', selector: selectors.submit });
+  }
+
+  await supabase!
+    .from('learned_patterns')
+    .upsert({
+      agent_id: agentId,
+      domain,
+      pattern_type: 'login',
+      credential_id: credentialId,
+      trigger: { type: 'login', url_pattern: domain },
+      steps,
+      status: 'active',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'agent_id,domain,pattern_type' });
+}
+
 /** Upsert a login pattern for a project (manual query since partial unique index). */
 export async function upsertLoginPattern(
   agentId: string,
@@ -310,7 +359,8 @@ const LOGIN_REPLAY_TIMEOUT = 10_000;
 export async function replayLogin(
   page: any, // Playwright Page
   patterns: LearnedPattern[],
-  credentials: { username: string; password: string },
+  secret: PlaintextSecret,
+  metadata: { username?: string },
 ): Promise<boolean> {
   const pattern = patterns.find(
     p => p.pattern_type === 'login' && p.status === 'active'
@@ -318,7 +368,7 @@ export async function replayLogin(
   if (!pattern) return false;
 
   try {
-    const steps = injectCredentials(pattern.steps, credentials);
+    const steps = injectCredentials(pattern.steps, secret, metadata);
 
     // Race against timeout
     const success = await Promise.race([
