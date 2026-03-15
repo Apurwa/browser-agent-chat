@@ -87,7 +87,7 @@ const clientUserIds = new Map<WebSocket, string>();
 
 // Track active tasks per agent
 const activeTasks = new Map<string, { taskId: string; stepCount: number; startedAt: number; prompt: string }>();
-const STEP_EVENT_TYPES = new Set(['thought', 'action', 'screenshot', 'nav']);
+const STEP_EVENT_TYPES = new Set(['thought', 'action', 'nav']);
 
 // Count broadcast events during active tasks
 sessionManager.onBroadcast((agentId, msg) => {
