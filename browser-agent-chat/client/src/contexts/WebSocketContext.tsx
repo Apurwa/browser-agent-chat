@@ -263,11 +263,33 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Keep lastUrlRef — so next start navigates back to where we were
   }, [send]);
 
+  // pendingExploreRef: if set, send explore once we reach 'idle' status after auto-start
+  const pendingExploreRef = useRef<string | null>(null);
+
   const explore = useCallback((agentId: string) => {
     setStatus('working');
     addMessage('system', 'Explore & Learn started...');
-    send({ type: 'explore', agentId });
+
+    // If no active session on server, start the agent first, then explore on idle
+    if (!activeAgentRef.current || activeAgentRef.current !== agentId) {
+      pendingExploreRef.current = agentId;
+      setActiveAgentId(agentId);
+      activeAgentRef.current = agentId;
+      const resumeUrl = lastUrlRef.current || undefined;
+      send({ type: 'start', agentId, resumeUrl });
+    } else {
+      send({ type: 'explore', agentId });
+    }
   }, [send, addMessage]);
+
+  // When agent reaches idle after a pending explore (auto-start), fire the explore
+  useEffect(() => {
+    if (status === 'idle' && pendingExploreRef.current) {
+      const agentId = pendingExploreRef.current;
+      pendingExploreRef.current = null;
+      send({ type: 'explore', agentId });
+    }
+  }, [status, send]);
 
   const resetSuggestionCount = useCallback(() => {
     setPendingSuggestionCount(0);
