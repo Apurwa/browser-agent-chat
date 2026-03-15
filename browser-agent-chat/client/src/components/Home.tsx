@@ -5,7 +5,8 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
-import { Sun, Moon, LogOut, Plus, ArrowUp, Mic, Upload, Clipboard } from 'lucide-react';
+import { Sun, Moon, LogOut, Plus, ArrowUp, Mic, Upload, Clipboard, Activity } from 'lucide-react';
+import { useHealth } from '../contexts/HealthContext';
 import type { AgentListItem } from '../types';
 import './Home.css';
 
@@ -76,6 +77,7 @@ export default function Home() {
   const navigate = useNavigate();
   const { user, getAccessToken, signOut } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { langfuseEnabled } = useHealth();
 
   useEffect(() => {
     (async () => {
@@ -151,6 +153,15 @@ export default function Home() {
           <span className="home-logo-text">Agent</span>
         </div>
         <div className="home-topbar-right">
+          {langfuseEnabled && (
+            <button
+              className="home-theme-toggle"
+              onClick={() => navigate('/observability')}
+              title="Observability"
+            >
+              <Activity size={18} />
+            </button>
+          )}
           <button className="home-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
