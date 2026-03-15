@@ -10,6 +10,7 @@ import MemoryViewer from './components/MemoryViewer';
 import AgentSettings from './components/AgentSettings';
 import EvalDashboard from './components/EvalDashboard';
 import ObservabilityPanel from './components/ObservabilityPanel';
+import ObservabilityDashboard from './components/ObservabilityDashboard';
 import VaultPage from './components/Vault/VaultPage';
 import { useHealth } from './contexts/HealthContext';
 
@@ -18,6 +19,13 @@ function TracesGuard() {
   if (loading) return <div className="loading-screen">Loading...</div>;
   if (!langfuseEnabled) return <Navigate to="testing" replace />;
   return <ObservabilityPanel />;
+}
+
+function DashboardGuard() {
+  const { langfuseEnabled, loading } = useHealth();
+  if (loading) return <div className="loading-screen">Loading...</div>;
+  if (!langfuseEnabled) return <Navigate to="/" replace />;
+  return <ObservabilityDashboard />;
 }
 
 export default function App() {
@@ -39,6 +47,7 @@ export default function App() {
         <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
         <Route path="/agents/:id/traces" element={<ProtectedRoute><TracesGuard /></ProtectedRoute>} />
         <Route path="/vault" element={<ProtectedRoute><VaultPage /></ProtectedRoute>} />
+        <Route path="/observability" element={<ProtectedRoute><DashboardGuard /></ProtectedRoute>} />
         <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
         <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
       </Routes>
