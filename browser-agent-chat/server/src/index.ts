@@ -11,6 +11,7 @@ import suggestionsRouter from './routes/suggestions.js';
 import evalsRouter from './routes/evals.js';
 import mapRouter from './routes/map.js';
 import tracesRouter from './routes/traces.js';
+import observabilityRouter from './routes/observability.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
 import { pendingCredentialRequests } from './vault.js';
@@ -71,6 +72,7 @@ app.use('/api/agents/:id/evals', evalsRouter);
 app.use('/api/agents/:id/map', mapRouter);
 app.use('/api/agents/:id/feedback', feedbackRouter);
 app.use('/api/agents/:id/traces', tracesRouter);
+app.use('/api/observability', observabilityRouter);
 app.use('/api/vault', vaultRouter);
 app.use('/api/agents/:id/credentials', agentCredentialsRouter);
 
