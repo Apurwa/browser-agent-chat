@@ -6,10 +6,33 @@ import { endSession as dbEndSession, getMessagesBySession } from './db.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
 
+// -- Configuration --
+
+const MAX_CONCURRENT_BROWSERS = parseInt(process.env.MAX_CONCURRENT_BROWSERS || '3', 10);
+
 // -- Local state (thin cache, NOT source of truth — Redis is) --
 
 const agents = new Map<string, AgentSession>();
 const wsClients = new Map<string, Set<WebSocket>>();
+
+// -- Before-evict hook (for activeTasks cleanup) --
+
+let onBeforeEvict: ((agentId: string) => Promise<void>) | null = null;
+
+export function setBeforeEvictHook(hook: (agentId: string) => Promise<void>) {
+  onBeforeEvict = hook;
+}
+
+export async function callBeforeEvictHook(agentId: string): Promise<void> {
+  if (onBeforeEvict) await onBeforeEvict(agentId);
+}
+
+/** @internal — test-only: clear in-memory maps without side effects */
+export function _resetLocalState(): void {
+  agents.clear();
+  wsClients.clear();
+  onBeforeEvict = null;
+}
 
 // -- WebSocket client management --
 
@@ -166,6 +189,67 @@ export async function destroySession(agentId: string): Promise<void> {
     if (session.dbSessionId) await dbEndSession(session.dbSessionId);
     // Remove from Redis
     await redisStore.deleteSession(agentId);
+  }
+}
+
+// -- LRU Eviction --
+
+export async function evictLRUSession(): Promise<string | null> {
+  const sessions = Array.from(agents.entries());
+  if (sessions.length === 0) return null;
+
+  const sessionData = await Promise.all(
+    sessions.map(async ([agentId]) => {
+      const data = await redisStore.getSession(agentId);
+      const clientCount = wsClients.get(agentId)?.size ?? 0;
+      return { agentId, lastActivityAt: data?.lastActivityAt ?? 0, clientCount };
+    })
+  );
+
+  // Prefer detached sessions (no WS clients), then oldest by lastActivityAt
+  const detached = sessionData
+    .filter(s => s.clientCount === 0)
+    .sort((a, b) => a.lastActivityAt - b.lastActivityAt);
+  const target = detached.length > 0
+    ? detached[0]
+    : sessionData.sort((a, b) => a.lastActivityAt - b.lastActivityAt)[0];
+
+  if (!target) return null;
+
+  // Notify active clients before eviction
+  if (target.clientCount > 0) {
+    broadcastToClients(target.agentId, {
+      type: 'session_evicted',
+      agentId: target.agentId,
+      reason: 'capacity',
+    });
+  }
+
+  // Call beforeEvict hook (for activeTasks cleanup)
+  if (onBeforeEvict) {
+    await onBeforeEvict(target.agentId);
+  }
+
+  await destroySession(target.agentId);
+  return target.agentId;
+}
+
+// -- Capacity management with mutex --
+
+let capacityLock: Promise<void> = Promise.resolve();
+
+export async function ensureCapacity(): Promise<void> {
+  const prev = capacityLock;
+  let release: () => void;
+  capacityLock = new Promise(resolve => { release = resolve; });
+
+  await prev;
+  try {
+    while (agents.size >= MAX_CONCURRENT_BROWSERS) {
+      await evictLRUSession();
+    }
+  } finally {
+    release!();
   }
 }
 

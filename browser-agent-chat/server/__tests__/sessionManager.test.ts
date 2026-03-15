@@ -6,6 +6,7 @@ vi.mock('../src/redisStore.js', () => ({
   setSession: vi.fn().mockResolvedValue(undefined),
   deleteSession: vi.fn().mockResolvedValue(undefined),
   refreshTTL: vi.fn().mockResolvedValue(undefined),
+  updateLastActivity: vi.fn().mockResolvedValue(undefined),
   freePort: vi.fn().mockResolvedValue(undefined),
   setScreenshot: vi.fn().mockResolvedValue(undefined),
   getScreenshot: vi.fn().mockResolvedValue(null),
@@ -60,6 +61,11 @@ import {
   recoverSession,
   recoverAllSessions,
   sendSnapshot,
+  evictLRUSession,
+  ensureCapacity,
+  setBeforeEvictHook,
+  callBeforeEvictHook,
+  _resetLocalState,
 } from '../src/sessionManager.js';
 
 describe('sessionManager — create', () => {
@@ -314,5 +320,89 @@ describe('sessionManager — sendSnapshot', () => {
     expect(calls).toContainEqual(
       expect.objectContaining({ type: 'sessionCrashed' })
     );
+  });
+});
+
+describe('sessionManager — LRU eviction', () => {
+  beforeEach(() => {
+    _resetLocalState();
+    vi.clearAllMocks();
+  });
+
+  it('evictLRUSession evicts oldest detached session first', async () => {
+    // Create 2 sessions
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    await createSession('agent-b', 'http://b.com', 'db-b');
+    vi.clearAllMocks(); // Clear create mocks
+
+    // agent-b has a WS client (not detached), agent-a is detached
+    const mockWsB = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-b', mockWsB);
+
+    // Mock getSession to return different lastActivityAt
+    (redisStore.getSession as any)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 1000 }) // agent-a (older)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 2000 }) // agent-b (newer)
+      .mockResolvedValueOnce({ ...mockRedisSession, browserPid: 12345, cdpPort: 19300, dbSessionId: 'db-a' }); // destroy reads session
+
+    const evicted = await evictLRUSession();
+    expect(evicted).toBe('agent-a');
+    expect(redisStore.deleteSession).toHaveBeenCalledWith('agent-a');
+  });
+
+  it('evictLRUSession notifies active client on eviction when no detached', async () => {
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    vi.clearAllMocks();
+
+    const mockWsA = { readyState: 1, send: vi.fn() } as any;
+    addClient('agent-a', mockWsA);
+
+    (redisStore.getSession as any)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 1000 }) // for eviction query
+      .mockResolvedValueOnce({ ...mockRedisSession, browserPid: 12345, cdpPort: 19300, dbSessionId: 'db-a' }); // for destroySession
+
+    await evictLRUSession();
+
+    expect(mockWsA.send).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"session_evicted"')
+    );
+  });
+
+  it('ensureCapacity is no-op when under capacity', async () => {
+    // With default MAX_CONCURRENT_BROWSERS=3, having 1 session is fine
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    vi.clearAllMocks();
+
+    await ensureCapacity();
+
+    expect(redisStore.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it('beforeEvict hook is called before destroy', async () => {
+    const hook = vi.fn().mockResolvedValue(undefined);
+    setBeforeEvictHook(hook);
+
+    await createSession('agent-a', 'http://a.com', 'db-a');
+    vi.clearAllMocks();
+
+    (redisStore.getSession as any)
+      .mockResolvedValueOnce({ ...mockRedisSession, lastActivityAt: 1000 }) // eviction query
+      .mockResolvedValueOnce({ ...mockRedisSession, browserPid: 12345, cdpPort: 19300, dbSessionId: 'db-a' }); // destroySession
+
+    await evictLRUSession();
+
+    expect(hook).toHaveBeenCalledWith('agent-a');
+    // Hook should be called BEFORE deleteSession
+    const hookOrder = hook.mock.invocationCallOrder[0];
+    const deleteOrder = (redisStore.deleteSession as any).mock.invocationCallOrder[0];
+    expect(hookOrder).toBeLessThan(deleteOrder);
+  });
+
+  it('callBeforeEvictHook calls the registered hook', async () => {
+    const hook = vi.fn().mockResolvedValue(undefined);
+    setBeforeEvictHook(hook);
+
+    await callBeforeEvictHook('test-agent');
+    expect(hook).toHaveBeenCalledWith('test-agent');
   });
 });
