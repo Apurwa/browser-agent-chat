@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useVault } from '../hooks/useVault';
+import * as vaultApi from '../lib/vaultApi';
+import type { BoundCredential } from '../types/assistant';
 import Sidebar from './Sidebar';
+import './Vault/Vault.css';
 
 export default function AgentSettings() {
   const { id } = useParams();
@@ -10,14 +14,25 @@ export default function AgentSettings() {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [context, setContext] = useState('');
-  const [newUsername, setNewUsername] = useState('');
-  const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [linkedCreds, setLinkedCreds] = useState<BoundCredential[]>([]);
+  const [showLinkPicker, setShowLinkPicker] = useState(false);
+  const { credentials: allCreds } = useVault();
+  const availableCreds = allCreds.filter(c => !linkedCreds.some(l => l.id === c.id));
 
   useEffect(() => {
     loadAgent();
   }, [id]);
+
+  useEffect(() => {
+    const load = async () => {
+      const token = await getAccessToken();
+      const creds = await vaultApi.getAgentCredentials(token, id!);
+      setLinkedCreds(creds);
+    };
+    load();
+  }, [id, getAccessToken]);
 
   const loadAgent = async () => {
     const token = await getAccessToken();
@@ -36,17 +51,12 @@ export default function AgentSettings() {
     setSaving(true);
     const token = await getAccessToken();
     const body: Record<string, unknown> = { name, url, context };
-    if (newUsername && newPassword) {
-      body.credentials = { username: newUsername, password: newPassword };
-    }
     await fetch(`/api/agents/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
     });
     setSaving(false);
-    setNewUsername('');
-    setNewPassword('');
   };
 
   const handleDelete = async () => {
@@ -72,12 +82,50 @@ export default function AgentSettings() {
         </section>
 
         <section className="settings-section">
-          <h2>Credentials</h2>
-          <p className="settings-hint">Leave empty to keep existing credentials.</p>
-          <div className="form-row">
-            <label>Username <input type="text" value={newUsername} onChange={e => setNewUsername(e.target.value)} /></label>
-            <label>Password <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
+          <h2>Linked Credentials</h2>
+          <p className="settings-hint">Credentials from your vault linked to this agent.</p>
+          <div className="linked-credentials">
+            {linkedCreds.map(cred => (
+              <div key={cred.binding_id} className="linked-cred-item">
+                <div>
+                  <div className="linked-cred-label">{cred.label}</div>
+                  <div className="linked-cred-domains">{cred.domains.join(', ') || 'No domains'}</div>
+                </div>
+                <button className="linked-cred-unlink" onClick={async () => {
+                  const token = await getAccessToken();
+                  await vaultApi.unbindFromAgent(token, cred.id, id!);
+                  setLinkedCreds(prev => prev.filter(c => c.binding_id !== cred.binding_id));
+                }}>Unlink</button>
+              </div>
+            ))}
+            <button className="link-cred-btn" onClick={() => setShowLinkPicker(true)}>
+              + Link a credential from vault
+            </button>
           </div>
+          {showLinkPicker && (
+            <div className="vault-form">
+              <div className="vault-form-title">Link Credential</div>
+              {availableCreds.length === 0 ? (
+                <p className="settings-hint">No credentials available. Add one in the Vault first.</p>
+              ) : (
+                availableCreds.map(cred => (
+                  <div key={cred.id} className="linked-cred-item" style={{ cursor: 'pointer' }} onClick={async () => {
+                    const token = await getAccessToken();
+                    await vaultApi.bindToAgent(token, cred.id, id!);
+                    const updated = await vaultApi.getAgentCredentials(token, id!);
+                    setLinkedCreds(updated);
+                    setShowLinkPicker(false);
+                  }}>
+                    <div>
+                      <div className="linked-cred-label">{cred.label}</div>
+                      <div className="linked-cred-domains">{cred.domains.join(', ')}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+              <button className="vault-form-cancel" onClick={() => setShowLinkPicker(false)}>Cancel</button>
+            </div>
+          )}
         </section>
 
         <button className="btn-primary" onClick={handleSave} disabled={saving}>
