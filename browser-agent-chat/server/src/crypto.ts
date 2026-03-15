@@ -9,7 +9,13 @@ function getKey(): Buffer {
   if (!key) {
     throw new Error('CREDENTIALS_ENCRYPTION_KEY environment variable is required');
   }
-  return Buffer.from(key, 'hex');
+  const buf = Buffer.from(key, 'hex');
+  if (buf.length !== 32) {
+    throw new Error(
+      `CREDENTIALS_ENCRYPTION_KEY must be exactly 32 bytes (64 hex chars); got ${buf.length} bytes`
+    );
+  }
+  return buf;
 }
 
 export function encryptCredentials(creds: PlaintextCredentials): EncryptedCredentials {
