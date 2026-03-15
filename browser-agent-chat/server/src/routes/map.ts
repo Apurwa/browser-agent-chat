@@ -29,11 +29,11 @@ export interface AppMapResponse {
   unlinkedSuggestions: Suggestion[];
 }
 
-export async function buildAppMapResponse(projectId: string): Promise<AppMapResponse> {
+export async function buildAppMapResponse(agentId: string): Promise<AppMapResponse> {
   const [graph, allFeatures, pendingSuggestions] = await Promise.all([
-    getGraph(projectId),
-    listFeatures(projectId),
-    listPendingSuggestions(projectId),
+    getGraph(agentId),
+    listFeatures(agentId),
+    listPendingSuggestions(agentId),
   ]);
 
   const featureByName = new Map<string, Feature>();
@@ -110,8 +110,8 @@ export async function buildAppMapResponse(projectId: string): Promise<AppMapResp
 
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const projectId = req.params.id as string;
-    const result = await buildAppMapResponse(projectId);
+    const agentId = req.params.id as string;
+    const result = await buildAppMapResponse(agentId);
     res.json(result);
   } catch (err) {
     console.error('[MAP] Error:', err);
