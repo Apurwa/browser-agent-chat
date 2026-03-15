@@ -5,6 +5,7 @@ import {
   Legend, CartesianGrid, ResponsiveContainer,
 } from 'recharts';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../contexts/ThemeContext';
 import { apiAuthFetch } from '../lib/api';
 import './ObservabilityDashboard.css';
 
@@ -34,14 +35,9 @@ interface AgentRow {
 type SortKey = 'traceCount' | 'totalCost' | 'errorRate' | 'avgLatency' | 'agentName';
 type SortDir = 'asc' | 'desc';
 
-// CSS vars can't be used directly in Recharts SVG fills — resolve at render time
+// CSS vars can't be used directly in Recharts SVG fills — use theme-aware hex arrays
 const CHART_HEX_DARK = ['#3b82f6','#eab308','#22c55e','#ef4444','#a855f7','#f97316','#06b6d4','#ec4899'];
 const CHART_HEX_LIGHT = ['#2563eb','#ca8a04','#16a34a','#dc2626','#9333ea','#ea580c','#0891b2','#db2777'];
-
-function getChartColors(): string[] {
-  const theme = document.documentElement.getAttribute('data-theme');
-  return theme === 'light' ? CHART_HEX_LIGHT : CHART_HEX_DARK;
-}
 
 function formatDateForInput(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -57,6 +53,7 @@ function daysAgo(n: number): Date {
 export default function ObservabilityDashboard() {
   const navigate = useNavigate();
   const { getAccessToken } = useAuth();
+  const { theme } = useTheme();
 
   // Date range state
   const [preset, setPreset] = useState<7 | 30 | 90 | null>(30);
@@ -143,7 +140,7 @@ export default function ObservabilityDashboard() {
     return dir * (a[sortKey] - b[sortKey]);
   });
 
-  const colors = getChartColors();
+  const colors = theme === 'light' ? CHART_HEX_LIGHT : CHART_HEX_DARK;
   const isEmpty = !loading && summary && summary.totalTraces === 0;
 
   return (

@@ -222,7 +222,8 @@ export async function fetchObservabilitySummary(
       let hasMore = true;
       let totalChecked = 0;
 
-      while (hasMore) {
+      const MAX_PAGES = 10; // Cap at 1000 traces to avoid runaway API calls
+      while (hasMore && page <= MAX_PAGES) {
         const batch = await langfuse.api.traceList({
           page,
           limit: 100,
