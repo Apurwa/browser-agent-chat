@@ -31,6 +31,8 @@ export interface AgentSession {
   currentUrl: string | null;
   /** Active Langfuse trace — set during task/explore/login execution. */
   currentTrace: LangfuseTraceClient | null;
+  /** CDP session for screencast — stored so we can stop it on close. */
+  cdpSession: any | null;
   close: () => Promise<void>;
 }
 
@@ -98,15 +100,34 @@ export async function createAgent(
   timer.step('start_browser_agent');
   const connector = agent.require(BrowserConnector);
 
-  // Bypass CSP (including Trusted Types) so magnitude-core's evaluate() calls
-  // that set innerHTML don't fail on sites with strict Content-Security-Policy.
+  // Create CDP session for CSP bypass and screencast
+  let cdpSession: any = null;
   try {
     const page = connector.getHarness().page;
-    const cdpSession = await page.context().newCDPSession(page);
+    cdpSession = await page.context().newCDPSession(page);
     await cdpSession.send('Page.setBypassCSP', { enabled: true });
     console.log('[AGENT] CSP bypass enabled via CDP');
   } catch (err) {
-    console.warn('[AGENT] Failed to bypass CSP:', err);
+    console.warn('[AGENT] Failed to create CDP session:', err);
+  }
+
+  // Start CDP screencast — streams frames on every screen change
+  if (cdpSession) {
+    try {
+      cdpSession.on('Page.screencastFrame', (params: { data: string; sessionId: number; metadata: unknown }) => {
+        broadcast({ type: 'screenshot', data: params.data });
+        // Acknowledge frame so CDP sends the next one
+        cdpSession.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      });
+      await cdpSession.send('Page.startScreencast', {
+        format: 'jpeg',
+        quality: 75,
+        everyNthFrame: 2,
+      });
+      console.log('[AGENT] CDP screencast started (jpeg q75, everyNthFrame=2)');
+    } catch (err) {
+      console.warn('[AGENT] Failed to start screencast:', err);
+    }
   }
 
   // Set a sensible default viewport before any page interaction.
@@ -165,7 +186,12 @@ export async function createAgent(
     lastAction: null,
     currentUrl: currentPageUrl,
     currentTrace: null,
+    cdpSession,
     close: async () => {
+      // Stop screencast before closing
+      if (cdpSession) {
+        await cdpSession.send('Page.stopScreencast').catch(() => {});
+      }
       agent.events.removeAllListeners();
       agent.browserAgentEvents.removeAllListeners();
     }
@@ -231,17 +257,7 @@ export async function createAgent(
       await saveMessage(sessionId, 'action', actionContent);
     }
 
-    // Capture and broadcast screenshot
-    try {
-      const screenshot = await connector.getLastScreenshot();
-      if (screenshot) {
-        const base64 = await screenshot.toBase64();
-        broadcast({ type: 'screenshot', data: base64 });
-        // Live screenshots are ephemeral — not persisted (see spec: Screenshots Strategy)
-      }
-    } catch (err) {
-      console.error('Failed to capture screenshot:', err);
-    }
+    // Screenshots now handled by CDP screencast — no manual capture needed
 
     // Detect URL changes after each action (click may navigate)
     // magnitude-core's 'nav' event only fires for agent.nav(), not click-based navigation
