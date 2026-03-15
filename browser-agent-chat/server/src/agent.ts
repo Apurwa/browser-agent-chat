@@ -269,6 +269,7 @@ export async function executeLogin(
     name: 'login',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
+    tags: [`agent:${session.agentId}`],
     input: { username: credentials.username },
   }) ?? null;
   session.currentTrace = trace;
@@ -385,6 +386,7 @@ export async function executeExplore(
     name: 'explore',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
+    tags: [`agent:${session.agentId}`],
     input: { context },
   }) ?? null;
   session.currentTrace = trace;
@@ -531,6 +533,7 @@ export async function executeTask(
     name: 'user-task',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
+    tags: [`agent:${session.agentId}`],
     input: { task },
   }) ?? null;
   session.currentTrace = trace;
