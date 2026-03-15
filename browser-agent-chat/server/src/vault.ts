@@ -178,10 +178,11 @@ export async function getCredentialForAgent(agentId: string, domain: string): Pr
     .order('priority', { ascending: true });
   if (error || !data) return null;
 
+  const normalizedDomain = normalizeDomain(domain);
   for (const row of data as any[]) {
     const cred = row.credentials_vault;
     if (cred.deleted_at) continue;
-    if (cred.domains.includes(domain)) {
+    if (cred.domains.includes(normalizedDomain)) {
       return cred as VaultEntry;
     }
   }
@@ -190,11 +191,12 @@ export async function getCredentialForAgent(agentId: string, domain: string): Pr
 
 export async function findByDomain(userId: string, domain: string): Promise<VaultEntry[]> {
   if (!isSupabaseEnabled()) return [];
+  const normalizedDomain = normalizeDomain(domain);
   const { data, error } = await supabase!
     .from('credentials_vault')
     .select(VAULT_METADATA_COLS)
     .eq('user_id', userId)
-    .contains('domains', [domain])
+    .contains('domains', [normalizedDomain])
     .is('deleted_at', null);
   if (error) return [];
   return (data ?? []) as VaultEntry[];
@@ -229,9 +231,10 @@ export async function decryptForInjection(
 
 // --- Helpers ---
 
-function normalizeDomain(domain: string): string {
+export function normalizeDomain(domain: string): string {
   return domain
     .replace(/^https?:\/\//, '')
     .replace(/\/+$/, '')
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/^www\./, '');
 }

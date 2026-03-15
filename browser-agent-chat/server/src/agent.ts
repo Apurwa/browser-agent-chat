@@ -12,7 +12,7 @@ import { getLangfuse } from './langfuse.js';
 import type { LangfuseTraceClient } from 'langfuse';
 import { detectLoginPage } from './login-detector.js';
 import { executeStandardLogin, verifyLoginSuccess } from './login-strategy.js';
-import { getCredentialForAgent, getCredential, decryptForInjection, pendingCredentialRequests } from './vault.js';
+import { getCredentialForAgent, getCredential, decryptForInjection, pendingCredentialRequests, normalizeDomain } from './vault.js';
 import type { PlaintextSecret } from './types.js';
 
 export interface AgentSession {
@@ -323,7 +323,7 @@ export async function handleLoginDetection(
 
   if (credential) {
     // Domain verification (exfiltration prevention)
-    const pageHostname = new URL(loginUrl).hostname;
+    const pageHostname = normalizeDomain(new URL(loginUrl).hostname);
     if (!credential.domains.includes(pageHostname)) {
       broadcast({ type: 'thought', content: `Domain mismatch: page is ${pageHostname} but credential is for ${credential.domains.join(', ')}. Skipping injection.` });
       return;
