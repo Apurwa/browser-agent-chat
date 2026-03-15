@@ -12,8 +12,8 @@ import evalsRouter from './routes/evals.js';
 import mapRouter from './routes/map.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
+import { pendingCredentialRequests } from './vault.js';
 import { getAgent, createSession, createTask, updateTask } from './db.js';
-import { decryptCredentials } from './crypto.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
@@ -71,6 +71,9 @@ const wss = new WebSocketServer({ server });
 
 // Track which agent each client is associated with
 const clientAgents = new Map<WebSocket, string>();
+
+// Track which user each client is associated with
+const clientUserIds = new Map<WebSocket, string>();
 
 // Track active tasks per agent
 const activeTasks = new Map<string, { taskId: string; stepCount: number }>();
@@ -142,10 +145,7 @@ wss.on('connection', (ws: WebSocket) => {
           return;
         }
 
-        let credentials: { username: string; password: string } | null = null;
-        if (agent.credentials) {
-          try { credentials = decryptCredentials(agent.credentials); } catch {}
-        }
+        clientUserIds.set(ws, agent.user_id);
 
         const dbSessionId = await createSession(agent.id);
 
@@ -283,6 +283,14 @@ wss.on('connection', (ws: WebSocket) => {
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
       executeExplore(agentSession, agent?.context || null, exploreBroadcast);
 
+    } else if (msg.type === 'credential_provided') {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) return;
+      const pending = pendingCredentialRequests.get(agentId);
+      if (pending) {
+        pending.resolve(msg.credentialId);
+      }
+      return;
     }
   });
 
@@ -293,6 +301,7 @@ wss.on('connection', (ws: WebSocket) => {
       sessionManager.removeClient(agentId, ws);
       clientAgents.delete(ws);
     }
+    clientUserIds.delete(ws);
   });
 });
 
