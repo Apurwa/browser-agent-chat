@@ -55,11 +55,11 @@ export async function verifyLoginSuccess(page: any, loginUrl: string): Promise<b
   // URL changed away from login page
   if (currentUrl !== loginUrl) return true;
 
-  // Same URL but check if password field is gone
-  const hasPasswordField = await page.evaluate(() => {
+  // Same URL but check if password field is gone (runs in browser context)
+  const hasPasswordField = await page.evaluate(`(() => {
     const pw = document.querySelector('input[type="password"]');
-    return pw !== null && (pw as HTMLElement).offsetParent !== null;
-  });
+    return pw !== null && pw.offsetParent !== null;
+  })()`);
 
   return !hasPasswordField;
 }

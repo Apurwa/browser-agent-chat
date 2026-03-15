@@ -24,7 +24,8 @@ router.get('/', requireAuth, async (req, res) => {
 // Get a single credential
 router.get('/:id', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
-  const credential = await getCredential(req.params.id, userId);
+  const id = req.params.id as string;
+  const credential = await getCredential(id, userId);
   if (!credential) return res.status(404).json({ error: 'Credential not found' });
   res.json(credential);
 });
@@ -54,8 +55,9 @@ router.post('/', requireAuth, async (req, res) => {
 // Update a credential (label, metadata, domains only — not the secret)
 router.put('/:id', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
+  const id = req.params.id as string;
   const { label, metadata, domains } = req.body;
-  const updated = await updateCredential(req.params.id, userId, { label, metadata, domains });
+  const updated = await updateCredential(id, userId, { label, metadata, domains });
   if (!updated) return res.status(404).json({ error: 'Credential not found' });
   res.json(updated);
 });
@@ -63,36 +65,42 @@ router.put('/:id', requireAuth, async (req, res) => {
 // Soft-delete a credential
 router.delete('/:id', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
-  await deleteCredential(req.params.id, userId);
+  const id = req.params.id as string;
+  await deleteCredential(id, userId);
   res.status(204).end();
 });
 
 // Rotate credential secret (change password / API key)
 router.put('/:id/secret', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
+  const id = req.params.id as string;
   const { secret } = req.body;
   if (!secret) return res.status(400).json({ error: 'secret is required' });
-  await rotateCredential(req.params.id, userId, secret);
+  await rotateCredential(id, userId, secret);
   res.status(204).end();
 });
 
 // Bind credential to agent (verifies credential ownership)
 router.post('/:id/bind/:agentId', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
+  const id = req.params.id as string;
+  const agentId = req.params.agentId as string;
   // Verify the authenticated user owns this credential
-  const credential = await getCredential(req.params.id, userId);
+  const credential = await getCredential(id, userId);
   if (!credential) return res.status(404).json({ error: 'Credential not found' });
   const { usage_context, priority } = req.body ?? {};
-  await bindToAgent(req.params.id, req.params.agentId, usage_context, priority);
+  await bindToAgent(id, agentId, usage_context, priority);
   res.status(201).json({ ok: true });
 });
 
 // Unbind credential from agent (verifies credential ownership)
 router.delete('/:id/bind/:agentId', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
-  const credential = await getCredential(req.params.id, userId);
+  const id = req.params.id as string;
+  const agentId = req.params.agentId as string;
+  const credential = await getCredential(id, userId);
   if (!credential) return res.status(404).json({ error: 'Credential not found' });
-  await unbindFromAgent(req.params.id, req.params.agentId);
+  await unbindFromAgent(id, agentId);
   res.status(204).end();
 });
 
@@ -102,7 +110,7 @@ export default router;
 export const agentCredentialsRouter = Router({ mergeParams: true });
 
 agentCredentialsRouter.get('/', requireAuth, async (req, res) => {
-  const agentId = req.params.id;
+  const agentId = req.params.id as string;
   const credentials = await getAgentCredentials(agentId);
   res.json(credentials);
 });

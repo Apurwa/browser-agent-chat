@@ -42,7 +42,13 @@ export default function VaultPage() {
     return result;
   }, [credentials, search, typeFilter]);
 
-  const handleSave = async (data: Parameters<typeof createCredential>[0]) => {
+  const handleSave = async (data: {
+    label: string;
+    credential_type: string;
+    secret?: { password?: string; apiKey?: string };
+    metadata: Record<string, unknown>;
+    domains: string[];
+  }) => {
     if (editing) {
       await updateCredential(editing.id, {
         label: data.label,
@@ -55,8 +61,8 @@ export default function VaultPage() {
         await vaultApi.rotateCredential(token, editing.id, data.secret);
         await refresh(); // Refresh to show updated version number
       }
-    } else {
-      await createCredential(data);
+    } else if (data.secret) {
+      await createCredential({ ...data, secret: data.secret });
     }
     setShowForm(false);
     setEditing(null);
