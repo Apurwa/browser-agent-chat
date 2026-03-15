@@ -264,6 +264,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   }, [send]);
 
   const explore = useCallback((agentId: string) => {
+    setStatus('working');
     send({ type: 'explore', agentId });
   }, [send]);
 

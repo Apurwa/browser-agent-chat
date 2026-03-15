@@ -271,6 +271,8 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      broadcastToAgent(agentId, { type: 'status', status: 'working' });
+
       const exploreMsg = makeChatMessage('system', 'Explore & Learn started...');
       redisStore.pushMessage(agentId, exploreMsg).catch(() => {});
 
