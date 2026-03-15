@@ -2673,7 +2673,7 @@ Add a vault button. Since `/vault` is user-level (not agent-scoped), it needs a 
 </button>
 ```
 
-Place this between the Memory and Settings nav items.
+Place this **after the spacer div** (before the theme toggle and Settings), since Vault is user-level, not agent-scoped. It belongs in the bottom section alongside Settings.
 
 - [ ] **Step 3: Verify the app compiles and vault page loads**
 
@@ -2811,7 +2811,67 @@ Remove the `LOGIN_KEYWORDS` / `INTENT_KEYWORDS` arrays and the `useEffect` that 
 Also remove the old credential-related props from `ChatPanelProps`:
 - Remove `hasCredentials` prop
 - Remove `onSaveCredentials` prop
-- Update all call sites (e.g., in `TestingView.tsx` or wherever ChatPanel is rendered) to stop passing these removed props.
+
+**Critical: Update TestingView.tsx** (the parent component that renders ChatPanel):
+- Remove `hasCredentials` state and the `useEffect` that fetches it
+- Remove `handleSaveCredentials` function
+- Remove `hasCredentials={hasCredentials}` and `onSaveCredentials={handleSaveCredentials}` props from the `<ChatPanel>` JSX
+- If these props are not removed from TestingView, TypeScript compilation will fail
+
+- [ ] **Step 3b: Add inline credential form JSX**
+
+Add state for the inline form fields:
+```typescript
+const [credUsername, setCredUsername] = useState('');
+const [credPassword, setCredPassword] = useState('');
+const [credLabel, setCredLabel] = useState('');
+```
+
+Render the inline form when `pendingCredentialRequest` is non-null. Place this above the chat input area:
+```typescript
+{pendingCredentialRequest && (
+  <div className="chat-cred-form">
+    <div className="chat-cred-header">
+      Credentials needed for <strong>{pendingCredentialRequest.domain}</strong>
+    </div>
+    <input
+      type="text"
+      placeholder="Label (optional)"
+      value={credLabel}
+      onChange={e => setCredLabel(e.target.value)}
+    />
+    <input
+      type="text"
+      placeholder="Username"
+      value={credUsername}
+      onChange={e => setCredUsername(e.target.value)}
+      autoComplete="off"
+    />
+    <input
+      type="password"
+      placeholder="Password"
+      value={credPassword}
+      onChange={e => setCredPassword(e.target.value)}
+      autoComplete="new-password"
+    />
+    <button
+      onClick={handleCredentialSubmit}
+      disabled={!credUsername.trim() || !credPassword.trim()}
+    >
+      Save & Login
+    </button>
+  </div>
+)}
+```
+
+Note: The `chat-cred-form` class should be styled using existing chat panel CSS patterns (use `var(--bg-card)`, `var(--border-primary)`, etc.). Add minimal styles to the component or to `Vault.css` if needed.
+
+After successful submit, clear the form state:
+```typescript
+setCredUsername('');
+setCredPassword('');
+setCredLabel('');
+```
 
 - [ ] **Step 4: Verify inline flow works end-to-end**
 
@@ -2838,11 +2898,12 @@ git commit -m "feat(chat): replace keyword detection with vault-backed credentia
 
 - [ ] **Step 1: Add linked credentials section**
 
-Import hooks and API:
+Import hooks, API, and CSS:
 ```typescript
 import { useVault } from '../hooks/useVault';
 import * as vaultApi from '../lib/vaultApi';
 import type { BoundCredential } from '../types/assistant';
+import '../Vault/Vault.css'; // Reuse linked-cred-* and vault-form styles
 ```
 
 Add state for linked credentials:
