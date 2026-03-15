@@ -57,7 +57,7 @@ Remove:
 2. If this is a fresh start (not a reconnect): set `status: 'working'` (optimistic — shows loading state)
    If this is a reconnect (WS just re-established): do NOT change status — keep current status to avoid UI flicker. The server response (`snapshot` or `status: 'idle'`) will set the correct status.
    Implementation: add `isReconnect` boolean parameter to `startAgent()`, default `false`. The auto-reconnect handler passes `true`.
-3. Send `{ type: 'start', agentId }` to server (no `resumeUrl` — server has the current URL in session)
+3. Send `{ type: 'start', agentId, resumeUrl }` to server — include `resumeUrl = lastUrlRef.current` so the server can navigate to the user's last page if creating a new session (e.g., after detached timeout expiry). The server uses `resumeUrl` only for new sessions; for reattach it ignores it.
 4. Server responds with `snapshot` (reattach) or `session_new` + `status: 'idle'` (new session)
 
 On WS reconnect (`ws.onopen` after auto-reconnect with existing 3s backoff):
@@ -69,7 +69,7 @@ ws.onopen = () => {
 }
 ```
 - Passes `isReconnect=true` so `startAgent` skips the optimistic `setStatus('working')`, avoiding UI flicker on every WS blip
-- Does NOT send `resumeUrl` — the server has the current URL in the session
+- Still sends `resumeUrl = lastUrlRef.current` — if the session was destroyed during reconnect (detached timer fired), the server creates a new session and uses `resumeUrl` to navigate to the user's last page instead of the agent's base URL
 - This makes reconnection seamless — user sees brief "Reconnecting..." then back to normal
 - **Race condition handling:** If the detached timer fires during reconnect (session destroyed between disconnect and reconnect), the server treats the `start` as a new session creation. The client receives `session_new` + `status: 'idle'` and resets state. No silent state loss — the server always responds with either `snapshot` (reattach) or `session_new` + `status: 'idle'` (new session), so the client knows which path was taken
 
@@ -80,7 +80,7 @@ Remove the `'stop'` client message type. Add `'restart'` message type for the se
 Handle new server messages:
 - `session_evicted` — Show toast "Session ended — another agent needed the slot. Click to reconnect." Set status to `'disconnected'`. On click, call `startAgent(agentId)`.
 - `session_expiring` — Show non-blocking banner with countdown. Clear banner if session is restarted.
-- `session_new` — Server signals it created a new session (not reattached). Client resets messages/screenshot/currentUrl to avoid showing stale data from a previous session.
+- `session_new` — Server signals it created a new session (not reattached). Client resets all session-bound state: `messages`, `screenshot`, `currentUrl`, `findings`, `pendingSuggestionCount`, `activeTaskId`, `lastCompletedTask`, `feedbackAck`. This reset runs synchronously before processing any subsequent messages in the same batch (e.g., the `status: 'idle'` that follows). The `explore()` flow must add its "Explore & Learn started..." system message *after* receiving `session_new`/`idle`, not before the server response.
 
 ### 2. Server-Side Session Lifecycle
 
@@ -89,15 +89,15 @@ Handle new server messages:
 Merge the current separate `start` and `resume` message handlers into one:
 
 ```
-On { type: 'start', agentId }:
+On { type: 'start', agentId, resumeUrl? }:
   1. Check Redis for existing session for this agentId
-     → If found AND browser alive: reattach WS client, send snapshot, done
+     → If found AND browser alive: reattach WS client, send snapshot, done (ignore resumeUrl)
      → If found but browser dead: clean up stale session, fall through to create
   2. await ensureCapacity() — uses agents Map size (local, in-process) for the count
      (agents Map tracks all sessions with live agent objects; this is accurate because
      we always clean up the Map entry in destroySession. Redis is the crash-recovery
      fallback, not the primary count source.)
-  3. Create new session (browser + agent)
+  3. Create new session (browser + agent, navigate to resumeUrl || agent.url)
   4. Send { type: 'session_new', agentId } to client (signals fresh session, not reattach)
   5. Send status: 'idle' to client
   6. Run login detection (async, non-blocking)
@@ -157,6 +157,8 @@ async ensureCapacity():
 
 Called before `createSession()` in the unified start handler. The mutex prevents two concurrent `startAgent` calls from both reading `agents.size`, both deciding to evict, and double-evicting.
 
+**Non-atomicity note:** `destroySession` removes from the `agents` Map early, then awaits async cleanup (kill browser, delete Redis, end DB session). If async cleanup throws after the Map delete, the slot is freed but Redis retains a stale entry. This is acceptable — `pollExpiredSessions` (crash-recovery fallback) cleans up stale Redis entries within 30s.
+
 **WS client tracking:** The existing `wsClients` Map in `sessionManager.ts` (maps agentId → Set<WebSocket>) and `clientAgents` Map in `index.ts` (maps ws → agentId) already provide dual tracking. `evictLRUSession()` uses `wsClients.get(agentId)?.size === 0` to identify detached sessions. No new data structure needed — the existing `addClient`/`removeClient` in `sessionManager.ts` already maintain `wsClients`, and `index.ts` maintains `clientAgents`. Both must stay in sync (they already are via the `ws.on('close')` handler).
 
 **Active task cleanup on eviction:** `activeTasks` lives in `index.ts`, but `evictLRUSession` lives in `sessionManager.ts`. To bridge this, add a `beforeEvict` callback parameter to `sessionManager`:
@@ -187,6 +189,8 @@ sessionManager.setBeforeEvictHook(async (agentId) => {
 ```
 
 This keeps `activeTasks` ownership in `index.ts` while allowing `sessionManager` to trigger cleanup. The same hook is called for both eviction and restart.
+
+**Fix pre-existing bug:** The current `ws.on('close')` handler in `index.ts` calls `activeTasks.delete(agentId)`, which silently drops task tracking on any WS disconnect — even brief network blips. With always-connected (where WS blips are expected and auto-recovered), this is a significant issue: the running task completes but `taskBroadcast` can't find the `activeTask` entry, so the DB record stays stuck in `running` state. **Fix:** Remove `activeTasks.delete(agentId)` from the `ws.close` handler. Only delete from `activeTasks` in these places: (1) task completion callback, (2) `beforeEvict` hook (explicit eviction/restart), (3) explicit user feedback/cancellation. The agent task continues running server-side regardless of WS state.
 
 #### Two-Tier Idle Timeout (sessionManager.ts)
 
