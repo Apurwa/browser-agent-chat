@@ -27,6 +27,7 @@ export default function VaultForm({ editing, onSave, onCancel }: VaultFormProps)
   const [domains, setDomains] = useState<string[]>(editing?.domains ?? []);
   const [domainInput, setDomainInput] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const addDomain = useCallback(() => {
     const normalized = normalizeDomain(domainInput);
@@ -49,6 +50,7 @@ export default function VaultForm({ editing, onSave, onCancel }: VaultFormProps)
 
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       const data: Parameters<VaultFormProps['onSave']>[0] = {
         label,
@@ -62,6 +64,8 @@ export default function VaultForm({ editing, onSave, onCancel }: VaultFormProps)
         data.secret = credType === 'username_password' ? { password } : { apiKey };
       }
       await onSave(data);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to save credential');
     } finally {
       setSaving(false);
     }
@@ -136,6 +140,11 @@ export default function VaultForm({ editing, onSave, onCancel }: VaultFormProps)
         </div>
       </div>
 
+      {saveError && (
+        <div className="vault-form-error" style={{ color: '#ef4444', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+          {saveError}
+        </div>
+      )}
       <div className="vault-form-actions">
         <button className="vault-form-cancel" onClick={onCancel}>Cancel</button>
         <button className="vault-form-save" onClick={handleSave} disabled={!canSave || saving}>

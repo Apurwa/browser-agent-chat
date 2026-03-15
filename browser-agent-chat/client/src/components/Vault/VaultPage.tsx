@@ -29,6 +29,7 @@ export default function VaultPage() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     let result = credentials;
@@ -53,23 +54,28 @@ export default function VaultPage() {
     metadata: Record<string, unknown>;
     domains: string[];
   }) => {
-    if (editing) {
-      await updateCredential(editing.id, {
-        label: data.label,
-        metadata: data.metadata,
-        domains: data.domains,
-      });
-      // If secret was changed (password rotation), call rotate endpoint
-      if (data.secret) {
-        const token = await getAccessToken();
-        await vaultApi.rotateCredential(token, editing.id, data.secret);
-        await refresh(); // Refresh to show updated version number
+    setActionError(null);
+    try {
+      if (editing) {
+        await updateCredential(editing.id, {
+          label: data.label,
+          metadata: data.metadata,
+          domains: data.domains,
+        });
+        // If secret was changed (password rotation), call rotate endpoint
+        if (data.secret) {
+          const token = await getAccessToken();
+          await vaultApi.rotateCredential(token, editing.id, data.secret);
+          await refresh(); // Refresh to show updated version number
+        }
+      } else if (data.secret) {
+        await createCredential({ ...data, secret: data.secret });
       }
-    } else if (data.secret) {
-      await createCredential({ ...data, secret: data.secret });
+      setShowForm(false);
+      setEditing(null);
+    } catch (err) {
+      throw err instanceof Error ? err : new Error('Failed to save credential');
     }
-    setShowForm(false);
-    setEditing(null);
   };
 
   const handleEdit = (cred: typeof credentials[0]) => {
@@ -82,8 +88,14 @@ export default function VaultPage() {
       setConfirmDelete(id);
       return;
     }
-    await deleteCredential(id);
-    setConfirmDelete(null);
+    setActionError(null);
+    try {
+      await deleteCredential(id);
+      setConfirmDelete(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete credential');
+      setConfirmDelete(null);
+    }
   };
 
   if (loading) return (
@@ -110,8 +122,14 @@ export default function VaultPage() {
             </button>
             <h1 className="vault-title">Credential Vault</h1>
           </div>
-          <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); }}>+ Add Credential</button>
+          <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); setActionError(null); }}>+ Add Credential</button>
         </div>
+
+        {actionError && (
+          <div className="vault-action-error" style={{ color: '#ef4444', fontSize: '0.875rem', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
+            {actionError}
+          </div>
+        )}
 
       {showForm && (
         <VaultForm
