@@ -123,7 +123,8 @@ export type ClientMessage =
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
   | { type: 'stop' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'taskFeedback'; task_id: string; rating: 'positive' | 'negative'; correction?: string };
 
 export type ServerMessage =
   | { type: 'thought'; content: string }
@@ -132,14 +133,17 @@ export type ServerMessage =
   | { type: 'status'; status: AgentStatus }
   | { type: 'nav'; url: string }
   | { type: 'error'; message: string }
-  | { type: 'taskComplete'; success: boolean }
+  | { type: 'taskStarted'; taskId: string }
+  | { type: 'taskComplete'; success: boolean; taskId?: string; stepCount?: number; durationMs?: number }
   | { type: 'finding'; finding: Finding }
   | { type: 'suggestion'; suggestion: Suggestion }
   | { type: 'pong' }
   | { type: 'sessionRestore'; messages: ChatMessage[] }
   | { type: 'metrics'; metrics: StartupMetrics }
   | { type: 'sessionCrashed' }
-  | { type: 'taskInterrupted'; task: string };
+  | { type: 'taskInterrupted'; task: string }
+  | { type: 'patternLearned'; name: string; steps: string[]; success_rate: number; avg_steps: number; runs: number }
+  | { type: 'patternStale'; name: string; reason: string };
 
 // === Chat ===
 
