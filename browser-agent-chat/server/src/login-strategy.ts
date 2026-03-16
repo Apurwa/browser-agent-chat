@@ -7,6 +7,81 @@ interface Selectors {
 }
 
 /**
+ * Try to fill a field using the detected CSS selector. If it fails (e.g. React
+ * generates IDs with special chars that Playwright can't resolve), fall back to
+ * role-based or type-based locators.
+ */
+async function fillField(page: any, selector: string | null, value: string, kind: 'username' | 'password'): Promise<boolean> {
+  // 1. Try detected selector
+  if (selector) {
+    try {
+      await page.fill(selector, value, { timeout: 3000 });
+      return true;
+    } catch {
+      console.log(`[LOGIN-STRATEGY] Selector "${selector}" failed for ${kind}, trying fallbacks`);
+    }
+  }
+
+  // 2. Fallback by input type
+  const typeSelector = kind === 'password'
+    ? 'input[type="password"]:visible'
+    : 'input[type="email"]:visible, input[type="text"][name*="user"]:visible, input[type="text"][name*="email"]:visible';
+  try {
+    await page.locator(typeSelector).first().fill(value, { timeout: 3000 });
+    return true;
+  } catch {
+    // continue
+  }
+
+  // 3. Fallback by placeholder text
+  const placeholderHints = kind === 'password'
+    ? ['password', 'Password']
+    : ['email', 'Email', 'username', 'Username'];
+  for (const hint of placeholderHints) {
+    try {
+      await page.getByPlaceholder(hint).first().fill(value, { timeout: 2000 });
+      return true;
+    } catch {
+      // try next
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Click the submit button. Try detected selector first, then common fallbacks.
+ */
+async function clickSubmit(page: any, selector: string | null): Promise<void> {
+  if (selector) {
+    try {
+      await page.click(selector, { timeout: 3000 });
+      return;
+    } catch {
+      console.log(`[LOGIN-STRATEGY] Submit selector "${selector}" failed, trying fallbacks`);
+    }
+  }
+
+  // Fallback: try common submit patterns
+  const fallbacks = [
+    'button[type="submit"]:visible',
+    'button:has-text("Sign in"):visible',
+    'button:has-text("Log in"):visible',
+    'button:has-text("Login"):visible',
+    'input[type="submit"]:visible',
+  ];
+  for (const fb of fallbacks) {
+    try {
+      await page.locator(fb).first().click({ timeout: 2000 });
+      return;
+    } catch {
+      // try next
+    }
+  }
+  console.warn('[LOGIN-STRATEGY] Could not find submit button');
+}
+
+/**
  * Execute a standard form login: fill username, fill password, click submit.
  * Security: password variable is zeroed after page.fill().
  */
@@ -18,22 +93,26 @@ export async function executeStandardLogin(
   loginUrl: string,
 ): Promise<LoginResult> {
   try {
-    // Fill username
-    if (selectors.username && metadata.username) {
-      await page.fill(selectors.username, metadata.username);
+    // Fill username — try detected selector, fall back to role-based locators
+    if (metadata.username) {
+      const filled = await fillField(page, selectors.username, metadata.username, 'username');
+      if (!filled) {
+        console.warn('[LOGIN-STRATEGY] Could not fill username field');
+      }
     }
 
     // Fill password — zero variable immediately after
-    if (selectors.password && secret.password) {
-      await page.fill(selectors.password, secret.password);
+    if (secret.password) {
+      const filled = await fillField(page, selectors.password, secret.password, 'password');
       // Security: zero the reference (caller should also zero their copy)
       (secret as any).password = null;
+      if (!filled) {
+        console.warn('[LOGIN-STRATEGY] Could not fill password field');
+      }
     }
 
-    // Click submit
-    if (selectors.submit) {
-      await page.click(selectors.submit);
-    }
+    // Click submit — try detected selector, fall back to common patterns
+    await clickSubmit(page, selectors.submit);
 
     // Wait for navigation/SPA route change — try multiple strategies
     await page.waitForLoadState('networkidle').catch(() => {});

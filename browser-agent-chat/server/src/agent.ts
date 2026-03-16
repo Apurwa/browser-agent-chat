@@ -420,17 +420,21 @@ export async function handleLoginDetection(
   if (!detection.isLoginPage) return;
 
   broadcast({ type: 'thought', content: `Login page detected (confidence: ${detection.score}). Looking up credentials...` });
+  console.log(`[LOGIN-DEBUG] domain=${detection.domain} strategy=${detection.strategy} selectors=${JSON.stringify(detection.selectors)}`);
 
   // Guard: only standard_form is supported in MVP
   if (detection.strategy !== 'standard_form' && detection.strategy !== 'unknown') {
+    console.log(`[LOGIN-DEBUG] Unsupported strategy: ${detection.strategy}`);
     broadcast({ type: 'thought', content: `Detected ${detection.strategy} login flow (not yet supported). Skipping automatic login.` });
     return;
   }
 
   const loginUrl = await getLivePageUrl(page);
+  console.log(`[LOGIN-DEBUG] loginUrl=${loginUrl}`);
 
   // 1. Check muscle memory for this domain first
   const patterns = await getLearnedPatterns(agentId, detection.domain);
+  console.log(`[LOGIN-DEBUG] muscle memory patterns: ${patterns.length}`);
   const loginPattern = patterns.find(p => p.pattern_type === 'login' && p.pattern_state === 'active');
 
   if (loginPattern?.credential_id) {
@@ -464,6 +468,7 @@ export async function handleLoginDetection(
 
   // 2. Try to find credential via agent bindings + domain
   const credential = await getCredentialForAgent(agentId, detection.domain);
+  console.log(`[LOGIN-DEBUG] getCredentialForAgent result: ${credential ? credential.label : 'null'}`);
 
   if (credential) {
     // Domain verification (exfiltration prevention)
