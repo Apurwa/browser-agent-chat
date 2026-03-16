@@ -49,7 +49,10 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
   const handleExploreNode = useCallback((nodeId: string) => {
     const node = storeNodes.find(n => n.id === nodeId)
     if (node?.urlPattern) {
+      console.log('[AppMap] Explore node:', nodeId, node.urlPattern)
       onSendTask(`Navigate to ${node.urlPattern} and explore the page. Identify interactive elements, forms, and available features.`)
+    } else {
+      console.warn('[AppMap] Explore node failed — no urlPattern for:', nodeId)
     }
   }, [storeNodes, onSendTask])
 
@@ -136,7 +139,7 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
       <div className="app-map-empty">
         <p>No map data yet.</p>
         <p>Start an exploration to build the app map.</p>
-        {onExplore && <button className="btn-add" onClick={onExplore}>Explore &amp; Learn</button>}
+        {onExplore && <button className="btn-add" onClick={() => { console.log('[AppMap] Explore & Learn clicked'); onExplore(); }}>Explore &amp; Learn</button>}
       </div>
     )
   }
