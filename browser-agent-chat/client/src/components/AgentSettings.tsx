@@ -5,7 +5,6 @@ import { useVault } from '../hooks/useVault';
 import { useWS } from '../contexts/WebSocketContext';
 import * as vaultApi from '../lib/vaultApi';
 import type { BoundCredential } from '../types/assistant';
-import Sidebar from './Sidebar';
 import './Vault/Vault.css';
 
 export default function AgentSettings() {
@@ -71,9 +70,7 @@ export default function AgentSettings() {
   };
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="settings-page">
+    <div className="settings-page">
         <h1>Agent Settings</h1>
 
         <section className="settings-section">
@@ -165,6 +162,5 @@ export default function AgentSettings() {
           )}
         </section>
       </div>
-    </div>
   );
 }

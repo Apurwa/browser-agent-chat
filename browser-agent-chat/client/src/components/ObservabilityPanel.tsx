@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import { useAuth } from '../hooks/useAuth';
 import './ObservabilityPanel.css';
 
@@ -156,9 +155,7 @@ export default function ObservabilityPanel() {
   const totalTraces = sessions.reduce((sum, s) => sum + s.traces.length, 0);
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="observability-content">
+    <div className="observability-content">
         {/* Left panel — trace list */}
         <div className="traces-list">
           <div className="traces-list-header">
@@ -322,6 +319,5 @@ export default function ObservabilityPanel() {
           </div>
         )}
       </div>
-    </div>
   );
 }

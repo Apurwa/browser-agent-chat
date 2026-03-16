@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import ChatPanel from './ChatPanel';
 import { BrowserView } from './BrowserView';
 import AppMap from './AppMap/AppMap';
@@ -40,47 +39,44 @@ export default function TestingView() {
 
 
   return (
-    <div className="app-layout">
-      <Sidebar findingsCount={ws.findingsCount} />
-      <div className="testing-content">
-        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
-          <div className="testing-tabs">
-            <button
-              className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
-              onClick={() => setActiveTab('chat')}
-            >
-              Chat
-            </button>
-            <button
-              className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
-              onClick={() => setActiveTab('map')}
-            >
-              App Graph
-            </button>
-          </div>
-          {activeTab === 'chat' ? (
-            <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
-              <ChatPanel
-                agentId={id!}
-                messages={ws.messages}
-                status={ws.status}
-                currentUrl={ws.currentUrl}
-                showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
-                lastCompletedTask={ws.lastCompletedTask}
-                onExplore={() => id && ws.explore(id)}
-                onSendTask={ws.sendTask}
-                onFeedback={ws.sendFeedback}
-              />
-              <BrowserView
-                screenshot={ws.screenshot}
-                currentUrl={ws.currentUrl}
-                status={ws.status}
-              />
-            </div>
-          ) : (
-            <AppMap agentId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
-          )}
+    <div className="testing-content">
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
+        <div className="testing-tabs">
+          <button
+            className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            Chat
+          </button>
+          <button
+            className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
+            onClick={() => setActiveTab('map')}
+          >
+            App Graph
+          </button>
         </div>
+        {activeTab === 'chat' ? (
+          <div style={{ display: 'flex', flexDirection: 'row', flex: 1, minHeight: 0 }}>
+            <ChatPanel
+              agentId={id!}
+              messages={ws.messages}
+              status={ws.status}
+              currentUrl={ws.currentUrl}
+              showExplore={ws.status === 'idle' && !!id && featuresCount <= 3}
+              lastCompletedTask={ws.lastCompletedTask}
+              onExplore={() => id && ws.explore(id)}
+              onSendTask={ws.sendTask}
+              onFeedback={ws.sendFeedback}
+            />
+            <BrowserView
+              screenshot={ws.screenshot}
+              currentUrl={ws.currentUrl}
+              status={ws.status}
+            />
+          </div>
+        ) : (
+          <AppMap agentId={id!} onSendTask={ws.sendTask} onExplore={() => ws.explore(id!)} />
+        )}
       </div>
     </div>
   );

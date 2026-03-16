@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import FindingDetail from './FindingDetail';
 import { useAuth } from '../hooks/useAuth';
 import type { Finding, FindingType, Criticality, FindingStatus } from '../types';
@@ -50,9 +49,7 @@ export default function FindingsDashboard() {
   };
 
   return (
-    <div className="app-layout">
-      <Sidebar findingsCount={findings.filter(f => f.status === 'new').length} />
-      <div className="findings-content">
+    <div className="findings-content">
         <div className="findings-list">
           <div className="findings-list-header">
             <h2>Findings <span className="count">({total})</span></h2>
@@ -105,6 +102,5 @@ export default function FindingsDashboard() {
           />
         )}
       </div>
-    </div>
   );
 }

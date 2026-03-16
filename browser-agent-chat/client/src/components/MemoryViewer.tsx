@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import FeatureDetail from './FeatureDetail';
 import SuggestionCard from './SuggestionCard';
 import { useAuth } from '../hooks/useAuth';
@@ -146,9 +145,7 @@ export default function MemoryViewer() {
   };
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="mv">
+    <div className="mv">
         {/* Suggestions banner */}
         {suggestions.length > 0 && (
           <div className="mv-suggestions">
@@ -272,6 +269,5 @@ export default function MemoryViewer() {
           ) : null}
         </div>
       </div>
-    </div>
   );
 }
