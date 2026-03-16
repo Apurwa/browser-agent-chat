@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { AgentActionSchema, type AgentAction, type Perception } from './agent-types.js';
 
-const PolicyOutputSchema = z.object({
+// Schema passed to agent.extract() — must be BAML-compatible (no nullable/transform)
+const LLMOutputSchema = z.object({
   type: z.enum(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']),
   elementId: z.string().optional(),
   value: z.string().optional(),
@@ -56,10 +57,17 @@ Available action types: click, type, scroll, select, submit, extract, navigate
 Pick the MOST EFFECTIVE single action toward the active intent.`;
 
   try {
-    const result = await agent.extract(prompt, PolicyOutputSchema);
+    const result = await agent.extract(prompt, LLMOutputSchema) as Record<string, unknown>;
     console.log('[POLICY] Raw LLM result:', JSON.stringify(result));
-    const parsed = PolicyOutputSchema.parse(result);
-    return AgentActionSchema.parse({ ...parsed, intentId: parsed.intentId || intentId });
+    // Post-process: convert null → undefined for optional fields (LLM returns null for empty)
+    const cleaned = {
+      type: result.type,
+      elementId: result.elementId ?? undefined,
+      value: result.value ?? undefined,
+      expectedOutcome: result.expectedOutcome,
+      intentId: result.intentId || intentId,
+    };
+    return AgentActionSchema.parse(cleaned);
   } catch (error) {
     console.error('[POLICY] LLM decision failed, falling back to extract:', error instanceof Error ? error.message : error);
     // Fallback: use Magnitude's native act() to observe the page

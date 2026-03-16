@@ -182,7 +182,7 @@ export async function getCredentialForAgent(agentId: string, domain: string): Pr
   for (const row of data as any[]) {
     const cred = row.credentials_vault;
     if (cred.deleted_at) continue;
-    if (!cred.enabled) continue;
+    if (cred.enabled === false) continue;
     if (cred.domains.includes(normalizedDomain)) {
       return cred as VaultEntry;
     }
