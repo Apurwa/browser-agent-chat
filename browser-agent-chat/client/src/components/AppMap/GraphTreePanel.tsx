@@ -49,11 +49,55 @@ function buildTree(nodes: readonly AppNode[]): readonly TreeNode[] {
   }))
 }
 
+/** Collect IDs of nodes matching the search and their ancestors. */
+function getSearchVisibleIds(
+  nodes: readonly AppNode[],
+  query: string,
+): Set<string> {
+  const lowerQuery = query.toLowerCase()
+  const visibleIds = new Set<string>()
+  const nodeMap = new Map(nodes.map(n => [n.id, n]))
+
+  function addAncestors(nodeId: string): void {
+    let current = nodeMap.get(nodeId)
+    while (current) {
+      if (visibleIds.has(current.id)) break
+      visibleIds.add(current.id)
+      current = current.parent ? nodeMap.get(current.parent) : undefined
+    }
+  }
+
+  for (const n of nodes) {
+    const matchesLabel = n.label.toLowerCase().includes(lowerQuery)
+    const matchesUrl = (n.urlPattern ?? '').toLowerCase().includes(lowerQuery)
+    if (matchesLabel || matchesUrl) {
+      addAncestors(n.id)
+    }
+  }
+
+  return visibleIds
+}
+
+/** Filter a tree to only show nodes in the allowed set. */
+function filterTree(
+  tree: readonly TreeNode[],
+  allowedIds: Set<string>,
+): readonly TreeNode[] {
+  const result: TreeNode[] = []
+  for (const treeNode of tree) {
+    if (!allowedIds.has(treeNode.node.id)) continue
+    const filteredChildren = filterTree(treeNode.children, allowedIds)
+    result.push({ ...treeNode, children: filteredChildren })
+  }
+  return result
+}
+
 function TreeItem({
   treeNode,
   depth,
   selectedNodeId,
   expandedNodeIds,
+  matchingIds,
   onSelect,
   onToggle,
 }: {
@@ -61,6 +105,7 @@ function TreeItem({
   depth: number
   selectedNodeId: string | null
   expandedNodeIds: Set<string>
+  matchingIds: Set<string> | null
   onSelect: (nodeId: string) => void
   onToggle: (nodeId: string) => void
 }) {
@@ -69,6 +114,7 @@ function TreeItem({
   const isExpanded = expandedNodeIds.has(node.id)
   const hasChildren = children.length > 0
   const icon = EXPLORATION_ICONS[node.state.exploration] ?? '\u25CB'
+  const isMatch = matchingIds !== null && matchingIds.has(node.id)
 
   const handleClick = useCallback(() => {
     onSelect(node.id)
@@ -79,10 +125,13 @@ function TreeItem({
     onToggle(node.id)
   }, [node.id, onToggle])
 
+  // When search is active, show children of matching ancestors regardless of expand state
+  const showChildren = hasChildren && (matchingIds !== null || isExpanded)
+
   return (
     <li role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
       <div
-        className={`graph-tree-item ${isSelected ? 'graph-tree-item--selected' : ''}`}
+        className={`graph-tree-item ${isSelected ? 'graph-tree-item--selected' : ''} ${isMatch ? 'graph-tree-item--match' : ''}`}
         style={{ paddingLeft: `${8 + depth * 14}px` }}
         onClick={handleClick}
       >
@@ -98,7 +147,7 @@ function TreeItem({
           <span className="graph-tree-count">{node.featureCount}</span>
         )}
       </div>
-      {hasChildren && isExpanded && (
+      {showChildren && (
         <ul className="graph-tree-children" role="group">
           {children.map(child => (
             <TreeItem
@@ -107,6 +156,7 @@ function TreeItem({
               depth={depth + 1}
               selectedNodeId={selectedNodeId}
               expandedNodeIds={expandedNodeIds}
+              matchingIds={matchingIds}
               onSelect={onSelect}
               onToggle={onToggle}
             />
@@ -123,8 +173,32 @@ export default function GraphTreePanel({ onCenterNode }: GraphTreePanelProps) {
   const selectedNodeId = useGraphStore(s => s.selectedNodeId)
   const selectNode = useGraphStore(s => s.selectNode)
   const toggleExpand = useGraphStore(s => s.toggleExpand)
+  const searchQuery = useGraphStore(s => s.searchQuery)
 
   const tree = useMemo(() => buildTree(nodes), [nodes])
+
+  // Compute search-visible IDs and direct match IDs
+  const { filteredTree, matchingIds } = useMemo(() => {
+    const trimmed = searchQuery.trim()
+    if (trimmed.length === 0) {
+      return { filteredTree: tree, matchingIds: null }
+    }
+    const visibleIds = getSearchVisibleIds(nodes, trimmed)
+    const lowerQuery = trimmed.toLowerCase()
+    const directMatches = new Set<string>()
+    for (const n of nodes) {
+      if (
+        n.label.toLowerCase().includes(lowerQuery) ||
+        (n.urlPattern ?? '').toLowerCase().includes(lowerQuery)
+      ) {
+        directMatches.add(n.id)
+      }
+    }
+    return {
+      filteredTree: filterTree(tree, visibleIds),
+      matchingIds: directMatches,
+    }
+  }, [tree, nodes, searchQuery])
 
   const handleSelect = useCallback((nodeId: string) => {
     selectNode(nodeId)
@@ -153,13 +227,14 @@ export default function GraphTreePanel({ onCenterNode }: GraphTreePanelProps) {
       <div className="graph-tree-header">Navigator</div>
       <div className="graph-tree-list">
         <ul role="tree">
-          {tree.map(treeNode => (
+          {filteredTree.map(treeNode => (
             <TreeItem
               key={treeNode.node.id}
               treeNode={treeNode}
               depth={0}
               selectedNodeId={selectedNodeId}
               expandedNodeIds={expandedNodeIds}
+              matchingIds={matchingIds}
               onSelect={handleSelect}
               onToggle={toggleExpand}
             />

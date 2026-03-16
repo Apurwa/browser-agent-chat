@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useGraphStore } from './GraphStore'
 
 export default function GraphToolbar() {
@@ -7,6 +7,7 @@ export default function GraphToolbar() {
   const mode = useGraphStore(s => s.mode)
   const setMode = useGraphStore(s => s.setMode)
   const nodes = useGraphStore(s => s.nodes)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const nodeCount = nodes.length
   const featureCount = nodes.reduce((sum, n) => sum + (n.featureCount ?? 0), 0)
@@ -23,13 +24,26 @@ export default function GraphToolbar() {
     setMode('capabilities')
   }, [setMode])
 
+  // Cmd+K / Ctrl+K keyboard shortcut to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        inputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
   return (
     <div className="graph-toolbar">
       <div className="graph-toolbar-search">
         <input
+          ref={inputRef}
           type="text"
           className="graph-toolbar-search-input"
-          placeholder="Search nodes..."
+          placeholder="Search nodes... (Cmd+K)"
           value={searchQuery}
           onChange={handleSearchChange}
           aria-label="Search graph nodes"
