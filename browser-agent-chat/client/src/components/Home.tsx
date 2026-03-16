@@ -2,17 +2,16 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useVoiceInput } from '../hooks/useVoiceInput';
+import { useSidebar } from '../contexts/SidebarContext';
 import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
-import { Plus, ArrowUp, Mic, Upload, Clipboard } from 'lucide-react';
-import type { AgentListItem } from '../types';
+import { Plus, ArrowUp, Mic, Upload, Clipboard, Search } from 'lucide-react';
 import './Home.css';
 
 export default function Home() {
   const [url, setUrl] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,23 +69,7 @@ export default function Home() {
 
   const navigate = useNavigate();
   const { getAccessToken } = useAuth();
-
-  useEffect(() => {
-    (async () => {
-      const token = await getAccessToken();
-      const res = await apiAuthFetch('/api/agents', token);
-      if (res.ok) {
-        const data = await res.json();
-        const sorted = (data.agents as AgentListItem[]).sort((a, b) => {
-          const aTime = a.last_session_at ?? a.created_at;
-          const bTime = b.last_session_at ?? b.created_at;
-          return new Date(bTime).getTime() - new Date(aTime).getTime();
-        });
-        setAgents(sorted);
-      }
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const { agents, refreshAgents } = useSidebar();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -111,6 +94,7 @@ export default function Home() {
 
       if (res.ok) {
         const agent = await res.json();
+        refreshAgents();
         navigate(`/agents/${agent.id}/testing`, { state: { autoStart: true } });
       } else {
         setError('Failed to create agent. Please try again.');
@@ -140,6 +124,17 @@ export default function Home() {
       {/* Center content */}
       <div className="home-center">
         <h1 className="home-headline">What do you want to test?</h1>
+
+        <div
+          className="home-search-hint"
+          onClick={() => {
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
+          }}
+        >
+          <Search size={16} />
+          <span>Search agents, traces, evals...</span>
+          <kbd>&#8984;K</kbd>
+        </div>
 
         <form className="home-url-form" onSubmit={handleSubmit}>
           <div className="home-plus-wrapper">
