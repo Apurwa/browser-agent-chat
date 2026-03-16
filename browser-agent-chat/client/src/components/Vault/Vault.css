@@ -378,3 +378,32 @@
 .link-cred-btn:hover {
   background: var(--bg-active);
 }
+
+/* Health Summary Bar */
+.vault-health-bar {
+  display: flex;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-primary);
+  font-size: 11px;
+  margin-bottom: 12px;
+}
+
+.vault-health-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.vault-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.vault-health-dot--dashed {
+  border: 1.5px dashed;
+  background: transparent !important;
+}
