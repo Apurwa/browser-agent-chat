@@ -49,13 +49,13 @@ A single-line overview below the header showing credential health distribution.
 
 | Status | Color | Meaning |
 |--------|-------|---------|
-| Healthy | Green (`--brand`) | Used recently + has domains + has agent bindings |
-| Needs attention | Amber (`--accent`) | Stale (not rotated in 90+ days) OR no agent bindings |
-| Not configured | Blue (`#5B8DB8`) | No domains set — agent cannot auto-resolve |
-| Unused | Gray (`--text-dim`) | Never used by any agent |
-| Disabled | Gray with strikethrough | User has disabled this credential for agents |
+| Healthy | Green (`--brand`) | Has domains + has been used + updated within 90 days |
+| Needs attention | Amber (`--accent`) | Stale — not updated in 90+ days |
+| Not configured | Gray (`--text-dim`) + dashed border | No domains set — agent cannot auto-resolve |
+| Unused | Dark gray (`--text-dimmer`) | Has domains but never used by any agent |
+| Disabled | Faint (`--text-dimmest`) + 50% opacity | User has disabled this credential for agents |
 
-**Why blue instead of red for "not configured":** Red implies security risk. Missing domains is an informational gap, not a danger signal. Blue communicates "action needed" without alarm.
+**Why not red for "not configured":** Red implies security risk. Missing domains is an informational gap, not a danger signal. The dashed border (matching the "unexplored" pattern from the App Graph) signals "incomplete" within the earthy Delphi Tools palette — no off-theme colors introduced.
 
 **Computation:** Health is derived client-side from `VaultEntry` fields using an **exclusive priority waterfall** — the first matching rule wins:
 
