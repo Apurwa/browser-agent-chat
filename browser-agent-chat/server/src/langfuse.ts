@@ -186,65 +186,82 @@ export async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
   };
 }
 
+/**
+ * Fetch all traces in the date range (paginated, max 1000).
+ * Used as the data source for summary, trends, and agent metrics
+ * since Langfuse v2 OSS does not support the metricsMetrics API.
+ */
+async function fetchAllTraces(
+  from: string,
+  to: string,
+  tags?: string[],
+): Promise<Array<{ latency: number | null; totalCost: number | null; output: unknown; timestamp: string; tags: string[] }>> {
+  if (!langfuse) return [];
+  const traces: Array<{ latency: number | null; totalCost: number | null; output: unknown; timestamp: string; tags: string[] }> = [];
+  let page = 1;
+  const MAX_PAGES = 10;
+
+  while (page <= MAX_PAGES) {
+    const batch = await langfuse.api.traceList({
+      page,
+      limit: 100,
+      fromTimestamp: from,
+      toTimestamp: to,
+      orderBy: 'timestamp.desc',
+      ...(tags ? { tags } : {}),
+    });
+
+    for (const t of batch.data) {
+      traces.push({
+        latency: t.latency ?? null,
+        totalCost: t.totalCost ?? null,
+        output: t.output,
+        timestamp: t.timestamp,
+        tags: (t.tags ?? []) as string[],
+      });
+    }
+
+    if (batch.data.length < 100) break;
+    page++;
+  }
+
+  return traces;
+}
+
 export async function fetchObservabilitySummary(
   from: string,
   to: string
 ): Promise<ObservabilitySummary> {
   if (!langfuse) throw new Error('Langfuse not initialized');
 
-  // Primary metrics query
-  const query = JSON.stringify({
-    view: 'traces',
-    metrics: [
-      { measure: 'count', aggregation: 'count' },
-      { measure: 'latency', aggregation: 'avg' },
-      { measure: 'latency', aggregation: 'p95' },
-      { measure: 'totalCost', aggregation: 'sum' },
-    ],
-    fromTimestamp: from,
-    toTimestamp: to,
-  });
+  const traces = await fetchAllTraces(from, to);
+  const totalTraces = traces.length;
 
-  const result = await langfuse.api.metricsMetrics({ query });
-  const row = result.data?.[0] ?? {};
-
-  const totalTraces = Number(row.count_count ?? row.count ?? 0);
-  const avgLatency = Number(row.latency_avg ?? row.avg_latency ?? 0);
-  const p95Latency = Number(row.latency_p95 ?? row.p95_latency ?? 0);
-  const totalCost = Number(row.totalCost_sum ?? row.sum_totalCost ?? row.total_cost ?? 0);
-
-  // Derive error rate from raw traces (metricsMetrics doesn't support status filtering reliably)
-  let errorRate = 0;
-  if (totalTraces > 0) {
-    try {
-      let errorCount = 0;
-      let page = 1;
-      let hasMore = true;
-      let totalChecked = 0;
-
-      const MAX_PAGES = 10; // Cap at 1000 traces to avoid runaway API calls
-      while (hasMore && page <= MAX_PAGES) {
-        const batch = await langfuse.api.traceList({
-          page,
-          limit: 100,
-          fromTimestamp: from,
-          toTimestamp: to,
-          orderBy: 'timestamp.desc',
-        });
-
-        for (const t of batch.data) {
-          if (deriveStatus(t.output) === 'error') errorCount++;
-        }
-        totalChecked += batch.data.length;
-        hasMore = batch.data.length === 100 && totalChecked < totalTraces;
-        page++;
-      }
-
-      errorRate = totalChecked > 0 ? errorCount / totalChecked : 0;
-    } catch (err) {
-      console.error('[OBSERVABILITY] Error rate derivation failed:', err);
-    }
+  if (totalTraces === 0) {
+    return { totalTraces: 0, totalCost: 0, errorRate: 0, avgLatency: 0, p95Latency: 0 };
   }
+
+  let totalCost = 0;
+  let totalLatency = 0;
+  let latencyCount = 0;
+  let errorCount = 0;
+  const latencies: number[] = [];
+
+  for (const t of traces) {
+    totalCost += t.totalCost ?? 0;
+    if (t.latency != null) {
+      totalLatency += t.latency;
+      latencyCount++;
+      latencies.push(t.latency);
+    }
+    if (deriveStatus(t.output) === 'error') errorCount++;
+  }
+
+  const avgLatency = latencyCount > 0 ? totalLatency / latencyCount : 0;
+  latencies.sort((a, b) => a - b);
+  const p95Index = Math.floor(latencies.length * 0.95);
+  const p95Latency = latencies.length > 0 ? latencies[Math.min(p95Index, latencies.length - 1)] : 0;
+  const errorRate = errorCount / totalTraces;
 
   return { totalTraces, totalCost, errorRate, avgLatency, p95Latency };
 }
@@ -252,180 +269,80 @@ export async function fetchObservabilitySummary(
 export async function fetchObservabilityTrends(
   from: string,
   to: string,
-  agentNames: Map<string, string>  // agentId → agentName
+  agentNames: Map<string, string>
 ): Promise<ObservabilityTrends> {
   if (!langfuse) throw new Error('Langfuse not initialized');
 
-  const daysDiff = (new Date(to).getTime() - new Date(from).getTime()) / (1000 * 60 * 60 * 24);
-  const granularity = daysDiff <= 30 ? 'day' : 'week';
-
-  // Try grouped query by tags first
-  const costData: Record<string, string | number>[] = [];
-  const traceData: Record<string, string | number>[] = [];
-  const agentList: string[] = [];
-
-  try {
-    // Attempt grouped call with tags dimension
-    const groupedQuery = JSON.stringify({
-      view: 'traces',
-      metrics: [
-        { measure: 'totalCost', aggregation: 'sum' },
-        { measure: 'count', aggregation: 'count' },
-      ],
-      dimensions: [{ field: 'tags' }],
-      timeDimension: { granularity },
-      fromTimestamp: from,
-      toTimestamp: to,
-    });
-
-    const result = await langfuse.api.metricsMetrics({ query: groupedQuery });
-
-    if (result.data && result.data.length > 0) {
-      // Parse grouped results
-      const dateMap = new Map<string, Record<string, number>>();
-      const costDateMap = new Map<string, Record<string, number>>();
-      const agentSet = new Set<string>();
-
-      for (const row of result.data) {
-        const tag = String(row.tags ?? row.tag ?? '');
-        if (!tag.startsWith('agent:')) continue;
-
-        const agentId = tag.replace('agent:', '');
-        const name = agentNames.get(agentId) ?? agentId;
-        agentSet.add(name);
-
-        const date = String(row.date ?? row.time ?? row.timestamp ?? '').slice(0, 10);
-        if (!date) continue;
-
-        if (!costDateMap.has(date)) costDateMap.set(date, {});
-        costDateMap.get(date)![name] = Number(row.totalCost_sum ?? row.sum_totalCost ?? 0);
-
-        if (!dateMap.has(date)) dateMap.set(date, {});
-        dateMap.get(date)![name] = Number(row.count_count ?? row.count ?? 0);
-      }
-
-      agentList.push(...agentSet);
-      const sortedDates = [...costDateMap.keys()].sort();
-
-      for (const date of sortedDates) {
-        costData.push({ date, ...costDateMap.get(date) });
-        traceData.push({ date, ...dateMap.get(date) });
-      }
-
-      return { cost: costData, traces: traceData, agents: agentList };
-    }
-  } catch {
-    // Grouped tags dimension not supported, fall back to per-agent calls
-  }
-
-  // Fallback: individual metrics calls per agent
+  const traces = await fetchAllTraces(from, to);
   const agentSet = new Set<string>();
   const costDateMap = new Map<string, Record<string, number>>();
   const traceDateMap = new Map<string, Record<string, number>>();
 
-  for (const [agentId, agentName] of agentNames) {
-    agentSet.add(agentName);
-    try {
-      const perAgentQuery = JSON.stringify({
-        view: 'traces',
-        metrics: [
-          { measure: 'totalCost', aggregation: 'sum' },
-          { measure: 'count', aggregation: 'count' },
-        ],
-        timeDimension: { granularity },
-        filters: [{ column: 'tags', operator: 'any of', value: [`agent:${agentId}`] }],
-        fromTimestamp: from,
-        toTimestamp: to,
-      });
+  for (const t of traces) {
+    const date = t.timestamp.slice(0, 10);
+    const agentTag = t.tags.find(tag => tag.startsWith('agent:'));
+    if (!agentTag) continue;
 
-      const result = await langfuse.api.metricsMetrics({ query: perAgentQuery });
+    const agentId = agentTag.replace('agent:', '');
+    const name = agentNames.get(agentId) ?? agentId;
+    agentSet.add(name);
 
-      for (const row of result.data ?? []) {
-        const date = String(row.date ?? row.time ?? row.timestamp ?? '').slice(0, 10);
-        if (!date) continue;
+    if (!costDateMap.has(date)) costDateMap.set(date, {});
+    costDateMap.get(date)![name] = (costDateMap.get(date)![name] ?? 0) + (t.totalCost ?? 0);
 
-        if (!costDateMap.has(date)) costDateMap.set(date, {});
-        costDateMap.get(date)![agentName] = Number(row.totalCost_sum ?? row.sum_totalCost ?? 0);
-
-        if (!traceDateMap.has(date)) traceDateMap.set(date, {});
-        traceDateMap.get(date)![agentName] = Number(row.count_count ?? row.count ?? 0);
-      }
-    } catch (err) {
-      console.error(`[OBSERVABILITY] Trends fetch failed for agent ${agentId}:`, err);
-    }
+    if (!traceDateMap.has(date)) traceDateMap.set(date, {});
+    traceDateMap.get(date)![name] = (traceDateMap.get(date)![name] ?? 0) + 1;
   }
 
-  agentList.push(...agentSet);
+  const agents = [...agentSet];
   const sortedDates = [...costDateMap.keys()].sort();
+  const cost = sortedDates.map(date => ({ date, ...costDateMap.get(date) }));
+  const traceData = sortedDates.map(date => ({ date, ...traceDateMap.get(date) }));
 
-  for (const date of sortedDates) {
-    costData.push({ date, ...costDateMap.get(date) });
-    traceData.push({ date, ...traceDateMap.get(date) });
-  }
-
-  return { cost: costData, traces: traceData, agents: agentList };
+  return { cost, traces: traceData, agents };
 }
 
 export async function fetchObservabilityAgents(
   from: string,
   to: string,
-  agentNames: Map<string, string>  // agentId → agentName
+  agentNames: Map<string, string>
 ): Promise<ObservabilityAgentRow[]> {
   if (!langfuse) throw new Error('Langfuse not initialized');
 
+  const traces = await fetchAllTraces(from, to);
+  const agentMap = new Map<string, { traces: typeof traces }>();
+
+  for (const t of traces) {
+    const agentTag = t.tags.find(tag => tag.startsWith('agent:'));
+    if (!agentTag) continue;
+    const agentId = agentTag.replace('agent:', '');
+    if (!agentMap.has(agentId)) agentMap.set(agentId, { traces: [] });
+    agentMap.get(agentId)!.traces.push(t);
+  }
+
   const rows: ObservabilityAgentRow[] = [];
+  for (const [agentId, data] of agentMap) {
+    const agentName = agentNames.get(agentId) ?? agentId;
+    const traceCount = data.traces.length;
+    let totalCost = 0;
+    let totalLatency = 0;
+    let latencyCount = 0;
+    let errorCount = 0;
 
-  // Per-agent metrics (fallback-first approach since tags dimension is unreliable)
-  for (const [agentId, agentName] of agentNames) {
-    try {
-      const query = JSON.stringify({
-        view: 'traces',
-        metrics: [
-          { measure: 'count', aggregation: 'count' },
-          { measure: 'totalCost', aggregation: 'sum' },
-          { measure: 'latency', aggregation: 'avg' },
-        ],
-        filters: [{ column: 'tags', operator: 'any of', value: [`agent:${agentId}`] }],
-        fromTimestamp: from,
-        toTimestamp: to,
-      });
-
-      const result = await langfuse.api.metricsMetrics({ query });
-      const data = result.data?.[0] ?? {};
-
-      const traceCount = Number(data.count_count ?? data.count ?? 0);
-      const totalCost = Number(data.totalCost_sum ?? data.sum_totalCost ?? 0);
-      const avgLatency = Number(data.latency_avg ?? data.avg_latency ?? 0);
-
-      // Derive error rate from raw traces
-      let errorRate = 0;
-      if (traceCount > 0) {
-        try {
-          const traceResult = await langfuse.api.traceList({
-            tags: [`agent:${agentId}`],
-            page: 1,
-            limit: 100,
-            fromTimestamp: from,
-            toTimestamp: to,
-            orderBy: 'timestamp.desc',
-          });
-
-          let errorCount = 0;
-          for (const t of traceResult.data) {
-            if (deriveStatus(t.output) === 'error') errorCount++;
-          }
-          errorRate = traceResult.data.length > 0 ? errorCount / traceResult.data.length : 0;
-        } catch {
-          // Skip error rate if raw fetch fails
-        }
-      }
-
-      if (traceCount > 0) {
-        rows.push({ agentId, agentName, traceCount, totalCost, errorRate, avgLatency });
-      }
-    } catch (err) {
-      console.error(`[OBSERVABILITY] Agent metrics failed for ${agentId}:`, err);
+    for (const t of data.traces) {
+      totalCost += t.totalCost ?? 0;
+      if (t.latency != null) { totalLatency += t.latency; latencyCount++; }
+      if (deriveStatus(t.output) === 'error') errorCount++;
     }
+
+    rows.push({
+      agentId,
+      agentName,
+      traceCount,
+      totalCost,
+      errorRate: traceCount > 0 ? errorCount / traceCount : 0,
+      avgLatency: latencyCount > 0 ? totalLatency / latencyCount : 0,
+    });
   }
 
   return rows;
