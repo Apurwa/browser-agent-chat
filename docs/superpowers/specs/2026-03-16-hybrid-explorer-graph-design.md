@@ -20,27 +20,62 @@ The current App Graph renders all discovered pages as a flat BFS layout. As appl
 ```
 API (/api/agents/:id/map)
         ↓
-  Graph Model Layer        ← transforms raw data into navigation or capability graphs
+  Canonical Graph Model    ← raw data → GraphEntity + GraphRelation (system truth)
         ↓
-  Graph Store (zustand)    ← source of truth for nodes, edges, expansion state, mode
+  Graph Projection Layer   ← projects canonical model into navigation or capability views
         ↓
-  Layout Engine (ELK)      ← hierarchical layout with position-anchored relayout
+  Graph Store (zustand)    ← source of truth for UI state: expansion, selection, mode
         ↓
-  React Flow Renderer      ← custom nodes, edges, interactions
+  Layout Engine (ELK)      ← hierarchical layout with position-interpolated relayout
+        ↓
+  React Flow Renderer      ← memoized custom nodes, edges, interactions
 ```
 
 **Why zustand over React Context:** The graph UI has three independently-updating regions (tree panel, graph canvas, toolbar). React Context would re-render all three whenever any graph state changes. Zustand's selector-based subscriptions provide granular updates — the tree only re-renders when tree-relevant state changes, the canvas only when node positions change.
 
-### Graph Model Layer
+### Canonical Graph Model
+
+The internal representation of the system graph, decoupled from any UI concerns. Navigation and capability views are **projections** of this model, not separate data structures.
+
+```ts
+type GraphEntity = {
+  id: string
+  kind: 'page' | 'feature' | 'cluster'
+  sourceIds?: string[]        // for clusters: the page IDs this was derived from
+  metadata: Record<string, unknown>  // urlPattern, pageTitle, criticality, etc.
+}
+
+type GraphRelation = {
+  id: string
+  from: string
+  to: string
+  type: 'navigation' | 'dependency' | 'crosslink'
+  metadata?: Record<string, unknown>  // actionLabel, etc.
+}
+```
+
+**Projection flow:**
+```
+Raw API Data → Canonical Graph (GraphEntity[] + GraphRelation[])
+                    ↓
+              Graph Projection Layer
+              ├ Navigation view → AppNode[] + AppEdge[] (pages + nav actions)
+              └ Capability view → AppNode[] + AppEdge[] (clusters + dependencies)
+```
+
+This separation enables future graph views (workflows, traces, test coverage) without changing the underlying model or the rendering layer.
+
+### Graph Projection Layer
 
 Responsibilities:
-- Receives raw API data (`nav_nodes`, `nav_edges`, `memory_features`)
-- Produces two graph representations:
+- Receives the canonical graph model (`GraphEntity[]` + `GraphRelation[]`)
+- Projects it into the active view as `AppNode[]` + `AppEdge[]`
+- Two projections:
   - **Navigation graph**: nodes = pages, edges = navigation actions
   - **Capability graph**: nodes = features/actions grouped into clusters, edges = dependencies/workflows
-- Capabilities are **derived from** pages: `nav_nodes → memory_features → capability clusters`
+- Capabilities are **derived from** pages: `page entities → feature entities → capability clusters`
 - Multiple pages can map to one capability cluster (e.g., `/admin/users`, `/admin/users/:id`, `/admin/users/new` → "User Management")
-- The mode toggle tells the model layer which representation to emit
+- The mode toggle tells the projection layer which representation to emit
 
 ### Graph Store (zustand)
 
@@ -51,7 +86,7 @@ type GraphStore = {
   edges: AppEdge[]
 
   // UI State
-  expandedNodeIds: string[] // array for JSON serialization compatibility
+  expandedNodeIds: Set<string> // O(1) membership checks; serialize via Array.from() when needed
   selectedNodeId: string | null
   mode: 'navigation' | 'capabilities'
   searchQuery: string
@@ -75,17 +110,24 @@ type AppNode = {
   label: string
   urlPattern?: string
   parent?: string
-  status: 'explored' | 'unexplored' | 'exploring' | 'failed'
+  state: NodeState
   featureCount?: number
   criticality?: 'critical' | 'high' | 'medium' | 'low'
   childIds: string[]
   pendingSuggestions?: Suggestion[] // carried forward from existing model
 }
+
+type NodeState = {
+  exploration: 'unknown' | 'exploring' | 'explored' | 'failed'
+  validation: 'untested' | 'tested' | 'verified'
+}
 ```
+
+The structured `NodeState` supports current exploration tracking and future QA/test coverage overlays. For Phase 5 (exploration status), only `exploration` is used. The `validation` field enables future workflows where nodes can be marked as tested or verified.
 
 ### Data Mapping: Existing → New
 
-The Graph Model Layer derives `AppNode` from the existing server types:
+The Graph Projection Layer derives `AppNode` from the existing server types:
 
 | AppNode field | Source | Derivation |
 |---------------|--------|------------|
@@ -94,13 +136,14 @@ The Graph Model Layer derives `AppNode` from the existing server types:
 | `label` | `NavNode.pageTitle` | Direct (falls back to URL pattern) |
 | `urlPattern` | `NavNode.urlPattern` | Direct |
 | `parent` | `nav_edges` | The source node of the inbound edge in the BFS tree |
-| `status` | Computed client-side | `'explored'` if `features.length > 0`; `'unexplored'` if node exists but has no features; `'exploring'` if agent is currently on this URL (from WebSocket `currentUrl`); `'failed'` if agent reported an error |
+| `state.exploration` | Computed client-side | `'explored'` if `features.length > 0`; `'unknown'` if node exists but has no features; `'exploring'` if agent is currently on this URL (from WebSocket `currentUrl`); `'failed'` if agent reported an error |
+| `state.validation` | Computed client-side | `'untested'` by default; `'tested'` / `'verified'` set by user action in detail panel (future Phase) |
 | `featureCount` | `NavNode.features.length` | Count of attached features |
 | `criticality` | `memory_features` | Highest criticality among node's features |
 | `childIds` | `nav_edges` | All target nodes where this node is the source |
 | `pendingSuggestions` | `AppMapNode.pendingSuggestions` | Direct — the accept/dismiss workflow is preserved in the detail panel |
 
-**Note:** `status` is computed client-side, not persisted. The server provides the raw data; the Graph Model Layer computes status from feature presence + WebSocket state.
+**Note:** `state` is computed client-side, not persisted. The server provides the raw data; the Graph Projection Layer computes `state.exploration` from feature presence + WebSocket state. `state.validation` defaults to `'untested'` and is user-driven.
 
 ### Edge Types
 
@@ -190,10 +233,14 @@ type AppEdge = {
 
 ### Expand/Collapse
 - **Expand button** (▾) on section/root nodes that have children
-- Clicking expand reveals child nodes with CSS transition animation (250ms `ease-out`)
-- ELK relayouts the full visible graph, but we **anchor the clicked node** at its current viewport position using `setCenter()` after layout — this gives the perception of local-only change
-- Children animate from the parent's position outward to their final positions via CSS `transition: transform 250ms ease-out`
+- **Alt+Click** on a node collapses its entire subtree (power-user shortcut)
+- Clicking expand triggers position-interpolated layout transition:
+  1. Save current positions: `previousPositions[nodeId] = { x, y }`
+  2. Run ELK layout on the new visible graph (full relayout)
+  3. Animate all nodes from `previousPositions` → new ELK positions via CSS `transition: transform 250ms ease-out`
+  4. Anchor the clicked node at its current viewport position using `setCenter()` — siblings and children animate outward
 - No additional animation library needed — CSS transitions on React Flow node `style.transform` are sufficient
+- React Flow handles position updates automatically when node positions change in state
 
 ### Agent Exploration
 - Unexplored nodes show an "explore →" button
@@ -208,7 +255,7 @@ type AppEdge = {
 - Both read from the same zustand store
 
 ### Mode Toggle
-- Switching modes tells the Graph Model Layer to emit a different node/edge set
+- Switching modes tells the Graph Projection Layer to emit a different node/edge set
 - Navigation mode: nodes = pages, edges = navigation actions
 - Capabilities mode: nodes = feature clusters, edges = dependencies
 - The graph animates between layouts (nodes morph to new positions)
@@ -234,7 +281,7 @@ const elkOptions = {
 ```
 
 Key properties:
-- **Full relayout with position anchoring**: ELK does not have a native incremental/subtree-only mode. On expand/collapse, ELK relayouts the entire visible graph. To achieve perceived stability, we anchor the expanded node at its current viewport position using React Flow's `setCenter()` after layout, and animate all other nodes from old positions to new positions via CSS transitions. For graphs under 500 nodes, this full relayout takes < 50ms and is imperceptible.
+- **Full relayout with position interpolation**: ELK does not have a native incremental/subtree-only mode. On expand/collapse, ELK relayouts the entire visible graph. To achieve smooth transitions: (1) save all current node positions before layout, (2) run ELK, (3) animate each node from its old position to its new position via CSS transitions (250ms ease-out), (4) anchor the expanded node using `setCenter()`. For graphs under 500 nodes, ELK layout takes < 50ms — the animation is the only perceivable change.
 - **Compound nodes**: ELK natively handles parent-child node grouping via its `children` property
 - **Stable ordering**: ELK's `NETWORK_SIMPLEX` node placement strategy preserves relative sibling order across relayouts
 
@@ -245,9 +292,13 @@ Key properties:
 Edges between features in different sections (e.g., Dashboard.Roles → Settings.Permissions).
 
 - Rendered as **curved dashed lines** with `--accent` color
-- Only visible when **both** endpoint sections are expanded
 - Secondary to hierarchy — they should not dominate the layout
 - ELK's layered algorithm handles these as "long edges" that span layers
+
+**Visibility guardrails** to prevent visual clutter:
+1. **Endpoint expansion rule**: cross-links only render when **both** source and target sections are expanded
+2. **Maximum per node**: `maxCrossLinksPerNode = 3` — if a node has more, show the 3 highest-criticality cross-links and a "+N more" indicator in the detail panel
+3. When a cross-link's endpoint is collapsed, the link is hidden entirely (not routed to the parent)
 
 ## Data Flow
 
@@ -288,9 +339,10 @@ type CapabilityCluster = {
 
 **Initial capability clustering algorithm (Phase 4):**
 1. Group pages by first URL path segment (e.g., `/admin/users`, `/admin/users/:id` → group `admin/users`)
-2. For each group, merge all `memory_features` from the member pages
-3. Cluster name is derived from the shared path segment, title-cased (e.g., `admin/users` → "User Management" — use `pageTitle` of the root page in the group if available)
-4. Dependencies between clusters are inferred from cross-page `nav_edges` that connect pages in different clusters
+2. **Cluster split rule**: if a cluster contains > 6 pages, split by second path segment (e.g., `/settings/security`, `/settings/billing`, `/settings/team` → three sub-clusters instead of one mega "Settings" cluster)
+3. For each group, merge all `memory_features` from the member pages
+4. Cluster name is derived from the shared path segment, title-cased (e.g., `admin/users` → "User Management" — use `pageTitle` of the root page in the group if available)
+5. Dependencies between clusters are inferred from cross-page `nav_edges` that connect pages in different clusters
 
 This simple URL-prefix clustering can evolve to AI-driven clustering later (out of scope).
 
@@ -301,9 +353,19 @@ Existing WebSocket mechanism stays. New events:
 | Event | Trigger | Effect |
 |-------|---------|--------|
 | `node:discovered` | Agent visits new page | New node animates into graph |
-| `node:exploring` | Agent starts exploring a section | Node status → `exploring` |
-| `node:explored` | Agent finishes a section | Node status → `explored`, features populate |
+| `node:exploring` | Agent starts exploring a section | Node state.exploration → `exploring` |
+| `node:explored` | Agent finishes a section | Node state.exploration → `explored`, features populate |
 | `feature:discovered` | Agent finds new feature | Feature appears in expanded node + detail panel |
+
+**Event versioning**: All graph update events include a monotonically increasing `version: number` field. The client tracks `lastProcessedVersion` and ignores events with `version <= lastProcessedVersion`. This prevents race conditions during heavy exploration when events may arrive out of order.
+
+```ts
+type GraphEvent = {
+  type: 'node:discovered' | 'node:exploring' | 'node:explored' | 'feature:discovered'
+  version: number
+  payload: Record<string, unknown>
+}
+```
 
 ## Performance
 
@@ -312,7 +374,13 @@ Existing WebSocket mechanism stays. New events:
 | < 200 | Progressive expansion keeps visible nodes manageable |
 | 200-500 | ELK handles layout; React Flow viewport culling handles rendering |
 | 500-1500 | Add node virtualization (React Flow supports this) |
-| 1500+ | Cluster distant nodes into summary nodes; lazy-load on zoom |
+| 1500+ | Progressive node hydration: load graph skeleton first, hydrate metadata on expand |
+
+**Visible node guardrail**: `MAX_VISIBLE_NODES = 300`. If the visible node count exceeds this threshold after an expand, auto-collapse the most distant expanded sections (furthest from the currently selected node) until under the limit. Show a toast: "Some distant sections were collapsed to keep the graph responsive."
+
+**Progressive node hydration** (for large graphs): Initial graph load returns only node IDs, labels, and parent relationships (the skeleton). Full metadata (features, criticality, pendingSuggestions, connections) is loaded on demand when a node is expanded or selected. This keeps the initial load fast and memory usage low.
+
+**Node memoization**: All custom node components (`RootNode`, `SectionNode`, `FeatureNode`) are wrapped with `React.memo()` to prevent unnecessary re-renders during pan/zoom and unrelated state changes.
 
 Progressive expansion is the primary scaling strategy — users rarely need to see more than 50-100 nodes at once.
 
@@ -340,31 +408,35 @@ Progressive expansion is the primary scaling strategy — users rarely need to s
 - Add Agent Activity section
 - **Risk:** Low
 
-### Phase 4: Graph Model Layer + Mode Toggle
-- Introduce Graph Model Layer between API and store
-- Implement `buildCapabilityGraph()` on server
+### Phase 4: Canonical Graph Model + Projection Layer + Mode Toggle
+- Introduce Canonical Graph Model (`CanonicalGraph.ts`) as the internal representation
+- Introduce Graph Projection Layer between canonical model and store
+- Implement `buildCapabilityGraph()` on server (with cluster split rule for > 6 pages)
 - Add Navigation/Capabilities toggle in toolbar
-- Animate transition between modes
+- Animate transition between modes using position interpolation
 - **Risk:** Medium — requires server-side capability clustering logic
 
 ### Phase 5: Exploration Status + Agent Triggers
-- Add node status indicators (●/○/⟳/⚠)
+- Implement `NodeState` model (`exploration` + `validation` fields)
+- Add node status indicators (●/○/⟳/⚠) driven by `state.exploration`
 - "Explore →" button on unexplored nodes
-- WebSocket message to trigger agent exploration
-- Real-time status transitions
+- WebSocket message (`explore_node`) to trigger agent exploration
+- Real-time status transitions with event versioning
 - **Risk:** Low
 
 ### Phase 6: Cross-Links + Search
-- Render cross-section edges as curved dashed lines
+- Render cross-section edges as curved dashed lines with visibility guardrails (both endpoints expanded, max 3 per node)
 - Add ⌘K search with node/feature matching
 - Search highlights in tree + graph
+- Add Alt+Click subtree collapse shortcut
 - **Risk:** Medium — cross-link layout can affect visual clarity
 
 ## Files Affected
 
 ### New Files
 - `client/src/components/AppMap/GraphStore.ts` — zustand store
-- `client/src/components/AppMap/GraphModelLayer.ts` — data transformation
+- `client/src/components/AppMap/CanonicalGraph.ts` — GraphEntity + GraphRelation types and builder from API data
+- `client/src/components/AppMap/GraphProjectionLayer.ts` — projects canonical model into navigation/capability views
 - `client/src/components/AppMap/GraphToolbar.tsx` — search + filters + mode toggle
 - `client/src/components/AppMap/GraphTreePanel.tsx` — left tree navigator
 - `client/src/components/AppMap/useExpandCollapse.ts` — expand/collapse hook
@@ -376,7 +448,7 @@ Progressive expansion is the primary scaling strategy — users rarely need to s
 ### Modified Files
 - `client/src/components/AppMap/AppMap.tsx` — integrate store, ELK, tree panel
 - `client/src/components/AppMap/AppMap.css` — new component styles
-- `client/src/components/AppMap/useAppMap.ts` — feed data into Graph Model Layer instead of directly to React Flow
+- `client/src/components/AppMap/useAppMap.ts` — feed data into Canonical Graph → Projection Layer instead of directly to React Flow
 - `server/src/routes/map.ts` — add `mode` param, capability clustering
 - `server/src/nav-graph.ts` — add `buildCapabilityGraph()`
 
@@ -405,7 +477,8 @@ Progressive expansion is the primary scaling strategy — users rarely need to s
 ## Out of Scope (Future)
 
 - AI-driven capability clustering (Phase 4 starts with page-based grouping)
-- Workflow graph (third layer: Pages → Actions → Workflows)
+- **Workflow graph** — a third projection of the canonical model: Pages → Actions → Workflows (e.g., "Create User → Assign Role → Send Invite"). Derived from navigation edges, feature events, and agent interaction traces. Enables automated workflow discovery, test generation, and AI automation. The canonical graph model is designed to support this without architectural changes.
 - DOM selector / screenshot annotations on nodes
 - API call tracking per feature
 - Time-travel exploration replay
+- Node `state.validation` workflows (mark as tested/verified) — the field exists in `NodeState` but UI for it is deferred
