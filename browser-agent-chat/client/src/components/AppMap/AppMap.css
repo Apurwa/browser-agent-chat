@@ -455,3 +455,126 @@
   border-bottom-color: var(--brand);
   font-weight: bold;
 }
+
+/* ===== Graph Node Components ===== */
+.graph-node {
+  position: relative;
+  cursor: pointer;
+}
+
+.graph-node-handle {
+  opacity: 0;
+  width: 6px;
+  height: 6px;
+}
+
+.graph-node-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  padding: 8px 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.graph-node-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.graph-node-url {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+  padding: 0 2px;
+}
+
+.graph-node-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.graph-node-badge {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: bold;
+  color: var(--bg-primary);
+  background: var(--brand);
+}
+
+.graph-node-expand {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: pointer;
+  z-index: 1;
+  padding: 0;
+  line-height: 1;
+}
+
+.graph-node-expand:hover {
+  background: var(--bg-hover);
+  color: var(--text-body);
+}
+
+/* Root node — 200px wide, brand border */
+.graph-node--root {
+  width: 200px;
+}
+
+.graph-node--root .graph-node-card {
+  border-left: 3px solid var(--brand);
+}
+
+/* Section node — 160px wide */
+.graph-node--section {
+  width: 160px;
+}
+
+.graph-node--section .graph-node-card {
+  border-left: 3px solid var(--border-primary);
+}
+
+.graph-node--expanded .graph-node-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Feature node — 130px wide, criticality border */
+.graph-node--feature {
+  width: 130px;
+}
+
+.graph-node--feature .graph-node-card {
+  border-left: 3px solid var(--border-primary);
+}

@@ -5,7 +5,9 @@ import {
   type Node, type Edge,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import PageNode from './PageNode'
+import RootNode from './nodes/RootNode'
+import SectionNode from './nodes/SectionNode'
+import FeatureNode from './nodes/FeatureNode'
 import NavEdge from './NavEdge'
 import DetailPanel from './DetailPanel'
 import { useAppMap } from './useAppMap'
@@ -14,7 +16,11 @@ import { useELKLayout } from './useELKLayout'
 import { useGraphStore } from './GraphStore'
 import './AppMap.css'
 
-const nodeTypes = { page: PageNode }
+const EXPLORATION_ICONS: Record<string, string> = {
+  explored: '\u25CF', unknown: '\u25CB', exploring: '\u27F3', failed: '\u26A0',
+}
+
+const nodeTypes = { root: RootNode, section: SectionNode, feature: FeatureNode }
 const edgeTypes = { nav: NavEdge }
 
 interface AppMapProps {
@@ -46,19 +52,26 @@ export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) 
 
     computeLayout(visibleNodes, visibleEdges).then(positions => {
       const newNodes: Node[] = visibleNodes.map(n => {
-        // Find the original MapNode to pass existing data to PageNode
+        // Find the original MapNode to pass existing data
         const mapNode = mapNodes.find(mn => mn.id === n.id)
         return {
           id: n.id,
-          type: 'page' as const,
+          type: n.type as string,
           position: positions[n.id] ?? prevPositionsRef.current[n.id] ?? { x: 0, y: 0 },
           data: {
+            label: n.label,
+            urlPattern: n.urlPattern,
+            featureCount: n.featureCount,
+            criticality: n.criticality,
+            childIds: n.childIds,
+            explorationIcon: EXPLORATION_ICONS[n.state.exploration] ?? '\u25CB',
+            explorationLabel: n.state.exploration,
+            isSelected: n.id === selectedNodeId,
+            // Backward compat for existing data
             pageTitle: mapNode?.pageTitle ?? n.label,
-            urlPattern: mapNode?.urlPattern ?? n.urlPattern ?? '',
             features: mapNode?.features ?? [],
             pendingSuggestions: mapNode?.pendingSuggestions ?? [],
             isNew: mapNode?.isNew,
-            isSelected: n.id === selectedNodeId,
           },
           style: { transition: 'transform 250ms ease-out' },
         }
