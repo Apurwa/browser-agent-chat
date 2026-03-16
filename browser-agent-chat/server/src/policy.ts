@@ -3,8 +3,8 @@ import { AgentActionSchema, type AgentAction, type Perception } from './agent-ty
 
 const PolicyOutputSchema = z.object({
   type: z.enum(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']),
-  elementId: z.string().nullish().transform(v => v ?? undefined),
-  value: z.string().nullish().transform(v => v ?? undefined),
+  elementId: z.string().optional(),
+  value: z.string().optional(),
   expectedOutcome: z.string(),
   intentId: z.string(),
 });

@@ -185,7 +185,13 @@ export async function executeAgentLoop(
       // e. Get URL after action
       const urlAfter = await getPageUrl(currentPage);
 
-      // f. Verify action
+      // f. Log action errors for debugging
+      if (result.error) {
+        console.error(`[AGENT-LOOP] Action ${action.type} failed:`, result.error);
+        broadcast({ type: 'thought', content: `Action failed: ${result.error}` });
+      }
+
+      // g. Verify action
       const verification = verifyAction(action, result, urlBefore, urlAfter);
 
       // g. Update task memory (immutable update)

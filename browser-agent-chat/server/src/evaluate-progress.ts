@@ -74,9 +74,16 @@ export function evaluateProgress(
     };
   }
 
-  // 4. Last verification failed — retry
+  // 4. Last verification failed — retry (but escalate if too many consecutive failures)
   if (!lastVerification.passed) {
-    return { decision: 'retry_action', reason: 'Last action verification failed' };
+    if (signals.failedExecutionCount >= 3) {
+      if (budget.canReplan()) {
+        return { decision: 'replan', reason: `${signals.failedExecutionCount} consecutive action failures — replanning` };
+      }
+      return { decision: 'escalate_to_user', reason: `${signals.failedExecutionCount} consecutive action failures. No replan attempts remaining.` };
+    }
+    const errorDetail = lastVerification.findings?.[0]?.description ?? '';
+    return { decision: 'retry_action', reason: `Last action verification failed${errorDetail ? ': ' + errorDetail : ''}` };
   }
 
   // 5. Continue
