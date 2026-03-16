@@ -11,6 +11,7 @@ import { planStrategy } from '../../planner.js';
 import { perceive } from '../../perception.js';
 import { decideNextAction } from '../../policy.js';
 import { executeAction } from '../../executor.js';
+import { verifyAction } from '../../verify-action.js';
 
 // ---------------------------------------------------------------------------
 // Shared workflow input schema
@@ -115,22 +116,44 @@ export const executeStep = createStep({
 
 // ---------------------------------------------------------------------------
 // Step: verify-action
-// Input: ExecutionResult → Output: ActionVerification
+// Input: ExecutionResult (+ action context via runtime) → Output: ActionVerification
 // ---------------------------------------------------------------------------
+
+// The step input schema extends ExecutionResult with optional URL context.
+// In the full integration (Plan 5) the runtime context will inject urlBefore
+// and urlAfter from the browser page; for workflow-chain type safety they are
+// optional with empty-string defaults.
+const VerifyActionInputSchema = ExecutionResultSchema.extend({
+  urlBefore: z.string().optional().default(''),
+  urlAfter: z.string().optional().default(''),
+  action: AgentActionSchema.optional(),
+});
 
 export const verifyActionStep = createStep({
   id: 'verify-action',
   description: 'Verify that the executed action produced the expected outcome',
-  inputSchema: ExecutionResultSchema,
+  inputSchema: VerifyActionInputSchema,
   outputSchema: ActionVerificationSchema,
   execute: async ({ inputData }) => {
-    // Verification logic is implemented in Plan 4.
-    // For now, pass through based on execution success.
-    return {
-      passed: inputData.success,
-      confidence: inputData.success ? 0.8 : 0.0,
-      findings: [],
+    const result = {
+      success: inputData.success,
+      data: inputData.data,
+      newUrl: inputData.newUrl,
+      error: inputData.error,
     };
+
+    const action = inputData.action ?? {
+      type: 'click' as const,
+      expectedOutcome: '',
+      intentId: '',
+    };
+
+    return verifyAction(
+      action,
+      result,
+      inputData.urlBefore ?? '',
+      inputData.urlAfter ?? inputData.newUrl ?? '',
+    );
   },
 });
 
