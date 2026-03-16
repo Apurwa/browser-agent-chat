@@ -5,19 +5,10 @@ import { useAuth } from '../../hooks/useAuth';
 import { useVault } from '../../hooks/useVault';
 import * as vaultApi from '../../lib/vaultApi';
 import VaultForm from './VaultForm';
+import VaultHealthBar from './VaultHealthBar';
+import CredentialRow from './CredentialRow';
+import VaultDetail from './VaultDetail';
 import './Vault.css';
-
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return 'Never';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 export default function VaultPage() {
   const navigate = useNavigate();
@@ -29,6 +20,7 @@ export default function VaultPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     let result = credentials;
@@ -37,11 +29,14 @@ export default function VaultPage() {
     }
     if (search.trim()) {
       const q = search.toLowerCase();
-      result = result.filter(c =>
-        c.label.toLowerCase().includes(q) ||
-        (c.metadata?.username as string || '').toLowerCase().includes(q) ||
-        c.domains.some(d => d.includes(q))
-      );
+      result = result.filter(c => {
+        const matchesLabel = c.label.toLowerCase().includes(q);
+        const matchesUsername = (c.metadata?.username as string || '').toLowerCase().includes(q);
+        const matchesDomain = c.domains.some(d => d.includes(q));
+        const bindings = (c as Record<string, unknown>).bindings as Array<{ agentName: string }> | undefined ?? [];
+        const matchesBinding = bindings.some((b) => b.agentName.toLowerCase().includes(q));
+        return matchesLabel || matchesUsername || matchesDomain || matchesBinding;
+      });
     }
     return result;
   }, [credentials, search, typeFilter]);
@@ -106,21 +101,26 @@ export default function VaultPage() {
 
   return (
     <div className="vault-page">
-        <div className="vault-header">
-          <div className="vault-header-left">
-            <button className="vault-back-btn" onClick={() => navigate('/')} title="Back to Home">
-              <ArrowLeft size={18} />
-            </button>
-            <h1 className="vault-title">Credential Vault</h1>
-          </div>
-          <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); setActionError(null); }}>+ Add Credential</button>
+      <div className="vault-header">
+        <div className="vault-header-left">
+          <button className="vault-back-btn" onClick={() => navigate('/')} title="Back to Home">
+            <ArrowLeft size={18} />
+          </button>
+          <h1 className="vault-title">
+            Vault
+            <span className="vault-count">{credentials.length}</span>
+          </h1>
         </div>
+        <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); setActionError(null); }}>+ Add Credential</button>
+      </div>
 
-        {actionError && (
-          <div className="vault-action-error" style={{ color: '#ef4444', fontSize: '0.875rem', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
-            {actionError}
-          </div>
-        )}
+      <VaultHealthBar credentials={credentials} />
+
+      {actionError && (
+        <div className="vault-action-error" style={{ color: '#ef4444', fontSize: '0.875rem', padding: '0.5rem 0', marginBottom: '0.5rem' }}>
+          {actionError}
+        </div>
+      )}
 
       {showForm && (
         <VaultForm
@@ -138,11 +138,26 @@ export default function VaultPage() {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select className="vault-type-filter" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
-          <option value="all">All types</option>
-          <option value="username_password">Username/Password</option>
-          <option value="api_key">API Key</option>
-        </select>
+        <div className="vault-filter-chips">
+          <button
+            className={`vault-filter-chip ${typeFilter === 'all' ? 'vault-filter-chip--active' : ''}`}
+            onClick={() => setTypeFilter('all')}
+          >
+            All
+          </button>
+          <button
+            className={`vault-filter-chip ${typeFilter === 'username_password' ? 'vault-filter-chip--active' : ''}`}
+            onClick={() => setTypeFilter('username_password')}
+          >
+            {'🔑'} Password
+          </button>
+          <button
+            className={`vault-filter-chip ${typeFilter === 'api_key' ? 'vault-filter-chip--active' : ''}`}
+            onClick={() => setTypeFilter('api_key')}
+          >
+            {'</>'} API Key
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -154,38 +169,23 @@ export default function VaultPage() {
       ) : (
         <div className="vault-list">
           {filtered.map(cred => (
-            <div key={cred.id} className="vault-item">
-              <div className="vault-item-info">
-                <div className="vault-item-label">{cred.label}</div>
-                <div className="vault-item-meta">
-                  {cred.credential_type === 'username_password' ? (cred.metadata?.username ?? 'No username') : 'API Key'}
-                </div>
-                {cred.domains.length > 0 && (
-                  <div className="vault-item-domains">
-                    {cred.domains.map(d => (
-                      <span key={d} className="vault-domain-chip">{d}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="vault-item-stats">
-                Used {cred.use_count} times<br />
-                {timeAgo(cred.last_used_at)}
-              </div>
-              <div className="vault-item-actions">
-                <button className="vault-action-btn" onClick={() => handleEdit(cred)}>Edit</button>
-                <button
-                  className={`vault-action-btn vault-action-btn--danger`}
-                  onClick={() => handleDelete(cred.id)}
-                  onBlur={() => setConfirmDelete(null)}
-                >
-                  {confirmDelete === cred.id ? 'Confirm?' : 'Delete'}
-                </button>
-              </div>
+            <div key={cred.id}>
+              <CredentialRow
+                credential={cred}
+                isExpanded={expandedId === cred.id}
+                onToggleExpand={() => setExpandedId(prev => prev === cred.id ? null : cred.id)}
+              />
+              {expandedId === cred.id && (
+                <VaultDetail
+                  credential={cred}
+                  onRefresh={refresh}
+                  onSendTask={() => {}}
+                />
+              )}
             </div>
           ))}
         </div>
       )}
-      </div>
+    </div>
   );
 }

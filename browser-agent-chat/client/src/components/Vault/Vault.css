@@ -92,6 +92,41 @@
   font-family: inherit;
 }
 
+.vault-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-secondary);
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  font-weight: normal;
+}
+
+.vault-filter-chips {
+  display: flex;
+  gap: 6px;
+}
+
+.vault-filter-chip {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-card);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.vault-filter-chip--active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.vault-filter-chip:hover {
+  background: var(--bg-hover);
+}
+
 /* Credential List */
 .vault-list {
   display: flex;
