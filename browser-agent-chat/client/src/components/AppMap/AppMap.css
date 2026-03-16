@@ -4,10 +4,17 @@
 /* Layout */
 .app-map {
   display: flex;
+  flex-direction: column;
   height: 100%;
   background: var(--bg-secondary);
   color: var(--text-body);
   font-family: inherit;
+}
+
+.app-map-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
 }
 
 .app-map-graph {
@@ -817,4 +824,94 @@
 
 .graph-toolbar-mode-btn--active:hover {
   background: var(--brand);
+}
+
+/* ===== Graph Detail Panel (bottom) ===== */
+.graph-detail-panel {
+  height: 180px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.graph-detail-panel--collapsed {
+  height: 36px;
+}
+
+.graph-detail-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  flex-shrink: 0;
+  min-height: 36px;
+}
+
+.graph-detail-panel-header-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--brand);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-detail-panel-header-url {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.graph-detail-panel-header-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.graph-detail-panel-toggle {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-primary);
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.graph-detail-panel-toggle:hover {
+  background: var(--bg-card);
+}
+
+.graph-detail-panel-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.graph-detail-panel-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.graph-detail-panel-section:not(:first-child) {
+  border-left: 1px solid var(--border-primary);
+}
+
+.graph-detail-panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import {
   ReactFlow, Background, Controls, MiniMap,
-  useNodesState, useEdgesState,
+  useNodesState, useEdgesState, useReactFlow,
   type Node, type Edge,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -9,7 +9,9 @@ import RootNode from './nodes/RootNode'
 import SectionNode from './nodes/SectionNode'
 import FeatureNode from './nodes/FeatureNode'
 import NavEdge from './NavEdge'
-import DetailPanel from './DetailPanel'
+import GraphToolbar from './GraphToolbar'
+import GraphTreePanel from './GraphTreePanel'
+import GraphDetailPanel from './GraphDetailPanel'
 import { useAppMap } from './useAppMap'
 import { useExpandCollapse } from './useExpandCollapse'
 import { useELKLayout } from './useELKLayout'
@@ -29,7 +31,7 @@ interface AppMapProps {
   onExplore?: () => void
 }
 
-export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) {
+function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
   const { nodes: mapNodes, edges: mapEdges, unlinkedSuggestions, loading, error, refresh } = useAppMap(agentId)
   const { visibleNodes, visibleEdges } = useExpandCollapse()
   const { computeLayout, isReady } = useELKLayout()
@@ -37,6 +39,7 @@ export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) 
   const selectNode = useGraphStore(s => s.selectNode)
   const storeNodes = useGraphStore(s => s.nodes)
   const prevPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
+  const reactFlow = useReactFlow()
 
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node>([] as Node[])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([] as Edge[])
@@ -95,12 +98,16 @@ export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) 
     selectNode(node.id)
   }, [selectNode])
 
-  const handleSelectNode = useCallback((nodeId: string) => {
-    selectNode(nodeId)
-  }, [selectNode])
-
-  // Get the selected MapNode for the detail panel (backward compat)
-  const selectedMapNode = mapNodes.find(n => n.id === selectedNodeId) ?? null
+  const handleCenterNode = useCallback((nodeId: string) => {
+    const targetNode = rfNodes.find(n => n.id === nodeId)
+    if (targetNode) {
+      reactFlow.setCenter(
+        targetNode.position.x + 80,
+        targetNode.position.y + 30,
+        { zoom: 1.2, duration: 400 },
+      )
+    }
+  }, [rfNodes, reactFlow])
 
   if (loading) return <div className="app-map-loading">Loading app map...</div>
   if (error) return <div className="app-map-error">Error: {error}</div>
@@ -116,43 +123,51 @@ export default function AppMap({ agentId, onSendTask, onExplore }: AppMapProps) 
 
   return (
     <div className="app-map">
-      <div className="app-map-graph">
-        <div className="app-map-toolbar">
-          <span className="app-map-stats">
-            {storeNodes.length} pages &middot; {storeNodes.reduce((s, n) => s + (n.featureCount ?? 0), 0)} features
-          </span>
+      <GraphToolbar />
+      <div className="app-map-main">
+        <GraphTreePanel onCenterNode={handleCenterNode} />
+        <div className="app-map-graph">
+          <ReactFlow
+            nodes={rfNodes}
+            edges={rfEdges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onNodeClick={handleNodeClick}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            fitView
+            minZoom={0.3}
+            maxZoom={2}
+          >
+            <Background color="var(--border-subtle, #252218)" gap={24} size={1} />
+            <Controls showInteractive={false} />
+            <MiniMap
+              nodeColor="var(--brand, #3D6B4F)"
+              maskColor="rgba(0,0,0,0.5)"
+              style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-primary)' }}
+            />
+          </ReactFlow>
         </div>
-        <ReactFlow
-          nodes={rfNodes}
-          edges={rfEdges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onNodeClick={handleNodeClick}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          minZoom={0.3}
-          maxZoom={2}
-        >
-          <Background color="var(--border-subtle, #252218)" gap={24} size={1} />
-          <Controls showInteractive={false} />
-          <MiniMap
-            nodeColor="var(--brand, #3D6B4F)"
-            maskColor="rgba(0,0,0,0.5)"
-            style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-primary)' }}
-          />
-        </ReactFlow>
       </div>
-      <DetailPanel
-        selectedNode={selectedMapNode}
-        unlinkedSuggestions={unlinkedSuggestions}
+      <GraphDetailPanel
         agentId={agentId}
-        onRefresh={refresh}
         onSendTask={onSendTask}
-        onSelectNode={handleSelectNode}
-        edges={mapEdges}
-        nodes={mapNodes}
+        onRefresh={refresh}
+        mapNodes={mapNodes}
+        mapEdges={mapEdges}
+        unlinkedSuggestions={unlinkedSuggestions}
       />
     </div>
+  )
+}
+
+// Wrap with ReactFlowProvider so useReactFlow() works
+import { ReactFlowProvider } from '@xyflow/react'
+
+export default function AppMap(props: AppMapProps) {
+  return (
+    <ReactFlowProvider>
+      <AppMapInner {...props} />
+    </ReactFlowProvider>
   )
 }
