@@ -836,3 +836,29 @@
   padding: 4px 12px;
   font-size: 11px;
 }
+
+/* Empty State */
+.vault-empty-state {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.vault-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.vault-empty-title {
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+
+.vault-empty-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 400px;
+  margin: 0 auto 20px;
+  line-height: 1.5;
+}

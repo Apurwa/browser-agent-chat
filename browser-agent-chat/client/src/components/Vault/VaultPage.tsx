@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useVault } from '../../hooks/useVault';
@@ -12,6 +12,8 @@ import './Vault.css';
 
 export default function VaultPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const prefillDomain = searchParams.get('prefill');
   const { getAccessToken } = useAuth();
   const { credentials, loading, error, createCredential, updateCredential, deleteCredential, refresh } = useVault();
   const [showForm, setShowForm] = useState(false);
@@ -21,6 +23,13 @@ export default function VaultPage() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Auto-open form when prefill query param is present
+  useEffect(() => {
+    if (prefillDomain && !showForm) {
+      setShowForm(true);
+    }
+  }, [prefillDomain]);
 
   const filtered = useMemo(() => {
     let result = credentials;
@@ -67,6 +76,10 @@ export default function VaultPage() {
       }
       setShowForm(false);
       setEditing(null);
+      // Clear prefill query param after successful save
+      if (prefillDomain) {
+        setSearchParams({});
+      }
     } catch (err) {
       throw err instanceof Error ? err : new Error('Failed to save credential');
     }
@@ -125,6 +138,7 @@ export default function VaultPage() {
       {showForm && (
         <VaultForm
           editing={editing}
+          prefillDomain={prefillDomain || undefined}
           onSave={handleSave}
           onCancel={() => { setShowForm(false); setEditing(null); }}
         />
@@ -161,11 +175,21 @@ export default function VaultPage() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="vault-empty">
-          {credentials.length === 0
-            ? 'No credentials stored yet. Add one to get started.'
-            : 'No credentials match your search.'}
-        </div>
+        credentials.length === 0 ? (
+          <div className="vault-empty-state">
+            <div className="vault-empty-icon">{'🛡️'}</div>
+            <h2 className="vault-empty-title">Your vault is empty</h2>
+            <p className="vault-empty-desc">
+              Add a credential so agents can log in to websites on your behalf.
+              Credentials are encrypted and only decrypted during agent login.
+            </p>
+            <button className="vault-add-btn" onClick={() => { setEditing(null); setShowForm(true); }}>
+              + Add Credential
+            </button>
+          </div>
+        ) : (
+          <div className="vault-empty">No credentials match your search.</div>
+        )
       ) : (
         <div className="vault-list">
           {filtered.map(cred => (

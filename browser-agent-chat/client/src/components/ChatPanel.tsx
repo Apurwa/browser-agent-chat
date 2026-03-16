@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import FindingAlert from './FindingAlert';
 import PatternLearnedCard from './PatternLearnedCard';
 import TaskCompletionCard from './TaskCompletionCard';
 import type { ChatMessage, AgentStatus } from '../types';
-import * as vaultApi from '../lib/vaultApi';
-import { useAuth } from '../hooks/useAuth';
 import { useWS } from '../contexts/WebSocketContext';
 
 interface ChatPanelProps {
@@ -24,7 +23,7 @@ export default function ChatPanel({
   showExplore, lastCompletedTask, onExplore,
   onSendTask, onFeedback,
 }: ChatPanelProps) {
-  const { getAccessToken } = useAuth();
+  const navigate = useNavigate();
   const { pendingCredentialRequest, sendCredentialProvided, feedbackAck, sessionWarning, sessionEvicted, sendRestart, startAgent } = useWS();
 
   const [input, setInput] = useState('');
@@ -34,46 +33,8 @@ export default function ChatPanel({
   const prevStatus = useRef<AgentStatus>(status);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
-  const [credUsername, setCredUsername] = useState('');
-  const [credPassword, setCredPassword] = useState('');
-  const [credLabel, setCredLabel] = useState('');
-  const [credSaving, setCredSaving] = useState(false);
-  const [credError, setCredError] = useState<string | null>(null);
-
-  const handleCredentialSubmit = async () => {
-    setCredSaving(true);
-    setCredError(null);
-    try {
-      const token = await getAccessToken();
-      const result = await vaultApi.createCredential(token, {
-        label: credLabel || pendingCredentialRequest!.domain,
-        credential_type: 'username_password',
-        secret: { password: credPassword },
-        metadata: { username: credUsername },
-        domains: [pendingCredentialRequest!.domain],
-      });
-      if (result) {
-        await vaultApi.bindToAgent(token, result.id, pendingCredentialRequest!.agentId);
-        sendCredentialProvided(result.id);
-        setCredUsername('');
-        setCredPassword('');
-        setCredLabel('');
-      } else {
-        setCredError('Failed to save credential. Please try again.');
-      }
-    } catch (err) {
-      setCredError(err instanceof Error ? err.message : 'An unexpected error occurred.');
-    } finally {
-      setCredSaving(false);
-    }
-  };
-
   const handleCredentialSkip = () => {
     sendCredentialProvided('');
-    setCredUsername('');
-    setCredPassword('');
-    setCredLabel('');
-    setCredError(null);
   };
 
   useEffect(() => {
@@ -169,26 +130,14 @@ export default function ChatPanel({
       )}
 
       {pendingCredentialRequest && (
-        <div className="chat-cred-form">
-          <div className="chat-cred-form-title">
-            Credentials needed for <strong>{pendingCredentialRequest.domain}</strong>
-          </div>
-          <input type="text" placeholder="Label (optional)" value={credLabel} onChange={e => setCredLabel(e.target.value)} />
-          <input type="text" placeholder="Username" value={credUsername} onChange={e => setCredUsername(e.target.value)} autoComplete="off" />
-          <input type="password" placeholder="Password" value={credPassword} onChange={e => setCredPassword(e.target.value)} autoComplete="new-password" />
-          {credError && <div className="chat-cred-form-error">{credError}</div>}
-          <div className="chat-cred-form-actions">
-            <button
-              className="chat-cred-form-save"
-              onClick={handleCredentialSubmit}
-              disabled={credSaving || !credUsername.trim() || !credPassword.trim()}
-            >
-              {credSaving ? 'Saving...' : 'Save & Login'}
-            </button>
-            <button className="chat-cred-form-skip" onClick={handleCredentialSkip} disabled={credSaving}>
-              Skip
-            </button>
-          </div>
+        <div className="chat-credential-prompt">
+          <p>This site requires login credentials.</p>
+          <button onClick={() => navigate(`/vault?prefill=${encodeURIComponent(pendingCredentialRequest.domain)}`)}>
+            Add a credential for {pendingCredentialRequest.domain}
+          </button>
+          <button className="chat-cred-form-skip" onClick={handleCredentialSkip} style={{ marginLeft: 8 }}>
+            Skip
+          </button>
         </div>
       )}
 

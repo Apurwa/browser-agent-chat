@@ -2737,6 +2737,35 @@ select:focus {
   margin-top: 2px;
 }
 
+.chat-credential-prompt {
+  padding: 12px 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.chat-credential-prompt p {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--text-body);
+}
+
+.chat-credential-prompt button {
+  background: var(--brand);
+  color: var(--text-primary);
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.chat-credential-prompt button:hover {
+  background: var(--brand-hover);
+}
+
 /* ===========================
    Eval Dashboard
    =========================== */
