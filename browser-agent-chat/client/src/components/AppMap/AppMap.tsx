@@ -57,11 +57,6 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
   useEffect(() => {
     if (!isReady || visibleNodes.length === 0) return
 
-    // Save previous positions for interpolation
-    for (const n of rfNodes) {
-      prevPositionsRef.current[n.id] = n.position
-    }
-
     computeLayout(visibleNodes, visibleEdges).then(positions => {
       const lowerQuery = searchQuery.toLowerCase().trim()
       const newNodes: Node[] = visibleNodes.map(n => {
@@ -95,6 +90,11 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
           style: { transition: 'transform 250ms ease-out' },
         }
       })
+
+      // Save positions for future interpolation
+      for (const n of newNodes) {
+        prevPositionsRef.current[n.id] = n.position
+      }
 
       setRfNodes(newNodes)
       setRfEdges(visibleEdges.map(e => {
