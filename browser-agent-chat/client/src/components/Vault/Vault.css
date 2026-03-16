@@ -407,3 +407,157 @@
   border: 1.5px dashed;
   background: transparent !important;
 }
+
+/* Credential Row */
+.vault-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s;
+  border-left-width: 3px;
+}
+
+.vault-row:hover {
+  background: var(--bg-hover);
+}
+
+.vault-row--disabled {
+  opacity: 0.5;
+}
+
+.vault-row--expanded {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+
+.vault-row-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.vault-row-center {
+  flex: 1;
+  min-width: 0;
+}
+
+.vault-row-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-row-disabled-badge {
+  font-size: 9px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dimmest);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.vault-row-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.vault-row-domains {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.vault-domain-pill {
+  background: rgba(212, 135, 77, 0.12);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.vault-domain-overflow {
+  background: var(--bg-secondary);
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+}
+
+.vault-row-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dimmer);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.vault-row-hover-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.vault-row-copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.vault-row-copy-btn:hover {
+  color: var(--text-primary);
+}
+
+/* Health-based left border colors */
+.vault-row-border--healthy {
+  border-left-color: var(--brand);
+  --health-healthy: var(--brand);
+}
+
+.vault-row-border--needs_attention {
+  border-left-color: var(--accent);
+  --health-needs_attention: var(--accent);
+}
+
+.vault-row-border--not_configured {
+  border-left-color: var(--text-dim);
+  --health-not_configured: var(--text-dim);
+}
+
+.vault-row-border--unused {
+  border-left-color: var(--text-dimmer);
+  --health-unused: var(--text-dimmer);
+}
+
+.vault-row-border--disabled {
+  border-left-color: var(--text-dimmest);
+  --health-disabled: var(--text-dimmest);
+}
