@@ -226,36 +226,44 @@ export default function Sidebar() {
           )}
         </button>
 
-        {dropdownOpen && (
-          <div className="sidebar-agent-dropdown">
-            <div className="sidebar-agent-dropdown-list">
-              {agents.slice(0, 10).map((agent) => (
+        {dropdownOpen && (() => {
+          const rect = dropdownRef.current?.getBoundingClientRect();
+          const top = rect ? rect.bottom + 4 : 0;
+          const left = rect ? rect.left : 0;
+          return (
+            <div
+              className="sidebar-agent-dropdown"
+              style={{ position: 'fixed', top, left, minWidth: rect?.width ?? 180 }}
+            >
+              <div className="sidebar-agent-dropdown-list">
+                {agents.slice(0, 10).map((agent) => (
+                  <button
+                    key={agent.id}
+                    className={`sidebar-agent-dropdown-item${agent.id === agentId ? ' sidebar-agent-dropdown-item--current' : ''}`}
+                    onClick={() => switchToAgent(agent.id)}
+                  >
+                    <span
+                      className="sidebar-agent-dot"
+                      data-active={isAgentActive(agent.id)}
+                    />
+                    <span>{agent.name}</span>
+                  </button>
+                ))}
+              </div>
+              {agents.length > 10 && (
                 <button
-                  key={agent.id}
-                  className={`sidebar-agent-dropdown-item${agent.id === agentId ? ' sidebar-agent-dropdown-item--current' : ''}`}
-                  onClick={() => switchToAgent(agent.id)}
+                  className="sidebar-agent-dropdown-viewall"
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    navigate('/');
+                  }}
                 >
-                  <span
-                    className="sidebar-agent-dot"
-                    data-active={isAgentActive(agent.id)}
-                  />
-                  <span>{agent.name}</span>
+                  View all
                 </button>
-              ))}
+              )}
             </div>
-            {agents.length > 10 && (
-              <button
-                className="sidebar-agent-dropdown-viewall"
-                onClick={() => {
-                  setDropdownOpen(false);
-                  navigate('/');
-                }}
-              >
-                View all
-              </button>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Capability items */}
