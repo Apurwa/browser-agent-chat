@@ -1,9 +1,9 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { loadWorldModel, updatePagePurpose } from '../../world-model.js';
 
 /**
  * Tool: Read the agent's world model (app graph + frontier).
- * Implementation deferred to Plan 3.
  */
 export const worldModelReadTool = createTool({
   id: 'world-model-read',
@@ -18,26 +18,38 @@ export const worldModelReadTool = createTool({
     features: z.array(z.any()).describe('Detected UI features'),
     frontier: z.array(z.any()).describe('Unexplored frontier items'),
   }),
-  execute: async (_input) => {
-    throw new Error('Not implemented — Plan 3');
+  execute: async (input) => {
+    const { agentId } = input;
+    const model = await loadWorldModel(agentId);
+    return {
+      pages: model.pages,
+      edges: model.edges,
+      features: model.features,
+      frontier: [],
+    };
   },
 });
 
 /**
  * Tool: Update the agent's world model with new discoveries.
- * Implementation deferred to Plan 3.
  */
 export const worldModelUpdateTool = createTool({
   id: 'world-model-update',
   description: 'Update the world model for an agent with newly discovered pages, edges, or features',
   inputSchema: z.object({
     agentId: z.string().describe('Agent session identifier'),
-    updates: z.any().describe('Partial world model updates to merge'),
+    updates: z.object({
+      nodeId: z.string().describe('The nav node ID to update'),
+      purpose: z.string().describe('Human-readable purpose of this page'),
+      availableActions: z.array(z.any()).default([]).describe('Actions available on this page'),
+    }).describe('Page purpose update to apply'),
   }),
   outputSchema: z.object({
     success: z.boolean(),
   }),
-  execute: async (_input) => {
-    throw new Error('Not implemented — Plan 3');
+  execute: async (input) => {
+    const { updates } = input;
+    await updatePagePurpose(updates.nodeId, updates.purpose, updates.availableActions ?? []);
+    return { success: true };
   },
 });

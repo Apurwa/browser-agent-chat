@@ -76,16 +76,24 @@ describe('Mastra tool skeletons', () => {
       expect(typeof worldModelUpdateTool.execute).toBe('function');
     });
 
-    it('worldModelReadTool execute throws Not implemented', async () => {
+    it('worldModelReadTool execute resolves with pages/edges/features/frontier', async () => {
       const { worldModelReadTool } = await import('../src/mastra/tools/world-model.js');
-      await expect(worldModelReadTool.execute!({ agentId: 'agent-1' }, undefined as any))
-        .rejects.toThrow('Not implemented');
+      const result = await worldModelReadTool.execute!({ agentId: 'agent-1' }, undefined as any);
+      // Supabase not configured in test env — returns empty arrays gracefully
+      expect(result).toHaveProperty('pages');
+      expect(result).toHaveProperty('edges');
+      expect(result).toHaveProperty('features');
+      expect(result).toHaveProperty('frontier');
     });
 
-    it('worldModelUpdateTool execute throws Not implemented', async () => {
+    it('worldModelUpdateTool execute resolves with success response', async () => {
       const { worldModelUpdateTool } = await import('../src/mastra/tools/world-model.js');
-      await expect(worldModelUpdateTool.execute!({ agentId: 'agent-1', updates: {} }, undefined as any))
-        .rejects.toThrow('Not implemented');
+      // Providing required fields for the updated inputSchema
+      const result = await worldModelUpdateTool.execute!(
+        { agentId: 'agent-1', updates: { nodeId: 'n1', purpose: 'test', availableActions: [] } },
+        undefined as any,
+      );
+      expect(result).toHaveProperty('success', true);
     });
   });
 
@@ -99,10 +107,11 @@ describe('Mastra tool skeletons', () => {
       expect(typeof frontierTool.execute).toBe('function');
     });
 
-    it('execute throws Not implemented', async () => {
+    it('execute resolves with item: null when frontier is empty', async () => {
       const { frontierTool } = await import('../src/mastra/tools/frontier.js');
-      await expect(frontierTool.execute!({ agentId: 'agent-1' }, undefined as any))
-        .rejects.toThrow('Not implemented');
+      const result = await frontierTool.execute!({ agentId: 'agent-1' }, undefined as any);
+      // Supabase not configured in test env — returns null gracefully
+      expect(result).toHaveProperty('item');
     });
   });
 

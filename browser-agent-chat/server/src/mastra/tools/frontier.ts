@@ -1,10 +1,10 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { FrontierItemSchema } from '../../agent-types.js';
+import { getNextFrontier } from '../../frontier.js';
 
 /**
  * Tool: Get the next highest-priority frontier item.
- * Implementation deferred to Plan 3.
  */
 export const frontierTool = createTool({
   id: 'frontier-next',
@@ -16,7 +16,9 @@ export const frontierTool = createTool({
   outputSchema: z.object({
     item: FrontierItemSchema.nullable().describe('Next frontier item, or null if frontier is empty'),
   }),
-  execute: async (_input) => {
-    throw new Error('Not implemented — Plan 3');
+  execute: async (input) => {
+    const { agentId, intentId } = input;
+    const item = await getNextFrontier(agentId, intentId);
+    return { item };
   },
 });
