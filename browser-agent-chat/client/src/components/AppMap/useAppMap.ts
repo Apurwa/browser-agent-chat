@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useWS } from '../../contexts/WebSocketContext';
 import { apiAuthFetch } from '../../lib/api';
+import { buildCanonicalGraph } from './CanonicalGraph';
+import { projectNavigation } from './GraphProjectionLayer';
+import { useGraphStore } from './GraphStore';
 
 export interface MapFlowStep {
   order: number;
@@ -96,6 +99,21 @@ export function useAppMap(agentId: string): AppMapData {
       prevNodeIdsRef.current = new Set(newNodes.map((n: MapNode) => n.id));
       setNodes(newNodes);
       setEdges(data.edges);
+
+      // Feed the canonical graph pipeline into the zustand store
+      const canonical = buildCanonicalGraph(data);
+      const projected = projectNavigation(canonical);
+      useGraphStore.getState().setGraph(projected.nodes, projected.edges);
+
+      // Auto-expand the root node so the initial view shows sections
+      const rootNode = projected.nodes.find(n => n.type === 'root');
+      if (rootNode) {
+        const { expandedNodeIds, toggleExpand } = useGraphStore.getState();
+        if (!expandedNodeIds.has(rootNode.id)) {
+          toggleExpand(rootNode.id);
+        }
+      }
+
       setUnlinkedSuggestions(data.unlinkedSuggestions || []);
       setError(null);
     } catch (err) {
