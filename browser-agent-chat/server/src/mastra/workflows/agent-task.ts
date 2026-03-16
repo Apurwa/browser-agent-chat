@@ -7,6 +7,10 @@ import {
   ExecutionResultSchema,
   ActionVerificationSchema,
 } from '../../agent-types.js';
+import { planStrategy } from '../../planner.js';
+import { perceive } from '../../perception.js';
+import { decideNextAction } from '../../policy.js';
+import { executeAction } from '../../executor.js';
 
 // ---------------------------------------------------------------------------
 // Shared workflow input schema
@@ -32,11 +36,10 @@ export const planStrategyStep = createStep({
   inputSchema: WorkflowInputSchema,
   outputSchema: PlanStrategyOutputSchema,
   execute: async ({ inputData }) => {
-    // Placeholder — Plan 2
+    const plan = await planStrategy(inputData.goal, '', '');
     return {
-      goal: inputData.goal,
+      ...plan,
       agentId: inputData.agentId,
-      intents: [],
     };
   },
 });
@@ -51,14 +54,18 @@ export const perceiveStep = createStep({
   description: 'Capture the current UI state and active intent context',
   inputSchema: PlanStrategyOutputSchema,
   outputSchema: PerceptionSchema,
-  execute: async (_params) => {
-    // Placeholder — Plan 2
+  execute: async ({ inputData }) => {
+    // page is not available in the Mastra workflow context — this step
+    // is wired to accept a page via the runtime context when used inside
+    // the full integration (Plan 5). For now, return a skeleton perception
+    // that correctly picks up the first active intent.
+    const activeIntent = inputData.intents.find((i) => i.status === 'pending') ?? null;
     return {
       screenshot: undefined,
       uiElements: [],
       url: '',
       pageTitle: '',
-      activeIntent: null,
+      activeIntent,
       relevantMemory: '',
     };
   },
@@ -74,13 +81,9 @@ export const decideActionStep = createStep({
   description: 'Choose the next browser action to take given the current perception',
   inputSchema: PerceptionSchema,
   outputSchema: AgentActionSchema,
-  execute: async (_params) => {
-    // Placeholder — Plan 2
-    return {
-      type: 'navigate' as const,
-      expectedOutcome: 'placeholder',
-      intentId: '',
-    };
+  execute: async ({ inputData }) => {
+    const perception = inputData;
+    return decideNextAction(perception, []);
   },
 });
 
@@ -94,11 +97,19 @@ export const executeStep = createStep({
   description: 'Execute the decided browser action via Magnitude',
   inputSchema: AgentActionSchema,
   outputSchema: ExecutionResultSchema,
-  execute: async (_params) => {
-    // Placeholder — Plan 2
-    return {
-      success: false,
+  execute: async ({ inputData }) => {
+    // agent and page are injected via runtime context in Plan 5 integration.
+    // Until then, the step documents the contract and delegates to executeAction
+    // with no-op stubs so the workflow chain can be type-checked.
+    const noopAgent = {
+      act: async (_: string) => {},
+      extract: async (_prompt: string, _schema: unknown) => ({}),
     };
+    const noopPage = {
+      goto: async (_url: string) => {},
+      evaluate: async (_fn: unknown) => '',
+    };
+    return executeAction(noopAgent, noopPage, inputData, []);
   },
 });
 
@@ -112,11 +123,12 @@ export const verifyActionStep = createStep({
   description: 'Verify that the executed action produced the expected outcome',
   inputSchema: ExecutionResultSchema,
   outputSchema: ActionVerificationSchema,
-  execute: async (_params) => {
-    // Placeholder — Plan 2
+  execute: async ({ inputData }) => {
+    // Verification logic is implemented in Plan 4.
+    // For now, pass through based on execution success.
     return {
-      passed: false,
-      confidence: 0,
+      passed: inputData.success,
+      confidence: inputData.success ? 0.8 : 0.0,
       findings: [],
     };
   },

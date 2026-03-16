@@ -18,10 +18,10 @@ describe('Mastra tool skeletons', () => {
       expect(typeof magnitudeActTool.execute).toBe('function');
     });
 
-    it('execute throws Not implemented', async () => {
+    it('execute throws when agentRef/pageRef not provided in context', async () => {
       const { magnitudeActTool } = await import('../src/mastra/tools/magnitude-act.js');
       await expect(magnitudeActTool.execute!({ instruction: 'click button' }, undefined as any))
-        .rejects.toThrow('Not implemented');
+        .rejects.toThrow();
     });
   });
 
@@ -35,10 +35,10 @@ describe('Mastra tool skeletons', () => {
       expect(typeof magnitudeExtractTool.execute).toBe('function');
     });
 
-    it('execute throws Not implemented', async () => {
+    it('execute throws when agentRef not provided in context', async () => {
       const { magnitudeExtractTool } = await import('../src/mastra/tools/magnitude-extract.js');
       await expect(magnitudeExtractTool.execute!({ prompt: 'get title', schemaDescription: 'string' }, undefined as any))
-        .rejects.toThrow('Not implemented');
+        .rejects.toThrow();
     });
   });
 
@@ -52,10 +52,10 @@ describe('Mastra tool skeletons', () => {
       expect(typeof perceptionTool.execute).toBe('function');
     });
 
-    it('execute throws Not implemented', async () => {
+    it('execute throws when pageRef not provided in context', async () => {
       const { perceptionTool } = await import('../src/mastra/tools/perception.js');
       await expect(perceptionTool.execute!({ agentId: 'agent-1' }, undefined as any))
-        .rejects.toThrow('Not implemented');
+        .rejects.toThrow();
     });
   });
 
