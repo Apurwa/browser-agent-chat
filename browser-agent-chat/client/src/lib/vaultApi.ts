@@ -92,3 +92,35 @@ export async function getAgentCredentials(
   if (!res.ok) return [];
   return res.json();
 }
+
+export async function toggleCredential(
+  token: string | null,
+  id: string,
+  enabled: boolean,
+): Promise<VaultEntry> {
+  const res = await apiAuthFetch(`/api/vault/${id}/toggle`, token, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error('Failed to toggle credential');
+  return res.json();
+}
+
+export async function fetchAuditLog(
+  token: string | null,
+  id: string,
+): Promise<Array<{ action: string; actor: string; timestamp: string; details?: Record<string, unknown> }>> {
+  const res = await apiAuthFetch(`/api/vault/${id}/audit`, token);
+  if (!res.ok) throw new Error('Failed to fetch audit log');
+  return res.json();
+}
+
+export async function fetchResolution(
+  token: string | null,
+  id: string,
+): Promise<{ items: Array<{ domain: string; resolved: boolean; agentId?: string }> }> {
+  const res = await apiAuthFetch(`/api/vault/${id}/resolution`, token);
+  if (!res.ok) throw new Error('Failed to fetch resolution');
+  return res.json();
+}
