@@ -8,8 +8,10 @@ const CRITICALITY_COLORS: Record<string, string> = {
 function FeatureNode({ data }: NodeProps) {
   const d = data as Record<string, unknown>
   const borderColor = CRITICALITY_COLORS[(d.criticality as string) ?? 'low'] ?? 'var(--border-primary)'
+  const explorationClass = d.explorationLabel ? `graph-node--${d.explorationLabel}` : ''
+  const searchMatch = d.searchMatch ? 'graph-node--search-match' : ''
   return (
-    <div className="graph-node graph-node--feature" aria-label={`Feature: ${d.label}`}>
+    <div className={`graph-node graph-node--feature ${explorationClass} ${searchMatch}`} aria-label={`Feature: ${d.label}`}>
       <Handle type="target" position={Position.Top} className="graph-node-handle" />
       <div className="graph-node-card" style={{ borderLeftColor: borderColor }}>
         <span className="graph-node-title">{d.label as string}</span>

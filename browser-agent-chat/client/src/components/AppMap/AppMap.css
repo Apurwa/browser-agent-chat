@@ -915,3 +915,50 @@
   overflow-y: auto;
   min-height: 0;
 }
+
+/* ===== Exploration State Indicators ===== */
+.graph-node--exploring .graph-node-card {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(212, 135, 77, 0.3);
+  animation: exploring-pulse 2s ease-in-out infinite;
+}
+
+.graph-node--unknown .graph-node-card {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.graph-node--failed .graph-node-card {
+  border-color: #ef4444;
+}
+
+@keyframes exploring-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(212, 135, 77, 0.2); }
+  50% { box-shadow: 0 0 12px rgba(212, 135, 77, 0.5); }
+}
+
+/* Explore button on unknown nodes */
+.graph-node-explore {
+  display: block;
+  margin-top: 4px;
+  background: none;
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  font-size: 10px;
+  font-family: inherit;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+}
+
+.graph-node-explore:hover {
+  background: var(--accent-light);
+}
+
+/* Search match highlight */
+.graph-node--search-match .graph-node-card {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand);
+}

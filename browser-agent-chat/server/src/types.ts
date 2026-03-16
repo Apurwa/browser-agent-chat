@@ -340,6 +340,7 @@ export type ClientMessage =
   | { type: 'restart'; agentId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
+  | { type: 'explore_node'; nodeId: string }
   | { type: 'ping' }
   | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string }
   | { type: 'credential_provided'; credentialId: string };

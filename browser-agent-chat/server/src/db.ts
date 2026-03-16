@@ -218,6 +218,19 @@ export async function deleteFlow(flowId: string): Promise<boolean> {
   return !error;
 }
 
+// === Nav Nodes ===
+
+export async function getNavNodeById(nodeId: string): Promise<{ id: string; url_pattern: string; page_title: string; agent_id: string } | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('nav_nodes')
+    .select('id, url_pattern, page_title, agent_id')
+    .eq('id', nodeId)
+    .maybeSingle();
+  if (error) { console.error('getNavNodeById error:', error); return null; }
+  return data;
+}
+
 // === Sessions ===
 
 export async function createSession(agentId: string): Promise<string | null> {

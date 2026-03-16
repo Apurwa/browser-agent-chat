@@ -15,7 +15,7 @@ import observabilityRouter from './routes/observability.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
 import { pendingCredentialRequests } from './vault.js';
-import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask } from './db.js';
+import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask, getNavNodeById } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
@@ -406,6 +406,71 @@ wss.on('connection', (ws: WebSocket) => {
       // Clean up if this was the active task
       if (activeTask?.taskId === msg.task_id) {
         activeTasks.delete(agentId);
+      }
+
+    } else if (msg.type === 'explore_node') {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session.' } as ServerMessage));
+        return;
+      }
+
+      const agentSession = sessionManager.getAgent(agentId);
+      if (!agentSession) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired.' } as ServerMessage));
+        return;
+      }
+
+      try {
+        const navNode = await getNavNodeById(msg.nodeId);
+        if (!navNode) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Node not found.' } as ServerMessage));
+          return;
+        }
+
+        const taskContent = `Navigate to ${navNode.url_pattern} and explore the page. Identify interactive elements, forms, and available features.`;
+        broadcastToAgent(agentId, { type: 'status', status: 'working' });
+
+        const userMsg = makeChatMessage('system', `Exploring: ${navNode.page_title || navNode.url_pattern}`);
+        redisStore.pushMessage(agentId, userMsg).catch(() => {});
+
+        if (agentSession.sessionId) {
+          try {
+            const taskId = await createTask(agentSession.sessionId, agentId, taskContent);
+            activeTasks.set(agentId, { taskId, stepCount: 0, startedAt: Date.now(), prompt: taskContent });
+            broadcastToAgent(agentId, { type: 'taskStarted', taskId });
+          } catch (err) {
+            console.error('[EXPLORE_NODE] Failed to create task:', err);
+          }
+        }
+
+        const baseBroadcast = sessionManager.makeBroadcast(agentId);
+        const taskBroadcast = (broadcastMsg: ServerMessage) => {
+          if (broadcastMsg.type === 'taskComplete') {
+            const activeTask = activeTasks.get(agentId);
+            if (activeTask) {
+              const enriched: ServerMessage = {
+                ...broadcastMsg,
+                taskId: activeTask.taskId,
+                stepCount: activeTask.stepCount,
+                durationMs: Date.now() - activeTask.startedAt,
+              };
+              updateTask(activeTask.taskId, {
+                status: broadcastMsg.success ? 'completed' : 'failed',
+                success: broadcastMsg.success,
+                completed_at: new Date().toISOString(),
+              }).catch(err => console.error('[EXPLORE_NODE] Failed to update task:', err));
+              baseBroadcast(enriched);
+              return;
+            }
+          }
+          baseBroadcast(broadcastMsg);
+        };
+        executeTask(agentSession, taskContent, taskBroadcast);
+      } catch (err) {
+        console.error('[EXPLORE_NODE] Error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to explore node';
+        ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
       }
 
     } else if (msg.type === 'credential_provided') {

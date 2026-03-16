@@ -41,8 +41,17 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
   const prevPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
   const reactFlow = useReactFlow()
 
+  const searchQuery = useGraphStore(s => s.searchQuery)
+
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<Node>([] as Node[])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<Edge>([] as Edge[])
+
+  const handleExploreNode = useCallback((nodeId: string) => {
+    const node = storeNodes.find(n => n.id === nodeId)
+    if (node?.urlPattern) {
+      onSendTask(`Navigate to ${node.urlPattern} and explore the page. Identify interactive elements, forms, and available features.`)
+    }
+  }, [storeNodes, onSendTask])
 
   // Run ELK layout when visible nodes/edges change
   useEffect(() => {
@@ -54,9 +63,14 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
     }
 
     computeLayout(visibleNodes, visibleEdges).then(positions => {
+      const lowerQuery = searchQuery.toLowerCase().trim()
       const newNodes: Node[] = visibleNodes.map(n => {
         // Find the original MapNode to pass existing data
         const mapNode = mapNodes.find(mn => mn.id === n.id)
+        const isSearchMatch = lowerQuery.length > 0 && (
+          n.label.toLowerCase().includes(lowerQuery) ||
+          (n.urlPattern ?? '').toLowerCase().includes(lowerQuery)
+        )
         return {
           id: n.id,
           type: n.type as string,
@@ -70,6 +84,8 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
             explorationIcon: EXPLORATION_ICONS[n.state.exploration] ?? '\u25CB',
             explorationLabel: n.state.exploration,
             isSelected: n.id === selectedNodeId,
+            searchMatch: isSearchMatch,
+            onExploreNode: handleExploreNode,
             // Backward compat for existing data
             pageTitle: mapNode?.pageTitle ?? n.label,
             features: mapNode?.features ?? [],
@@ -92,7 +108,7 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
         }
       }))
     })
-  }, [visibleNodes, visibleEdges, isReady, selectedNodeId, mapNodes, mapEdges, computeLayout, setRfNodes, setRfEdges])
+  }, [visibleNodes, visibleEdges, isReady, selectedNodeId, searchQuery, handleExploreNode, mapNodes, mapEdges, computeLayout, setRfNodes, setRfEdges])
 
   const handleNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
     selectNode(node.id)
