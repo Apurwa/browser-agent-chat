@@ -3,8 +3,8 @@ import { AgentActionSchema, type AgentAction, type Perception } from './agent-ty
 
 const PolicyOutputSchema = z.object({
   type: z.enum(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']),
-  elementId: z.string().optional(),
-  value: z.string().optional(),
+  elementId: z.string().nullish().transform(v => v ?? undefined),
+  value: z.string().nullish().transform(v => v ?? undefined),
   expectedOutcome: z.string(),
   intentId: z.string(),
 });
@@ -57,11 +57,12 @@ Pick the MOST EFFECTIVE single action toward the active intent.`;
 
   try {
     const result = await agent.extract(prompt, PolicyOutputSchema);
+    console.log('[POLICY] Raw LLM result:', JSON.stringify(result));
     const parsed = PolicyOutputSchema.parse(result);
     return AgentActionSchema.parse({ ...parsed, intentId: parsed.intentId || intentId });
   } catch (error) {
-    // Fallback: extract information from the page
-    console.error('[POLICY] LLM decision failed, falling back to extract:', error);
+    console.error('[POLICY] LLM decision failed, falling back to extract:', error instanceof Error ? error.message : error);
+    // Fallback: use Magnitude's native act() to observe the page
     return {
       type: 'extract',
       expectedOutcome: 'Gather information about the current page',

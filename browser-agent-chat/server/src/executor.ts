@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { AgentAction, ExecutionResult, UIElement } from './agent-types.js';
 
 type BrowserAgent = {
@@ -78,7 +79,14 @@ export async function executeAction(
       }
 
       case 'extract': {
-        const data = await agent.extract(action.value ?? action.expectedOutcome, {});
+        const extractSchema = z.object({
+          summary: z.string().describe('A summary of what was found on the page'),
+          items: z.array(z.string()).describe('List of features, elements, or information found'),
+        });
+        const data = await agent.extract(
+          action.value ?? action.expectedOutcome,
+          extractSchema,
+        );
         const newUrl = await captureUrl(page);
         return { success: true, data, newUrl };
       }

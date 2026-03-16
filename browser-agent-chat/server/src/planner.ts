@@ -40,6 +40,7 @@ Rules:
 
   try {
     const result = await agent.extract(prompt, PlannerOutputSchema);
+    console.log('[PLANNER] Raw LLM result:', JSON.stringify(result));
     return StrategyPlanSchema.parse(result);
   } catch (error) {
     // Fallback: create a single intent from the goal
