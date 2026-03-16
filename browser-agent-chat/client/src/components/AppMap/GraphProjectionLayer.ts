@@ -1,6 +1,59 @@
 import type { CanonicalGraph, AppNode, AppEdge, NodeState, GraphEntity } from './types'
 import { DEFAULT_NODE_STATE } from './types'
 
+interface CapabilityCluster {
+  id: string
+  name: string
+  sourcePageIds: string[]
+  features: Array<{ id: string; name: string; criticality: string; [key: string]: unknown }>
+  dependencies: string[]
+}
+
+export function projectCapabilities(
+  clusters: readonly CapabilityCluster[],
+): { nodes: AppNode[]; edges: AppEdge[] } {
+  const nodes: AppNode[] = []
+  const edges: AppEdge[] = []
+
+  for (const cluster of clusters) {
+    const featureIds = cluster.features.map(f => f.id)
+    nodes.push({
+      id: cluster.id,
+      type: 'section',
+      label: cluster.name,
+      state: { ...DEFAULT_NODE_STATE, exploration: cluster.features.length > 0 ? 'explored' : 'unknown' },
+      featureCount: cluster.features.length,
+      criticality: getHighestCriticality(
+        cluster.features.map(f => ({ id: f.id, kind: 'feature' as const, metadata: { criticality: f.criticality } }))
+      ),
+      childIds: featureIds,
+    })
+
+    for (const feature of cluster.features) {
+      nodes.push({
+        id: feature.id,
+        type: 'feature',
+        label: feature.name,
+        parent: cluster.id,
+        state: DEFAULT_NODE_STATE,
+        childIds: [],
+        criticality: feature.criticality as AppNode['criticality'],
+      })
+    }
+
+    for (const depId of cluster.dependencies) {
+      edges.push({
+        id: `dep-${cluster.id}-${depId}`,
+        source: cluster.id,
+        target: depId,
+        type: 'dependency',
+      })
+    }
+  }
+
+  return { nodes, edges }
+}
+
 const CRITICALITY_ORDER: Record<string, number> = {
   critical: 0, high: 1, medium: 2, low: 3,
 }

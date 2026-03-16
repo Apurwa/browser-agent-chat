@@ -33,10 +33,23 @@ async function fillField(page: any, selector: string | null, value: string, kind
     // continue
   }
 
-  // 3. Fallback by placeholder text
+  // 3. Fallback by label text (handles Radix/shadcn-style forms like Langfuse)
+  const labelHints = kind === 'password'
+    ? ['Password', 'password']
+    : ['Email', 'email', 'Username', 'username', 'Email address'];
+  for (const label of labelHints) {
+    try {
+      await page.getByLabel(label).first().fill(value, { timeout: 2000 });
+      return true;
+    } catch {
+      // try next
+    }
+  }
+
+  // 4. Fallback by placeholder text
   const placeholderHints = kind === 'password'
-    ? ['password', 'Password']
-    : ['email', 'Email', 'username', 'Username'];
+    ? ['password', 'Password', '••••••••']
+    : ['email', 'Email', 'username', 'Username', 'jsdoe@example.com', 'name@example.com', 'you@example.com'];
   for (const hint of placeholderHints) {
     try {
       await page.getByPlaceholder(hint).first().fill(value, { timeout: 2000 });
@@ -44,6 +57,18 @@ async function fillField(page: any, selector: string | null, value: string, kind
     } catch {
       // try next
     }
+  }
+
+  // 5. Last resort: first visible text input (for username) or password input
+  try {
+    if (kind === 'password') {
+      await page.locator('input[type="password"]').first().fill(value, { timeout: 2000 });
+    } else {
+      await page.locator('input:visible').first().fill(value, { timeout: 2000 });
+    }
+    return true;
+  } catch {
+    // give up
   }
 
   return false;
@@ -62,12 +87,20 @@ async function clickSubmit(page: any, selector: string | null): Promise<void> {
     }
   }
 
-  // Fallback: try common submit patterns
+  // Fallback: try role-based button matching (handles React/Radix components)
+  const roleNames = [/sign in/i, /log in/i, /login/i, /submit/i, /continue/i];
+  for (const name of roleNames) {
+    try {
+      await page.getByRole('button', { name }).first().click({ timeout: 2000 });
+      return;
+    } catch {
+      // try next
+    }
+  }
+
+  // Fallback: CSS selector patterns
   const fallbacks = [
     'button[type="submit"]:visible',
-    'button:has-text("Sign in"):visible',
-    'button:has-text("Log in"):visible',
-    'button:has-text("Login"):visible',
     'input[type="submit"]:visible',
   ];
   for (const fb of fallbacks) {
@@ -114,13 +147,21 @@ export async function executeStandardLogin(
     // Click submit — try detected selector, fall back to common patterns
     await clickSubmit(page, selectors.submit);
 
-    // Wait for navigation/SPA route change — try multiple strategies
-    await page.waitForLoadState('networkidle').catch(() => {});
+    // Wait for navigation — try waitForURL first (catches server-side redirects),
+    // then fall back to networkidle for SPAs
+    try {
+      await page.waitForURL((url: URL) => url.href !== loginUrl, { timeout: 5000 });
+      console.log('[LOGIN-STRATEGY] URL changed after submit');
+      return { success: true };
+    } catch {
+      // URL didn't change within 5s — try networkidle for SPA apps
+      await page.waitForLoadState('networkidle').catch(() => {});
+    }
 
-    // Poll for URL change or password field disappearance (up to 8 seconds)
+    // Poll for URL change or password field disappearance (up to 12 seconds)
     // SPAs often take several seconds to redirect after login
     let success = false;
-    for (let attempt = 0; attempt < 4; attempt++) {
+    for (let attempt = 0; attempt < 6; attempt++) {
       await page.waitForTimeout(2000);
       success = await verifyLoginSuccess(page, loginUrl);
       if (success) break;
@@ -133,33 +174,47 @@ export async function executeStandardLogin(
 }
 
 /**
- * Check if login succeeded by verifying URL changed or password field disappeared.
+ * Check if login succeeded by verifying URL changed, password field disappeared,
+ * or common post-login indicators appeared.
  * Uses page.evaluate(location.href) for SPA-aware URL detection.
  */
 export async function verifyLoginSuccess(page: any, loginUrl: string): Promise<boolean> {
   // Use evaluate for SPA-aware URL (page.url() can be stale after client-side routing)
-  const currentUrl = await page.evaluate('location.href').catch(() => page.url());
+  let currentUrl: string;
+  try {
+    currentUrl = await page.evaluate('location.href');
+    if (typeof currentUrl !== 'string') currentUrl = page.url();
+  } catch {
+    currentUrl = page.url();
+  }
 
   // URL changed away from login page
   if (currentUrl !== loginUrl) return true;
 
-  // Same URL but check multiple signals (runs in browser context)
-  const loginGone = await page.evaluate(`(() => {
+  // Same URL — check DOM signals (runs in browser context)
+  const domResult: { passwordGone: boolean; hasError: boolean } = await page.evaluate(`(() => {
+    // 1. Password field gone?
     const pw = document.querySelector('input[type="password"]');
-    const pwVisible = pw !== null && pw.offsetParent !== null;
-    if (!pwVisible) return true;
+    const passwordGone = pw === null || pw.offsetParent === null;
 
-    // Check for error messages that indicate a failed login
-    const errorTexts = ['invalid', 'incorrect', 'wrong', 'failed', 'error', 'denied'];
-    const alerts = [...document.querySelectorAll('[role="alert"], .error, .alert-danger, .alert-error')];
+    // 2. Error messages present?
+    const errorTexts = ['invalid', 'incorrect', 'wrong', 'failed', 'error', 'denied', 'unauthorized'];
+    const alertSelectors = '[role="alert"], .error, .alert-danger, .alert-error, .text-destructive, [data-testid="error"]';
+    const alerts = [...document.querySelectorAll(alertSelectors)];
     const hasError = alerts.some(el => {
       const text = (el.textContent || '').toLowerCase();
       return errorTexts.some(e => text.includes(e));
     });
-    if (hasError) return false;
 
-    return false;
+    return { passwordGone, hasError };
   })()`);
 
-  return loginGone;
+  // Password field gone → login succeeded (form removed)
+  if (domResult.passwordGone) return true;
+
+  // Error message visible → login definitely failed
+  if (domResult.hasError) return false;
+
+  // Still on login page with password field visible, no clear signal
+  return false;
 }

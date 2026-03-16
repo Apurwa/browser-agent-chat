@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { projectNavigation } from '../GraphProjectionLayer'
+import { projectNavigation, projectCapabilities } from '../GraphProjectionLayer'
 import type { CanonicalGraph } from '../types'
 
 const CANONICAL: CanonicalGraph = {
@@ -71,5 +71,36 @@ describe('projectNavigation', () => {
     const { nodes } = projectNavigation(CANONICAL, '/users')
     const users = nodes.find(n => n.id === 'n3')
     expect(users?.state.exploration).toBe('exploring')
+  })
+})
+
+const CLUSTERS = [
+  { id: 'c1', name: 'User Management', sourcePageIds: ['n3'], features: [
+    { id: 'f3', name: 'Invite', description: null, criticality: 'high', expected_behaviors: [] },
+    { id: 'f4', name: 'List', description: null, criticality: 'medium', expected_behaviors: [] },
+  ], dependencies: ['c2'] },
+  { id: 'c2', name: 'Settings', sourcePageIds: ['n4'], features: [], dependencies: [] },
+]
+
+describe('projectCapabilities', () => {
+  it('creates section nodes from capability clusters', () => {
+    const { nodes } = projectCapabilities(CLUSTERS)
+    const sections = nodes.filter(n => n.type === 'section')
+    expect(sections).toHaveLength(2)
+    expect(sections[0].label).toBe('User Management')
+  })
+
+  it('creates feature child nodes within clusters', () => {
+    const { nodes } = projectCapabilities(CLUSTERS)
+    const features = nodes.filter(n => n.type === 'feature')
+    expect(features).toHaveLength(2)
+    expect(features[0].parent).toBe('c1')
+  })
+
+  it('creates dependency edges between clusters', () => {
+    const { edges } = projectCapabilities(CLUSTERS)
+    const deps = edges.filter(e => e.type === 'dependency')
+    expect(deps).toHaveLength(1)
+    expect(deps[0]).toMatchObject({ source: 'c1', target: 'c2' })
   })
 })
