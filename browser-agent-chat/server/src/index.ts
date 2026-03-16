@@ -14,6 +14,7 @@ import tracesRouter from './routes/traces.js';
 import observabilityRouter from './routes/observability.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
+import { dispatchTask, dispatchExplore } from './agent-dispatch.js';
 import { pendingCredentialRequests } from './vault.js';
 import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask, getNavNodeById } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
@@ -280,7 +281,7 @@ wss.on('connection', (ws: WebSocket) => {
         }
         baseBroadcast(broadcastMsg);
       };
-      executeTask(agentSession, msg.content, taskBroadcast);
+      dispatchTask(agentSession, msg.content, taskBroadcast);
 
     } else if (msg.type === 'restart') {
       const agentId = msg.agentId;
@@ -355,7 +356,7 @@ wss.on('connection', (ws: WebSocket) => {
       redisStore.pushMessage(agentId, exploreMsg).catch(() => {});
 
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
-      executeExplore(agentSession, agent?.context || null, exploreBroadcast);
+      dispatchExplore(agentSession, agent?.context || null, exploreBroadcast);
 
     } else if (msg.type === 'taskFeedback') {
       const agentId = clientAgents.get(ws);
