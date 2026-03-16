@@ -299,9 +299,8 @@ export async function createAgent(
     }
 
     // Runtime login interception: detect login pages during task execution.
-    // Runs after EVERY action (not just URL changes) — catches the case where
-    // the agent is stuck on a login page taking "wait" actions.
-    if (agentId && session.userId && !session.loginInProgress) {
+    // Disabled when USE_NEW_AGENT=true — the new agent loop handles its own login.
+    if (agentId && session.userId && !session.loginInProgress && process.env.USE_NEW_AGENT !== 'true') {
       try {
         const loginDetection = await detectLoginPage(connector.getHarness().page);
         if (loginDetection.isLoginPage) {
@@ -346,7 +345,8 @@ export async function createAgent(
     session.currentUrl = navUrl;
 
     // Login interception on navigation (catches auth redirects before agent acts)
-    if (agentId && session.userId && !session.loginInProgress) {
+    // Disabled when USE_NEW_AGENT=true — the new agent loop handles its own login.
+    if (agentId && session.userId && !session.loginInProgress && process.env.USE_NEW_AGENT !== 'true') {
       try {
         // Small delay to let the page render after navigation
         await new Promise(r => setTimeout(r, 1000));
