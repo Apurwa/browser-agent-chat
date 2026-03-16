@@ -104,7 +104,11 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
           source: e.source,
           target: e.target,
           type: 'nav' as const,
-          data: { actionLabel: mapEdge?.actionLabel ?? e.label, isUnexplored: false },
+          data: {
+            actionLabel: mapEdge?.actionLabel ?? e.label,
+            isUnexplored: false,
+            edgeType: e.type,
+          },
         }
       }))
     })
