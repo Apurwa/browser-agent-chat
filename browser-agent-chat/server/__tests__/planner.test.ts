@@ -1,19 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StrategyPlanSchema } from '../src/agent-types.js';
+import { planStrategy } from '../src/planner.js';
 
-const mockCreate = vi.fn();
-
-// Mock the Anthropic SDK — must use a function constructor so `new Anthropic()` works
-vi.mock('@anthropic-ai/sdk', () => {
-  function Anthropic() {
-    return {
-      messages: {
-        create: mockCreate,
-      },
-    };
-  }
-  return { default: Anthropic };
-});
+function mockAgent(returnValue: unknown) {
+  return { extract: vi.fn().mockResolvedValue(returnValue) };
+}
 
 describe('planStrategy', () => {
   beforeEach(() => {
@@ -21,188 +12,76 @@ describe('planStrategy', () => {
   });
 
   it('returns a valid StrategyPlan for a simple goal', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            goal: 'click Settings',
-            intents: [
-              {
-                id: 'intent_1',
-                description: 'Click the Settings button',
-                successCriteria: 'Settings page is visible',
-                status: 'pending',
-                confidence: 0.95,
-              },
-            ],
-          }),
-        },
-      ],
+    const agent = mockAgent({
+      goal: 'click Settings',
+      intents: [{
+        id: 'intent_1',
+        description: 'Click the Settings button',
+        successCriteria: 'Settings page is visible',
+        status: 'pending',
+        confidence: 0,
+      }],
     });
 
-    const { planStrategy } = await import('../src/planner.js');
-    const result = await planStrategy('click Settings', '', 'https://example.com');
+    const result = await planStrategy(agent, 'click Settings', '', 'https://example.com');
 
     const parsed = StrategyPlanSchema.safeParse(result);
     expect(parsed.success).toBe(true);
     expect(result.goal).toBe('click Settings');
     expect(result.intents).toHaveLength(1);
-    expect(result.intents[0].description).toContain('Settings');
   });
 
   it('returns multiple intents for a complex goal', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            goal: 'Log in and navigate to the dashboard then export a report',
-            intents: [
-              {
-                id: 'intent_1',
-                description: 'Log in to the application',
-                successCriteria: 'User is authenticated and dashboard is visible',
-                status: 'pending',
-                confidence: 0.9,
-              },
-              {
-                id: 'intent_2',
-                description: 'Navigate to the Reports section',
-                successCriteria: 'Reports page is visible',
-                status: 'pending',
-                confidence: 0.85,
-              },
-              {
-                id: 'intent_3',
-                description: 'Export the report',
-                successCriteria: 'Report file download has started',
-                status: 'pending',
-                confidence: 0.8,
-              },
-            ],
-          }),
-        },
+    const agent = mockAgent({
+      goal: 'Log in and export report',
+      intents: [
+        { id: 'intent_1', description: 'Log in', successCriteria: 'Dashboard visible', status: 'pending', confidence: 0 },
+        { id: 'intent_2', description: 'Export report', successCriteria: 'Download started', status: 'pending', confidence: 0 },
       ],
     });
 
-    const { planStrategy } = await import('../src/planner.js');
-    const result = await planStrategy(
-      'Log in and navigate to the dashboard then export a report',
-      'User is on the homepage',
-      'https://example.com',
-    );
-
-    const parsed = StrategyPlanSchema.safeParse(result);
-    expect(parsed.success).toBe(true);
+    const result = await planStrategy(agent, 'Log in and export report', '', 'https://example.com');
     expect(result.intents.length).toBeGreaterThan(1);
   });
 
-  it('calls the LLM with the goal included in the prompt', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            goal: 'test goal',
-            intents: [
-              {
-                id: 'intent_1',
-                description: 'Do something',
-                successCriteria: 'Something is done',
-                status: 'pending',
-                confidence: 0.9,
-              },
-            ],
-          }),
-        },
-      ],
+  it('passes goal and context to agent.extract', async () => {
+    const agent = mockAgent({
+      goal: 'test goal',
+      intents: [{ id: 'i1', description: 'Do it', successCriteria: 'Done', status: 'pending', confidence: 0 }],
     });
 
-    const { planStrategy } = await import('../src/planner.js');
-    await planStrategy('test goal', 'some context', 'https://app.com/page');
+    await planStrategy(agent, 'test goal', 'some context', 'https://app.com/page');
 
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    const callArgs = mockCreate.mock.calls[0][0];
-    // System message should be about strategic planning
-    expect(callArgs.system).toContain('strategic planner');
-    // User message should include the goal
-    const userMessage = callArgs.messages[0].content;
-    expect(userMessage).toContain('test goal');
+    expect(agent.extract).toHaveBeenCalledTimes(1);
+    const prompt = agent.extract.mock.calls[0][0];
+    expect(prompt).toContain('test goal');
+    expect(prompt).toContain('some context');
+    expect(prompt).toContain('https://app.com/page');
   });
 
-  it('includes worldContext and currentUrl in the prompt when provided', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            goal: 'navigate',
-            intents: [
-              {
-                id: 'intent_1',
-                description: 'Navigate somewhere',
-                successCriteria: 'Navigation complete',
-                status: 'pending',
-                confidence: 0.9,
-              },
-            ],
-          }),
-        },
-      ],
-    });
+  it('falls back to single intent on extract failure', async () => {
+    const agent = { extract: vi.fn().mockRejectedValue(new Error('LLM failed')) };
 
-    const { planStrategy } = await import('../src/planner.js');
-    await planStrategy('navigate', 'Current page shows login form', 'https://app.com/login');
+    const result = await planStrategy(agent, 'test goal', '', 'https://example.com');
 
-    const callArgs = mockCreate.mock.calls[0][0];
-    const userMessage = callArgs.messages[0].content;
-    expect(userMessage).toContain('https://app.com/login');
-    expect(userMessage).toContain('Current page shows login form');
+    // Should not throw — falls back gracefully
+    expect(result.goal).toBe('test goal');
+    expect(result.intents).toHaveLength(1);
+    expect(result.intents[0].description).toBe('test goal');
   });
 
-  it('all returned intents have status "pending" initially', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            goal: 'do tasks',
-            intents: [
-              {
-                id: 'intent_1',
-                description: 'Task 1',
-                successCriteria: 'Task 1 done',
-                status: 'pending',
-                confidence: 0.9,
-              },
-              {
-                id: 'intent_2',
-                description: 'Task 2',
-                successCriteria: 'Task 2 done',
-                status: 'pending',
-                confidence: 0.85,
-              },
-            ],
-          }),
-        },
+  it('all returned intents have status "pending"', async () => {
+    const agent = mockAgent({
+      goal: 'do tasks',
+      intents: [
+        { id: 'i1', description: 'Task 1', successCriteria: 'Done', status: 'pending', confidence: 0 },
+        { id: 'i2', description: 'Task 2', successCriteria: 'Done', status: 'pending', confidence: 0 },
       ],
     });
 
-    const { planStrategy } = await import('../src/planner.js');
-    const result = await planStrategy('do tasks', '', 'https://example.com');
-
+    const result = await planStrategy(agent, 'do tasks', '', 'https://example.com');
     for (const intent of result.intents) {
       expect(intent.status).toBe('pending');
     }
-  });
-
-  it('throws a descriptive error when LLM call fails', async () => {
-    mockCreate.mockRejectedValue(new Error('API rate limit exceeded'));
-
-    const { planStrategy } = await import('../src/planner.js');
-    await expect(planStrategy('test', '', 'https://example.com')).rejects.toThrow(
-      'Failed to plan strategy',
-    );
   });
 });

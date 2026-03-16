@@ -100,7 +100,7 @@ export async function executeAgentLoop(
 
     // 3. Plan strategy
     broadcast({ type: 'thought', content: 'Planning strategy...' });
-    const plan = await planStrategy(goal, worldContext, startUrl);
+    const plan = await planStrategy(session.agent, goal, worldContext, startUrl);
 
     broadcast({
       type: 'thought',
@@ -163,6 +163,7 @@ export async function executeAgentLoop(
 
       // c. Decide next action
       const action: AgentAction = await decideNextAction(
+        session.agent,
         perception,
         taskMemory.actionsAttempted.slice(-5),
       );
@@ -287,7 +288,7 @@ export async function executeAgentLoop(
 
           try {
             const currentUrl = await getPageUrl(currentPage);
-            const replan = await planStrategy(goal, worldContext, currentUrl);
+            const replan = await planStrategy(session.agent, goal, worldContext, currentUrl);
 
             taskMemory = {
               ...taskMemory,

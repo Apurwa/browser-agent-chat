@@ -1,19 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentActionSchema } from '../src/agent-types.js';
 import type { Perception, AgentAction } from '../src/agent-types.js';
+import { decideNextAction } from '../src/policy.js';
 
-const mockCreate = vi.fn();
-
-vi.mock('@anthropic-ai/sdk', () => {
-  function Anthropic() {
-    return {
-      messages: {
-        create: mockCreate,
-      },
-    };
-  }
-  return { default: Anthropic };
-});
+function mockAgent(returnValue: unknown) {
+  return { extract: vi.fn().mockResolvedValue(returnValue) };
+}
 
 const samplePerception: Perception = {
   url: 'https://example.com/login',
@@ -39,141 +31,78 @@ describe('decideNextAction', () => {
   });
 
   it('returns a valid AgentAction', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            type: 'click',
-            elementId: 'el_2',
-            value: undefined,
-            expectedOutcome: 'Login form submitted',
-            intentId: 'intent_1',
-          }),
-        },
-      ],
+    const agent = mockAgent({
+      type: 'click',
+      elementId: 'el_2',
+      expectedOutcome: 'Login form submitted',
+      intentId: 'intent_1',
     });
 
-    const { decideNextAction } = await import('../src/policy.js');
-    const result = await decideNextAction(samplePerception, []);
+    const result = await decideNextAction(agent, samplePerception, []);
 
     const parsed = AgentActionSchema.safeParse(result);
     expect(parsed.success).toBe(true);
+    expect(result.type).toBe('click');
   });
 
-  it('calls LLM with the perception data in the prompt', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            type: 'type',
-            elementId: 'el_0',
-            value: 'user@example.com',
-            expectedOutcome: 'Email entered',
-            intentId: 'intent_1',
-          }),
-        },
-      ],
+  it('passes perception data to agent.extract', async () => {
+    const agent = mockAgent({
+      type: 'type',
+      elementId: 'el_0',
+      value: 'user@example.com',
+      expectedOutcome: 'Email entered',
+      intentId: 'intent_1',
     });
 
-    const { decideNextAction } = await import('../src/policy.js');
-    await decideNextAction(samplePerception, []);
+    await decideNextAction(agent, samplePerception, []);
 
-    expect(mockCreate).toHaveBeenCalledTimes(1);
-    const callArgs = mockCreate.mock.calls[0][0];
-    const userMessage = callArgs.messages[0].content;
-
-    // Should include the URL
-    expect(userMessage).toContain('https://example.com/login');
-    // Should include UI elements
-    expect(userMessage).toContain('el_0');
+    expect(agent.extract).toHaveBeenCalledTimes(1);
+    const prompt = agent.extract.mock.calls[0][0];
+    expect(prompt).toContain('https://example.com/login');
+    expect(prompt).toContain('el_0');
+    expect(prompt).toContain('Log in to the application');
   });
 
-  it('includes the active intent in the prompt', async () => {
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            type: 'click',
-            elementId: 'el_2',
-            expectedOutcome: 'Submitted',
-            intentId: 'intent_1',
-          }),
-        },
-      ],
+  it('includes step history in the prompt', async () => {
+    const stepHistory: AgentAction[] = [{
+      type: 'type',
+      elementId: 'el_0',
+      value: 'user@example.com',
+      expectedOutcome: 'Email entered',
+      intentId: 'intent_1',
+    }];
+
+    const agent = mockAgent({
+      type: 'click',
+      elementId: 'el_2',
+      expectedOutcome: 'Submitted',
+      intentId: 'intent_1',
     });
 
-    const { decideNextAction } = await import('../src/policy.js');
-    await decideNextAction(samplePerception, []);
+    await decideNextAction(agent, samplePerception, stepHistory);
 
-    const callArgs = mockCreate.mock.calls[0][0];
-    const userMessage = callArgs.messages[0].content;
-    expect(userMessage).toContain('Log in to the application');
+    const prompt = agent.extract.mock.calls[0][0];
+    expect(prompt).toContain('type');
   });
 
-  it('includes step history in the prompt when provided', async () => {
-    const stepHistory: AgentAction[] = [
-      {
-        type: 'type',
-        elementId: 'el_0',
-        value: 'user@example.com',
-        expectedOutcome: 'Email entered',
-        intentId: 'intent_1',
-      },
-    ];
+  it('falls back to extract action on failure', async () => {
+    const agent = { extract: vi.fn().mockRejectedValue(new Error('LLM failed')) };
 
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            type: 'click',
-            elementId: 'el_2',
-            expectedOutcome: 'Submitted',
-            intentId: 'intent_1',
-          }),
-        },
-      ],
+    const result = await decideNextAction(agent, samplePerception, []);
+
+    // Should not throw — falls back to extract
+    expect(result.type).toBe('extract');
+  });
+
+  it('returns action with valid type enum', async () => {
+    const agent = mockAgent({
+      type: 'navigate',
+      value: 'https://example.com/dashboard',
+      expectedOutcome: 'Navigated',
+      intentId: 'intent_1',
     });
 
-    const { decideNextAction } = await import('../src/policy.js');
-    await decideNextAction(samplePerception, stepHistory);
-
-    const callArgs = mockCreate.mock.calls[0][0];
-    const userMessage = callArgs.messages[0].content;
-    // History should be included somehow
-    expect(userMessage).toContain('type');
-  });
-
-  it('returns action with valid type enum value', async () => {
-    const actionTypes = ['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate'];
-
-    mockCreate.mockResolvedValue({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            type: 'navigate',
-            value: 'https://example.com/dashboard',
-            expectedOutcome: 'Navigated to dashboard',
-            intentId: 'intent_1',
-          }),
-        },
-      ],
-    });
-
-    const { decideNextAction } = await import('../src/policy.js');
-    const result = await decideNextAction(samplePerception, []);
-
-    expect(actionTypes).toContain(result.type);
-  });
-
-  it('throws a descriptive error when LLM call fails', async () => {
-    mockCreate.mockRejectedValue(new Error('Connection timeout'));
-
-    const { decideNextAction } = await import('../src/policy.js');
-    await expect(decideNextAction(samplePerception, [])).rejects.toThrow('Failed to decide action');
+    const result = await decideNextAction(agent, samplePerception, []);
+    expect(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']).toContain(result.type);
   });
 });

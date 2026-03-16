@@ -1,30 +1,19 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { z } from 'zod';
 import { StrategyPlanSchema, type StrategyPlan } from './agent-types.js';
 
-const SYSTEM_PROMPT = `You are a strategic planner for a browser automation agent. Decompose the user's goal into high-level intent steps. Each intent should describe WHAT to achieve, not HOW to click. Include success criteria for each intent.
-
-Return your response as a JSON object matching this exact schema:
-{
-  "goal": "<the original goal>",
-  "intents": [
-    {
-      "id": "<unique id like 'intent_1'>",
-      "description": "<what to achieve>",
-      "successCriteria": "<how to know it's done>",
-      "status": "pending",
-      "confidence": <0.0-1.0>
-    }
-  ]
-}
-
-Rules:
-- If the goal is simple (e.g. "click Settings", "go to dashboard"), produce exactly 1 intent
-- For complex multi-step goals, produce multiple intents in order
-- Keep each intent focused on a single OUTCOME, not a UI action
-- All intents start with status "pending"
-- Return ONLY valid JSON — no markdown, no explanation`;
+const PlannerOutputSchema = z.object({
+  goal: z.string(),
+  intents: z.array(z.object({
+    id: z.string(),
+    description: z.string(),
+    successCriteria: z.string(),
+    status: z.enum(['pending', 'active', 'completed', 'failed']),
+    confidence: z.number(),
+  })),
+});
 
 export async function planStrategy(
+  agent: { extract: (prompt: string, schema: z.ZodType) => Promise<unknown> },
   goal: string,
   worldContext: string,
   currentUrl: string,
@@ -35,35 +24,35 @@ export async function planStrategy(
   ];
 
   if (worldContext) {
-    contextParts.push(`Context: ${worldContext}`);
+    contextParts.push(`Known app context:\n${worldContext}`);
   }
 
-  const userMessage = contextParts.join('\n');
+  const prompt = `You are a strategic planner for a browser automation agent. Decompose the following goal into high-level intent steps.
+
+${contextParts.join('\n')}
+
+Rules:
+- If the goal is simple (e.g. "click Settings"), produce exactly 1 intent
+- For complex multi-step goals, produce multiple intents in order
+- Each intent describes WHAT to achieve, not HOW to click
+- Include success criteria (how to know the intent is done)
+- All intents start with status "pending" and confidence 0`;
 
   try {
-    const client = new Anthropic();
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: 'user',
-          content: userMessage,
-        },
-      ],
-    });
-
-    const textBlock = response.content.find((block) => block.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') {
-      throw new Error('No text content in LLM response');
-    }
-
-    const parsed = JSON.parse(textBlock.text);
-    return StrategyPlanSchema.parse(parsed);
+    const result = await agent.extract(prompt, PlannerOutputSchema);
+    return StrategyPlanSchema.parse(result);
   } catch (error) {
-    throw new Error(
-      `Failed to plan strategy: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    // Fallback: create a single intent from the goal
+    console.error('[PLANNER] LLM planning failed, using single-intent fallback:', error);
+    return {
+      goal,
+      intents: [{
+        id: 'intent_1',
+        description: goal,
+        successCriteria: 'Task completed successfully',
+        status: 'pending',
+        confidence: 0,
+      }],
+    };
   }
 }
