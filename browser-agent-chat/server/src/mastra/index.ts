@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Mastra } from '@mastra/core';
 import { Observability } from '@mastra/observability';
 import { LangfuseExporter } from '@mastra/langfuse';
+import { agentTaskWorkflow } from './workflows/agent-task.js';
 
 const {
   LANGFUSE_PUBLIC_KEY,
@@ -30,4 +31,7 @@ const observability = telemetryEnabled
 
 export const mastra = new Mastra({
   ...(observability ? { observability } : {}),
+  workflows: {
+    agentTaskWorkflow,
+  },
 });
