@@ -15,12 +15,11 @@ export default function VaultPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const prefillDomain = searchParams.get('prefill');
   const { getAccessToken } = useAuth();
-  const { credentials, loading, error, createCredential, updateCredential, deleteCredential, refresh } = useVault();
+  const { credentials, loading, error, createCredential, updateCredential, refresh } = useVault();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<typeof credentials[0] | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -42,7 +41,7 @@ export default function VaultPage() {
         const matchesLabel = c.label.toLowerCase().includes(q);
         const matchesUsername = (c.metadata?.username as string || '').toLowerCase().includes(q);
         const matchesDomain = c.domains.some(d => d.includes(q));
-        const bindings = (c as Record<string, unknown>).bindings as Array<{ agentName: string }> | undefined ?? [];
+        const bindings = c.bindings ?? [];
         const matchesBinding = bindings.some((b) => b.agentName.toLowerCase().includes(q));
         return matchesLabel || matchesUsername || matchesDomain || matchesBinding;
       });
@@ -82,26 +81,6 @@ export default function VaultPage() {
       }
     } catch (err) {
       throw err instanceof Error ? err : new Error('Failed to save credential');
-    }
-  };
-
-  const handleEdit = (cred: typeof credentials[0]) => {
-    setEditing(cred);
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (confirmDelete !== id) {
-      setConfirmDelete(id);
-      return;
-    }
-    setActionError(null);
-    try {
-      await deleteCredential(id);
-      setConfirmDelete(null);
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete credential');
-      setConfirmDelete(null);
     }
   };
 
