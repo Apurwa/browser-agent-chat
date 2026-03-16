@@ -2,7 +2,7 @@ import { WebSocket } from 'ws';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
 import { createAgent } from './agent.js';
-import { endSession as dbEndSession, getMessagesBySession } from './db.js';
+import { endSession as dbEndSession, getMessagesBySession, getAgent as dbGetAgent } from './db.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
 
@@ -204,6 +204,7 @@ export async function createSession(
   agentId: string,
   url: string,
   dbSessionId: string | null,
+  userId: string | null = null,
 ): Promise<AgentSession> {
   // Claim warm browser or launch new
   let browser = await browserManager.claimWarm(agentId);
@@ -215,7 +216,7 @@ export async function createSession(
 
   // Create agent via CDP
   const agentSession = await createAgent(
-    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url
+    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url, userId
   );
 
   // Write session to Redis
@@ -358,9 +359,13 @@ export async function recoverSession(agentId: string): Promise<boolean> {
       try {
         const broadcastFn = makeBroadcast(agentId);
 
+        // Fetch agent record for userId (needed for vault-based login interception)
+        const agentRecord = await dbGetAgent(agentId);
+        const userId = agentRecord?.user_id ?? null;
+
         // Connect agent to existing browser — NO url (keep current page)
         const agentSession = await createAgent(
-          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined
+          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined, userId
         );
         agents.set(agentId, agentSession);
         startAbsoluteTimeout(agentId);

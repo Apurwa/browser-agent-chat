@@ -29,7 +29,7 @@ export async function getLearnedPatterns(agentId: string, domain: string): Promi
     .select('*')
     .eq('agent_id', agentId)
     .eq('domain', domain)
-    .eq('status', 'active');
+    .eq('pattern_state', 'active');
   if (error || !data) return [];
   return data as LearnedPattern[];
 }
@@ -300,7 +300,7 @@ export async function recordLoginPatternWithCredential(
       credential_id: credentialId,
       trigger: { type: 'login', url_pattern: domain },
       steps,
-      status: 'active',
+      pattern_state: 'active',
       updated_at: new Date().toISOString(),
     }, { onConflict: 'agent_id,domain,pattern_type' });
 }

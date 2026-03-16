@@ -51,6 +51,16 @@ ${memoryContext}
 
 TASK: ${userMessage}
 
+CREDENTIAL POLICY (MANDATORY):
+If you encounter a login form, authentication page, or any page requesting credentials:
+- Do NOT enter, fabricate, or guess any credentials (usernames, passwords, API keys, tokens)
+- Do NOT attempt common test credentials (admin/admin, test@test.com, password123, etc.)
+- Do NOT type into password or username fields
+- Do NOT take repeated "wait" actions — that causes a timeout failure
+- Report once in your thought: "LOGIN_REQUIRED: [domain]" then continue with your task
+- The system handles authentication via a secure credential vault — you do not need to solve login
+- If blocked by a login page, describe what you see and proceed to other parts of the task
+
 As you perform this task:
 1. If you observe anything that contradicts the expected behaviors above, report it as a FINDING by including this exact JSON in your response (on its own line):
    FINDING_JSON:{"title":"...","type":"visual|functional|data|ux","severity":"critical|high|medium|low","feature":"...","flow":"...","expected_behavior":"...","actual_behavior":"..."}

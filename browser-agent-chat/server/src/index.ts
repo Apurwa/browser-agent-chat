@@ -197,7 +197,7 @@ wss.on('connection', (ws: WebSocket) => {
         const dbSessionId = await createSession(agent.id);
 
         const agentSession = await sessionManager.createSession(
-          msg.agentId, msg.resumeUrl || agent.url, dbSessionId
+          msg.agentId, msg.resumeUrl || agent.url, dbSessionId, agent.user_id
         );
 
         sessionManager.addClient(msg.agentId, ws);
@@ -210,8 +210,11 @@ wss.on('connection', (ws: WebSocket) => {
         {
           const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
           const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginInProgress = true;
           agentSession.loginDone = handleLoginDetection(loginPage, msg.agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
+          }).finally(() => {
+            agentSession.loginInProgress = false;
           });
         }
       } catch (err) {
@@ -300,7 +303,7 @@ wss.on('connection', (ws: WebSocket) => {
         clientAgents.set(ws, agentId);
 
         const dbSessionId = await createSession(agent.id);
-        const agentSession = await sessionManager.createSession(agentId, agent.url, dbSessionId);
+        const agentSession = await sessionManager.createSession(agentId, agent.url, dbSessionId, agent.user_id);
         sessionManager.addClient(agentId, ws);
 
         ws.send(JSON.stringify({ type: 'session_new', agentId } as ServerMessage));
@@ -310,8 +313,11 @@ wss.on('connection', (ws: WebSocket) => {
         {
           const loginBroadcast = sessionManager.makeBroadcast(agentId);
           const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginInProgress = true;
           agentSession.loginDone = handleLoginDetection(loginPage, agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
+          }).finally(() => {
+            agentSession.loginInProgress = false;
           });
         }
       } catch (err) {

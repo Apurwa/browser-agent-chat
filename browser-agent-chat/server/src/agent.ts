@@ -20,11 +20,14 @@ export interface AgentSession {
   connector: BrowserConnector;
   sessionId: string | null;
   agentId: string | null;
+  userId: string | null;
   memoryContext: string;
   patterns: LearnedPattern[];
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
   /** Resolves when background login finishes (or immediately if no login). */
   loginDone: Promise<void>;
+  /** True while handleLoginDetection is running — prevents re-entrant calls. */
+  loginInProgress: boolean;
   /** Last action performed — consumed by nav listener for edge labels. */
   lastAction: { label: string; selector?: string; rawTarget?: string } | null;
   /** Current page URL — updated on every nav event. */
@@ -69,6 +72,7 @@ export async function createAgent(
   sessionId: string | null = null,
   agentId: string | null = null,
   url?: string,
+  userId: string | null = null,
 ): Promise<AgentSession> {
   broadcast({ type: 'status', status: 'working' });
   const timer = new StepTimer();
@@ -179,10 +183,12 @@ export async function createAgent(
     connector,
     sessionId,
     agentId,
+    userId,
     memoryContext,
     patterns,
     stepsHistory,
     loginDone: Promise.resolve(),
+    loginInProgress: false,
     lastAction: null,
     currentUrl: currentPageUrl,
     currentTrace: null,
@@ -291,6 +297,30 @@ export async function createAgent(
     } catch (err) {
       console.error('[NAV-DETECT] URL check failed:', err);
     }
+
+    // Runtime login interception: detect login pages during task execution.
+    // Runs after EVERY action (not just URL changes) — catches the case where
+    // the agent is stuck on a login page taking "wait" actions.
+    if (agentId && session.userId && !session.loginInProgress) {
+      try {
+        const loginDetection = await detectLoginPage(connector.getHarness().page);
+        if (loginDetection.isLoginPage) {
+          const pageUrl = await getLivePageUrl(connector.getHarness().page);
+          console.log(`[LOGIN-INTERCEPT] Login page detected after action at ${pageUrl} (score: ${loginDetection.score})`);
+          session.loginInProgress = true;
+          const loginBroadcast = (msg: ServerMessage) => broadcast(msg);
+          session.loginDone = handleLoginDetection(
+            connector.getHarness().page, agentId, session.userId!, loginBroadcast
+          ).catch((err: unknown) => {
+            console.error('[LOGIN-INTERCEPT] Mid-task login error:', err);
+          }).finally(() => {
+            session.loginInProgress = false;
+          });
+        }
+      } catch (loginErr) {
+        console.error('[LOGIN-INTERCEPT] Detection failed:', loginErr);
+      }
+    }
   });
 
   // Listen for navigation events — update graph + broadcast
@@ -314,6 +344,29 @@ export async function createAgent(
     }
     previousUrl = navUrl;
     session.currentUrl = navUrl;
+
+    // Login interception on navigation (catches auth redirects before agent acts)
+    if (agentId && session.userId && !session.loginInProgress) {
+      try {
+        // Small delay to let the page render after navigation
+        await new Promise(r => setTimeout(r, 1000));
+        const loginDetection = await detectLoginPage(connector.getHarness().page);
+        if (loginDetection.isLoginPage) {
+          console.log(`[LOGIN-INTERCEPT] Login page detected on nav to ${navUrl} (score: ${loginDetection.score})`);
+          session.loginInProgress = true;
+          const loginBroadcast = (msg: ServerMessage) => broadcast(msg);
+          session.loginDone = handleLoginDetection(
+            connector.getHarness().page, agentId, session.userId!, loginBroadcast
+          ).catch((err: unknown) => {
+            console.error('[LOGIN-INTERCEPT] Nav-triggered login error:', err);
+          }).finally(() => {
+            session.loginInProgress = false;
+          });
+        }
+      } catch (loginErr) {
+        console.error('[LOGIN-INTERCEPT] Nav detection failed:', loginErr);
+      }
+    }
   });
 
   // Send initial screenshot
@@ -616,6 +669,7 @@ export async function executeExplore(
     broadcast({ type: 'taskComplete', success: false });
   } finally {
     session.currentTrace = null;
+    getLangfuse()?.flushAsync().catch(() => {});
     broadcast({ type: 'status', status: 'idle' });
   }
 }
@@ -767,6 +821,30 @@ export async function executeTask(
     }
   }
 
+  // Pre-task login check: if current page is a login form, handle it
+  // before giving control to the LLM. Catches nav-shortcut → login redirects
+  // and any case where the agent lands on a login page before act() runs.
+  if (session.agentId && session.userId && !session.loginInProgress) {
+    try {
+      const page = session.connector.getHarness().page;
+      const loginCheck = await detectLoginPage(page);
+      if (loginCheck.isLoginPage) {
+        console.log(`[LOGIN-INTERCEPT] Login page detected pre-task (score: ${loginCheck.score})`);
+        session.loginInProgress = true;
+        session.loginDone = handleLoginDetection(
+          page, session.agentId, session.userId, broadcast
+        ).catch((err: unknown) => {
+          console.error('[LOGIN-INTERCEPT] Pre-task login error:', err);
+        }).finally(() => {
+          session.loginInProgress = false;
+        });
+        await session.loginDone;
+      }
+    } catch (loginErr) {
+      console.error('[LOGIN-INTERCEPT] Pre-task detection failed:', loginErr);
+    }
+  }
+
   try {
     const span = trace?.span({ name: 'agent-act', input: { prompt } });
     await session.agent.act(prompt);
@@ -783,6 +861,7 @@ export async function executeTask(
     }
   } finally {
     session.currentTrace = null;
+    getLangfuse()?.flushAsync().catch(() => {});
     broadcast({ type: 'status', status: 'idle' });
   }
 }

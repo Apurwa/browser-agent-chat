@@ -45,6 +45,7 @@ vi.mock('../src/agent.js', () => ({
 vi.mock('../src/db.js', () => ({
   endSession: vi.fn().mockResolvedValue(undefined),
   getMessagesBySession: vi.fn().mockResolvedValue([]),
+  getAgent: vi.fn().mockResolvedValue({ id: 'proj-1', user_id: 'user-1', url: 'https://example.com' }),
 }));
 
 import * as redisStore from '../src/redisStore.js';
@@ -84,7 +85,7 @@ describe('sessionManager — create', () => {
     expect(browserManager.claimWarm).toHaveBeenCalledWith('proj-1');
     expect(browserManager.launchBrowser).toHaveBeenCalledWith('proj-1');
     expect(createAgent).toHaveBeenCalledWith(
-      expect.any(Function), 'http://localhost:19300', 'db-1', 'proj-1', 'https://example.com'
+      expect.any(Function), 'http://localhost:19300', 'db-1', 'proj-1', 'https://example.com', null
     );
     expect(redisStore.setSession).toHaveBeenCalledWith('proj-1', expect.objectContaining({
       dbSessionId: 'db-1',
@@ -103,7 +104,7 @@ describe('sessionManager — create', () => {
 
     expect(browserManager.launchBrowser).not.toHaveBeenCalled();
     expect(createAgent).toHaveBeenCalledWith(
-      expect.any(Function), 'http://localhost:19305', 'db-1', 'proj-1', 'https://example.com'
+      expect.any(Function), 'http://localhost:19305', 'db-1', 'proj-1', 'https://example.com', null
     );
   });
 
@@ -194,7 +195,7 @@ describe('sessionManager — recovery', () => {
 
     expect(result).toBe(true);
     expect(createAgent).toHaveBeenCalledWith(
-      expect.any(Function), 'http://localhost:19300', 'db-1', 'proj-1', undefined
+      expect.any(Function), 'http://localhost:19300', 'db-1', 'proj-1', undefined, 'user-1'
     );
     expect(redisStore.setSession).toHaveBeenCalledWith('proj-1', { status: 'idle' });
     expect(redis.del).toHaveBeenCalledWith('session:lock:proj-1');

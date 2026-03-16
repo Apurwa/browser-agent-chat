@@ -8,14 +8,17 @@ export function useAuth() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -26,18 +29,19 @@ export function useAuth() {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
-    await supabase.auth.signInWithOAuth({ provider: 'google' });
+    await supabase?.auth.signInWithOAuth({ provider: 'google' });
   }, []);
 
   const signInWithGitHub = useCallback(async () => {
-    await supabase.auth.signInWithOAuth({ provider: 'github' });
+    await supabase?.auth.signInWithOAuth({ provider: 'github' });
   }, []);
 
   const signOut = useCallback(async () => {
-    await supabase.auth.signOut();
+    await supabase?.auth.signOut();
   }, []);
 
   const getAccessToken = useCallback(async (): Promise<string | null> => {
+    if (!supabase) return null;
     const { data: { session } } = await supabase.auth.getSession();
     return session?.access_token ?? null;
   }, []);

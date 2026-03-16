@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  langfuse-db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    ports:
+      - "5433:5432"
+    volumes:
+      - langfuse_pgdata:/var/lib/postgresql/data
+
+  langfuse:
+    image: langfuse/langfuse:2
+    restart: unless-stopped
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3100:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: mysecretkey
+      NEXTAUTH_URL: http://localhost:3100
+      SALT: mysalt
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: qa-agent-org
+      LANGFUSE_INIT_ORG_NAME: QA Agent
+      LANGFUSE_INIT_PROJECT_ID: qa-agent-project
+      LANGFUSE_INIT_PROJECT_NAME: QA Agent
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local-qa-agent
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local-qa-agent
+      LANGFUSE_INIT_USER_EMAIL: admin@local.dev
+      LANGFUSE_INIT_USER_PASSWORD: admin123
+      LANGFUSE_INIT_USER_NAME: Admin
+
+volumes:
+  langfuse_pgdata:
