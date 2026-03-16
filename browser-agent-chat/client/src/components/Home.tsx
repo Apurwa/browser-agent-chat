@@ -1,12 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { useTheme } from '../contexts/ThemeContext';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
-import { Sun, Moon, LogOut, Plus, ArrowUp, Mic, Upload, Clipboard, Activity } from 'lucide-react';
-import { useHealth } from '../contexts/HealthContext';
+import { Plus, ArrowUp, Mic, Upload, Clipboard } from 'lucide-react';
 import type { AgentListItem } from '../types';
 import './Home.css';
 
@@ -16,7 +14,6 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [showAll, setShowAll] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -61,23 +58,18 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!showMenu && !showPlusMenu) return;
+    if (!showPlusMenu) return;
     const handler = (e: MouseEvent) => {
-      if (showMenu && !(e.target as HTMLElement).closest('.home-avatar-wrapper')) {
-        setShowMenu(false);
-      }
       if (showPlusMenu && !(e.target as HTMLElement).closest('.home-plus-wrapper')) {
         setShowPlusMenu(false);
       }
     };
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
-  }, [showMenu, showPlusMenu]);
+  }, [showPlusMenu]);
 
   const navigate = useNavigate();
-  const { user, getAccessToken, signOut } = useAuth();
-  const { theme, toggleTheme } = useTheme();
-  const { langfuseEnabled } = useHealth();
+  const { getAccessToken } = useAuth();
 
   useEffect(() => {
     (async () => {
@@ -141,47 +133,10 @@ export default function Home() {
     return `${days}d ago`;
   };
 
-  const avatarUrl = user?.user_metadata?.avatar_url;
   const displayAgents = showAll ? agents : agents.slice(0, 5);
 
   return (
     <div className="home-page">
-      {/* Top bar */}
-      <div className="home-topbar">
-        <div className="home-logo">
-          <span className="home-logo-accent">QA</span>
-          <span className="home-logo-text">Agent</span>
-        </div>
-        <div className="home-topbar-right">
-          {langfuseEnabled && (
-            <button
-              className="home-theme-toggle"
-              onClick={() => navigate('/observability')}
-              title="Observability"
-            >
-              <Activity size={18} />
-            </button>
-          )}
-          <button className="home-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Light mode' : 'Dark mode'}>
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <div className="home-avatar-wrapper">
-            <button className="home-avatar" onClick={() => setShowMenu(prev => !prev)}>
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Profile" />
-              ) : (
-                <span className="home-avatar-fallback">{user?.email?.charAt(0).toUpperCase()}</span>
-              )}
-            </button>
-            {showMenu && (
-              <div className="home-dropdown">
-                <button onClick={signOut}><LogOut size={14} /> Sign out</button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Center content */}
       <div className="home-center">
         <h1 className="home-headline">What do you want to test?</h1>
