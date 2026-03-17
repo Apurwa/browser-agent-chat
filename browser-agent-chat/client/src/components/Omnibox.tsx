@@ -10,7 +10,6 @@ import {
   Mic,
   Upload,
   Clipboard,
-  Search,
   Bot,
   KeyRound,
   Activity,

@@ -323,7 +323,8 @@ export default function Sidebar() {
         </button>
       </div>
       {renderWorkspaceSection()}
-      {isAgentView ? renderAgentCapabilities() : renderOrgAgentList()}
+      {isAgentView && renderAgentCapabilities()}
+      {renderOrgAgentList()}
       {renderBottomSection()}
     </nav>
   );
