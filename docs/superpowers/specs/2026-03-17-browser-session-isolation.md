@@ -9,16 +9,32 @@ The browser execution layer lacks deterministic isolation. Warm browsers retain 
 
 ## Core Invariant
 
-**One agent session = one browser process = one execution timeline.**
+**One agent session = one browser process = one stateful execution timeline.**
 
-No exceptions. No sharing. No reuse of post-session browsers.
+No cross-agent sharing. No reuse of post-session browsers. Sessions persist across tasks.
+
+## Execution Model
+
+```
+Session (stateful)
+  → Task A (login, explore)
+  → Task B (test feature)
+  → Task C (verify fix)
+  → ...
+  → Terminate (TTL | health | max_tasks | idle | user)
+```
+
+The browser is a **stateful execution context** across tasks — login state, navigation history, cookies, and UI context persist. This enables multi-step agent workflows without re-authentication or re-navigation.
+
+Kill-and-replace applies at **session boundaries**, not task boundaries. Within a session, the browser stays alive.
 
 ## Design Principles
 
-1. **Isolation is a system property, not a discipline** — kill-and-replace, not clean-and-reuse
+1. **Isolation is a system property, not a discipline** — kill-and-replace at session boundary, not clean-and-reuse
 2. **No partial state survives failure** — every failure path converges to full cleanup
 3. **Serializability** — one session executes exactly one task at a time
 4. **Recoverability** — failures reset cleanly, pool self-heals
+5. **Bounded statefulness** — sessions accumulate state but are bounded by TTL, max tasks, idle timeout, and health checks
 
 ## Architecture Overview
 
@@ -72,7 +88,11 @@ ON SESSION CREATE:
   3. Attach magnitude-core
   4. Session active
 
-ON SESSION END (any reason):
+DURING SESSION (tasks execute sequentially):
+  Task A → Task B → Task C → ...
+  Browser stays alive, state persists
+
+ON SESSION END (TTL | health | max_tasks | idle | user):
   1. Kill Browser A (SIGTERM → 3s → SIGKILL)
   2. Free port 19300
   3. Spawn Browser C → navigate to about:blank → add to pool
@@ -310,7 +330,142 @@ Note: this is a **restart**, not a recovery. Browser state (cookies, DOM, scroll
 | Browser crash detected only when next CDP call fails | Periodic + passive detection |
 | No automatic recovery from crashed browser | Auto-recovery: kill → claim → recreate |
 
-## 5. Reaper (Cleanup + Replacement)
+## 5. Session Lifecycle Limits
+
+### Problem
+
+Stateful sessions accumulate entropy: memory leaks, event listener buildup, SPA routing state drift, stale auth tokens. Without bounds, sessions degrade silently.
+
+### Kill Conditions
+
+A session MUST be terminated when any of these fire:
+
+| Condition | Default | Rationale |
+|-----------|---------|-----------|
+| `ABSOLUTE_TIMEOUT_SECONDS` | 1800 (30 min) | Prevents unbounded resource usage |
+| `IDLE_TIMEOUT_SECONDS` | 180 (3 min) | Reclaims idle browsers |
+| `MAX_TASKS_PER_SESSION` | 20 | Limits state accumulation |
+| `MAX_NAVIGATIONS_PER_SESSION` | 50 | Prevents SPA memory bloat |
+| Health check failure | — | Browser crashed or hung |
+| Explicit user termination | — | User clicks restart/end |
+
+All configurable via environment variables.
+
+### Session State Tracking
+
+```ts
+interface SessionLimits {
+  taskCount: number;
+  navigationCount: number;
+  lastActivityAt: number;
+  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
+}
+```
+
+Tracked in Redis session hash. Updated after each task and navigation event. Checked before each task execution.
+
+### What Changes
+
+| Current | New |
+|---------|-----|
+| Only `ABSOLUTE_TIMEOUT_SECONDS` and `DETACHED_TIMEOUT_SECONDS` | Add `IDLE_TIMEOUT_SECONDS`, `MAX_TASKS_PER_SESSION`, `MAX_NAVIGATIONS_PER_SESSION` |
+| No task/navigation counters | Track in Redis session hash |
+| No health status field | Add `healthStatus` to session |
+
+## 6. Pre-Task Sanity Check
+
+### Problem
+
+Between tasks, the browser can be in any state: mid-navigation, modal dialog blocking UI, document still loading, unknown URL. Without validation, the next task executes against ambiguous state and fails unpredictably.
+
+### Design: `ensureSessionIsSane`
+
+Run **before every task execution**, after acquiring the mutex:
+
+```ts
+async function ensureSessionIsSane(page: PlaywrightPage): Promise<void> {
+  // 1. Page is alive (with timeout — catches hung renderers)
+  await Promise.race([
+    page.evaluate(() => true),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('page hung')), 3000)),
+  ]);
+
+  // 2. Wait for any in-flight navigation to settle
+  await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+
+  // 3. Dismiss blocking overlays (common flake source)
+  await page.evaluate(() => {
+    // Close cookie banners, modals, toast notifications
+    const selectors = [
+      '[role="dialog"] button[aria-label="Close"]',
+      '[role="dialog"] button[aria-label="Dismiss"]',
+      '.modal-close', '.toast-close', '.cookie-banner button',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (el && el.offsetParent !== null) el.click();
+    }
+  }).catch(() => {});
+
+  // 4. Document fully loaded
+  const readyState = await page.evaluate(() => document.readyState);
+  if (readyState !== 'complete') {
+    await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+  }
+}
+```
+
+### Failure Handling
+
+If `ensureSessionIsSane` throws (page hung, browser dead):
+
+1. Attempt **soft reset**: `page.goto(agentBaseUrl)` — navigate back to the agent's target URL
+2. Re-run sanity check
+3. If still failing → mark session unhealthy → `reap()` → auto-recovery (new browser from pool)
+
+### Soft Reset Primitive
+
+```ts
+async function softReset(page: PlaywrightPage, baseUrl: string): Promise<boolean> {
+  try {
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+```
+
+Used when:
+- Task fails with unexpected state
+- Page is on an unknown URL after a failed action
+- `ensureSessionIsSane` detects degraded state
+
+Does NOT kill the session — preserves cookies and auth. Only resets the page to a known URL.
+
+### Task Execution Flow (Updated)
+
+```
+Task arrives
+  → Acquire mutex
+  → Check session limits (max tasks, navigations, TTL)
+  → Run ensureSessionIsSane(page)
+     → If fails → softReset(page, baseUrl)
+        → If fails → reap + auto-recover
+  → Execute task
+  → Increment task count
+  → Release mutex
+```
+
+### What Changes
+
+| Current | New |
+|---------|-----|
+| Task handler calls `dispatchTask` directly | Insert `ensureSessionIsSane` + limit checks before dispatch |
+| No inter-task state validation | Sanity check before every task |
+| No recovery without full session kill | Soft reset preserves session, only kills on hard failure |
+
+## 7. Reaper (Cleanup + Replacement)
 
 ### Current Problem
 
@@ -370,7 +525,7 @@ async function reap(agentId: string): Promise<void> {
 | No pool replenishment after session end | `warmPool.replenish()` called after every reap |
 | Cleanup steps vary by exit path | Single `reap()` function — every exit path converges |
 
-## 6. Event Listener Hygiene
+## 8. Event Listener Hygiene
 
 ### Current Problem
 
@@ -402,8 +557,8 @@ session.loginDone = Promise.resolve();
 | File | Changes |
 |------|---------|
 | `server/src/browserManager.ts` | Rename `warmUp` → `replenish` with capacity-awareness, warm browsers navigate to `about:blank`, add replenish mutex |
-| `server/src/sessionManager.ts` | Atomic allocation with rollback, extract `reap()` from `destroySession`, remove pre-navigation hack, add `healthCheck()` before task, clean up stale `allocating` sessions on recovery |
-| `server/src/index.ts` | Acquire execution lock before `dispatchTask`/`dispatchExplore` (via `agent-dispatch.ts`), reject if busy, release on completion with lock renewal interval |
+| `server/src/sessionManager.ts` | Stateful sessions (no per-task kill), session lifecycle limits, `ensureSessionIsSane()`, `softReset()`, atomic allocation with rollback, extract `reap()` from `destroySession`, remove pre-navigation hack, `healthCheck()` before task, stale `allocating` cleanup on recovery |
+| `server/src/index.ts` | Acquire execution lock before `dispatchTask`/`dispatchExplore`, reject if busy, release on completion with lock renewal, check session limits before task, run sanity check |
 | `server/src/agent.ts` | Clear listeners before registering in `createAgent` (safe for both fresh and recovery paths), reset login state |
 | `server/src/redisStore.ts` | Add `acquireExecLock`, `releaseExecLock`, `forceReleaseExecLock`, `deleteScreenshot`, `deleteMessages`, `removeFromExpiry` functions. Add `allocating` to `RedisSessionStatus` type |
 | `server/src/types.ts` | Add `'allocating'` to `RedisSessionStatus` union type |
@@ -442,31 +597,30 @@ Task execution enters through `agent-dispatch.ts` (`dispatchTask`/`dispatchExplo
 
 ## Phased Implementation
 
-### Phase 1: Kill-and-Replace Pool
-- Modify `browserManager.ts`: warm browsers always `about:blank`, add `replenish()`
-- Modify `sessionManager.ts`: call `replenish()` after every `destroySession`
-- Remove pre-navigation hack from `createSession`
-- Update pool sizing: `WARM_POOL_SIZE = MAX_CONCURRENT_BROWSERS + 1`
+### Week 1: Stateful Sessions + Kill-and-Replace Pool
+- Remove per-task browser kills — session stays alive across tasks
+- Add session lifecycle limits: `MAX_TASKS_PER_SESSION`, `MAX_NAVIGATIONS_PER_SESSION`, `IDLE_TIMEOUT_SECONDS`
+- Track `taskCount`, `navigationCount`, `healthStatus` in Redis session hash
+- Modify `browserManager.ts`: warm browsers always `about:blank`, rename `warmUp` → `replenish()` with capacity check
+- Modify `sessionManager.ts`: call `replenish()` after every session destruction, remove pre-navigation hack
+- Extract unified `reap()` function from `destroySession`, called from all exit paths
+- Pool sizing: `WARM_POOL_SIZE = MAX_CONCURRENT_BROWSERS + 1`
 
-### Phase 2: Atomic Allocation
+### Week 2: Sanity Check + Soft Reset + Atomic Allocation
+- Add `ensureSessionIsSane()` — run before every task
+- Add `softReset()` — navigate to base URL without killing session
 - Add try/catch with `rollback()` in `createSession`
-- Add `allocating` session state
-- Ensure every failure path calls `reap()`
+- Add `allocating` session state, clean stale allocations on recovery
+- Clear event listeners before registering in `createAgent` (both fresh and recovery paths)
 
-### Phase 3: Execution Mutex
-- Add `acquireExecLock` / `releaseExecLock` to `redisStore.ts`
-- Wrap task/explore handlers in `index.ts` with lock acquire/release
-- Reject concurrent tasks with user-facing error message
-
-### Phase 4: Health Monitor
-- Add `healthCheck()` function (page.evaluate ping)
-- Call before every task execution
-- Add periodic background check (every 60s)
-- Auto-recovery: kill → claim → recreate on failure
-
-### Phase 5: Listener Hygiene
-- Clear event listeners before registering in recovery path
-- Reset `loginInProgress` / `loginDone` on recovery
+### Week 3: Execution Mutex + Health Monitor + Observability
+- Add `acquireExecLock` / `releaseExecLock` / `forceReleaseExecLock` to `redisStore.ts`
+- Wrap task/explore handlers in `index.ts` with lock acquire/release + renewal interval
+- Reject concurrent tasks with user-facing error
+- Add `healthCheck()` with 3s timeout before every task
+- Add periodic background liveness check (every 60s)
+- Auto-recovery: reap → claim → recreate on health failure
+- Add task execution logging (task count, duration, success/failure per session)
 
 ## Migration
 
