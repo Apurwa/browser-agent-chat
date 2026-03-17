@@ -160,7 +160,12 @@ export default function Sidebar() {
   const renderOrgAgentList = () => (
     <>
       <div className="sidebar-divider" />
-      {expanded && <div className="sidebar-section-label">Agents</div>}
+      <div className="sidebar-section-label">Agents{!expanded && ` (${agents.length})`}</div>
+      {agents.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: expanded ? '4px 10px' : '4px', textAlign: 'center' }}>
+          No agents yet
+        </div>
+      )}
       {agents.map((agent) => (
         <button
           key={agent.id}
