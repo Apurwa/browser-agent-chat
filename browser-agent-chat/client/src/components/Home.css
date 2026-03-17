@@ -8,15 +8,13 @@
   overflow-y: auto;
 }
 
-/* Center content */
+/* Center content — pinned position, not flex-centered, so typing doesn't shift layout */
 .home-center {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   padding: 0 32px;
-  margin-top: 0;
+  padding-top: 18vh;
 }
 
 .home-headline {
