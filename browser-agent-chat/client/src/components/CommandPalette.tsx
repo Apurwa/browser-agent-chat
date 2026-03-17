@@ -2,22 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
 import { Search, FlaskConical, KeyRound, Activity, Bot } from 'lucide-react';
+import { QUICK_ACTIONS } from '../lib/quick-actions';
+import type { CmdItem } from '../lib/quick-actions';
 import './CommandPalette.css';
-
-interface CmdItem {
-  id: string;
-  label: string;
-  sublabel?: string;
-  route: string;
-  icon: 'agent' | 'vault' | 'observability' | 'action';
-  group: string;
-}
-
-const QUICK_ACTIONS: CmdItem[] = [
-  { id: 'qa-vault', label: 'Open Vault', route: '/vault', icon: 'vault', group: 'Quick Actions' },
-  { id: 'qa-observability', label: 'View Observability', route: '/observability', icon: 'observability', group: 'Quick Actions' },
-  { id: 'qa-home', label: 'Go Home', route: '/', icon: 'action', group: 'Quick Actions' },
-];
 
 function renderIcon(icon: CmdItem['icon']) {
   switch (icon) {
