@@ -1,78 +1,31 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { useVoiceInput } from '../hooks/useVoiceInput';
 import { useSidebar } from '../contexts/SidebarContext';
 import { apiAuthFetch } from '../lib/api';
 import { deriveProjectName } from '../lib/url-utils';
-import { Plus, ArrowUp, Mic, Upload, Clipboard, Search } from 'lucide-react';
+import Omnibox from './Omnibox';
 import './Home.css';
 
 export default function Home() {
-  const [url, setUrl] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [showPlusMenu, setShowPlusMenu] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const { isSupported: isVoiceSupported, startListening, stopListening, interimTranscript, state: voiceState } = useVoiceInput({
-    onResult: (text, isFinal) => {
-      if (isFinal) setUrl(prev => (prev + ' ' + text).trim());
-    },
-  });
-
-  const isListening = voiceState === 'listening';
-
-  const handleMicClick = useCallback(() => {
-    if (isListening) {
-      stopListening();
-    } else {
-      setUrl('');
-      startListening();
-    }
-  }, [isListening, startListening, stopListening]);
-
-  const handlePasteFromClipboard = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text.trim()) setUrl(text.trim());
-    } catch {
-      // Clipboard access denied or empty
-    }
-    setShowPlusMenu(false);
-  }, []);
-
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = (reader.result as string).trim();
-      if (text) setUrl(text);
-    };
-    reader.readAsText(file);
-    setShowPlusMenu(false);
-    e.target.value = '';
-  }, []);
-
-  useEffect(() => {
-    if (!showPlusMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (showPlusMenu && !(e.target as HTMLElement).closest('.home-plus-wrapper')) {
-        setShowPlusMenu(false);
-      }
-    };
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [showPlusMenu]);
+  const [omniboxHasInput, setOmniboxHasInput] = useState(false);
 
   const navigate = useNavigate();
   const { getAccessToken } = useAuth();
-  const { agents, refreshAgents } = useSidebar();
+  const { agents, refreshAgents, omniboxActiveRef } = useSidebar();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Signal that the omnibox is active on this page
+  useEffect(() => {
+    omniboxActiveRef.current = true;
+    return () => {
+      omniboxActiveRef.current = false;
+    };
+  }, [omniboxActiveRef]);
+
+  const handleCreateAgent = useCallback(async (url: string) => {
     if (!url.trim() || isCreating) return;
     setIsCreating(true);
     setError(null);
@@ -104,7 +57,7 @@ export default function Home() {
       setError('Network error. Please check your connection.');
       setIsCreating(false);
     }
-  };
+  }, [isCreating, getAccessToken, refreshAgents, navigate]);
 
   const timeAgo = (dateStr: string | null): string => {
     if (!dateStr) return '';
@@ -125,82 +78,18 @@ export default function Home() {
       <div className="home-center">
         <h1 className="home-headline">What do you want to test?</h1>
 
-        <div
-          className="home-search-hint"
-          onClick={() => {
-            window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }));
-          }}
-        >
-          <Search size={16} />
-          <span>Search agents, traces, evals...</span>
-          <kbd>&#8984;K</kbd>
-        </div>
-
-        <form className="home-url-form" onSubmit={handleSubmit}>
-          <div className="home-plus-wrapper">
-            <button type="button" className="home-plus-btn" onClick={() => setShowPlusMenu(prev => !prev)} disabled={isCreating}>
-              <Plus size={20} />
-            </button>
-            {showPlusMenu && (
-              <div className="home-plus-dropdown">
-                <button type="button" onClick={handlePasteFromClipboard}>
-                  <Clipboard size={14} /> Paste from clipboard
-                </button>
-                <button type="button" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={14} /> Upload file
-                </button>
-              </div>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".txt,.csv,.json"
-              onChange={handleFileUpload}
-              style={{ display: 'none' }}
-            />
-          </div>
-
-          <input
-            type="text"
-            className="home-url-input"
-            value={isListening ? (url + (interimTranscript ? ' ' + interimTranscript : '')).trim() : url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="Paste your app URL..."
-            disabled={isCreating || isListening}
-            required
-          />
-
-          {isVoiceSupported && (
-            <button
-              type="button"
-              className={`home-mic-btn${isListening ? ' listening' : ''}`}
-              onClick={handleMicClick}
-              disabled={isCreating}
-              title={isListening ? 'Stop listening' : 'Voice input'}
-            >
-              <Mic size={20} />
-              {isListening && <span className="home-mic-pulse" />}
-            </button>
-          )}
-
-          <button type="submit" className="home-url-go" disabled={isCreating || !url.trim()}>
-            {isCreating ? (
-              <span className="home-spinner" />
-            ) : (
-              <ArrowUp size={20} />
-            )}
-          </button>
-        </form>
+        <Omnibox
+          onCreateAgent={handleCreateAgent}
+          isCreating={isCreating}
+          error={error}
+          onInputChange={setOmniboxHasInput}
+        />
 
         {isCreating && (
           <p className="home-status-text">Creating agent &amp; launching browser...</p>
         )}
 
-        {error && (
-          <p className="home-error-text">{error}</p>
-        )}
-
-        {!isCreating && (
+        {!isCreating && !omniboxHasInput && (
           <>
             <div className="home-chips">
               <span className="home-chip">Explore &amp; learn features</span>
@@ -216,7 +105,7 @@ export default function Home() {
       </div>
 
       {/* Recent Agents */}
-      {agents.length > 0 && (
+      {agents.length > 0 && !omniboxHasInput && (
         <div className="home-projects">
           <div className="home-projects-header">
             <span className="home-projects-label">Recent Agents</span>
