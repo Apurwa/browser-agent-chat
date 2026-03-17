@@ -332,8 +332,9 @@
   color: var(--text-dim);
 }
 
-/* Recent projects */
+/* Recent projects — pinned to bottom */
 .home-projects {
+  margin-top: auto;
   padding: 0 32px 32px;
 }
 
