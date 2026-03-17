@@ -27,6 +27,9 @@ vi.mock('../src/redisStore.js', () => ({
     smembers: vi.fn().mockResolvedValue([]),
     srem: vi.fn().mockResolvedValue(1),
     set: vi.fn().mockResolvedValue('OK'),
+    del: vi.fn().mockResolvedValue(1),
+    keys: vi.fn().mockResolvedValue([]),
+    exists: vi.fn().mockResolvedValue(0),
   }),
 }));
 

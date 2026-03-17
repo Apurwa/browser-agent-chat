@@ -109,6 +109,8 @@ describe('Vault Service', () => {
         data: { id: 'v1', encrypted_secret: { iv: 'iv', encrypted: 'enc', tag: 'tag' }, user_id: 'user1' },
         error: null,
       }),
+      // Audit log insert chain (from('credential_audit_log'))
+      insert: vi.fn().mockResolvedValue({ error: null }),
     };
     (supabase!.from as any).mockReturnValue(selectChain);
     (supabase!.rpc as any).mockResolvedValue({ error: null });
