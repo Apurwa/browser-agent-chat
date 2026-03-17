@@ -538,7 +538,7 @@ async function startup(): Promise<void> {
   redisStore.pollExpiredSessions(sessionManager.handleExpiry);
 
   console.log('[STARTUP] Warming browser pool...');
-  browserManager.warmUp().catch(err =>
+  browserManager.replenish().catch(err =>
     console.error('[STARTUP] Warm-up error:', err)
   );
 
