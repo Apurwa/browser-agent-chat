@@ -40,6 +40,7 @@ router.get('/', requireAuth, async (req, res) => {
       last_session_at: s?.lastSessionAt ?? null,
     };
   });
+  res.set('Cache-Control', 'no-store');
   res.json({ agents: items });
 });
 

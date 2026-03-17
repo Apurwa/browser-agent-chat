@@ -42,7 +42,7 @@ export default function Sidebar() {
   const { theme, toggleTheme } = useTheme();
   const { findingsCount, pendingSuggestionCount, activeAgentId } = useWS();
   const { langfuseEnabled } = useHealth();
-  const { agents } = useSidebar();
+  const { agents, agentsLoading, agentsError } = useSidebar();
 
   const [expanded, setExpanded] = useState(readExpanded);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -160,10 +160,20 @@ export default function Sidebar() {
   const renderOrgAgentList = () => (
     <>
       <div className="sidebar-divider" />
-      <div className="sidebar-section-label">Agents{!expanded && ` (${agents.length})`}</div>
-      {agents.length === 0 && (
+      <div className="sidebar-section-label">{expanded ? 'Agents' : ''}</div>
+      {agentsLoading && (
         <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: expanded ? '4px 10px' : '4px', textAlign: 'center' }}>
-          No agents yet
+          {expanded ? 'Loading...' : '...'}
+        </div>
+      )}
+      {agentsError && (
+        <div style={{ fontSize: 11, color: 'var(--accent)', padding: expanded ? '4px 10px' : '4px', textAlign: 'center' }}>
+          {expanded ? agentsError : '!'}
+        </div>
+      )}
+      {!agentsLoading && !agentsError && agents.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)', padding: expanded ? '4px 10px' : '4px', textAlign: 'center' }}>
+          {expanded ? 'No agents yet' : '—'}
         </div>
       )}
       {agents.map((agent) => (

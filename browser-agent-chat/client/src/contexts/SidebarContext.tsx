@@ -31,13 +31,16 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
         throw new Error(`Failed to fetch agents: ${res.status}`);
       }
       const data = await res.json();
-      const sorted = (data.agents as AgentListItem[]).sort((a, b) => {
+      const agentList = data.agents as AgentListItem[];
+      console.log('[SidebarContext] Loaded agents:', agentList.length, agentList.map(a => a.name));
+      const sorted = agentList.sort((a, b) => {
         const aTime = a.last_session_at ?? a.created_at;
         const bTime = b.last_session_at ?? b.created_at;
         return new Date(bTime).getTime() - new Date(aTime).getTime();
       });
       setAgents(sorted);
     } catch (err) {
+      console.error('[SidebarContext] Failed to load agents:', err);
       setAgentsError(err instanceof Error ? err.message : 'Failed to fetch agents');
     } finally {
       setAgentsLoading(false);
