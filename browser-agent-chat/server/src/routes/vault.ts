@@ -65,25 +65,7 @@ router.get('/', requireAuth, async (req, res) => {
     const { userId } = req as AuthenticatedRequest;
     const result = await listCredentials(userId);
 
-    const { supabase } = await import('../supabase.js');
-    const credIds = result.map((c: any) => c.id);
-    let bindingsMap: Record<string, Array<{ agentId: string; agentName: string }>> = {};
-    if (credIds.length > 0 && supabase) {
-      const { data: bindings } = await supabase
-        .from('agent_credential_bindings')
-        .select('credential_id, agents!inner(id, name)')
-        .in('credential_id', credIds);
-      if (bindings) {
-        for (const b of bindings as any[]) {
-          const cid = b.credential_id;
-          if (!bindingsMap[cid]) bindingsMap[cid] = [];
-          bindingsMap[cid].push({ agentId: b.agents.id, agentName: b.agents.name });
-        }
-      }
-    }
-    const enriched = result.map((c: any) => ({ ...c, bindings: bindingsMap[c.id] ?? [] }));
-
-    res.json(enriched);
+    res.json(result);
   } catch (err) {
     console.error('GET /vault error:', err);
     res.status(500).json({ error: 'Internal server error' });
