@@ -8,14 +8,15 @@
   overflow-y: auto;
 }
 
-/* Center content — true vertical centering */
+/* Center content — fixed height so expanding Recent Agents doesn't push it */
 .home-center {
-  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 0 32px;
+  height: 55vh;
+  flex-shrink: 0;
 }
 
 .home-headline {
