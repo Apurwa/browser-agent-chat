@@ -366,10 +366,6 @@ export default function Omnibox({ onCreateAgent, isCreating, error, onInputChang
           </button>
         )}
 
-        <span className="home-omnibox-badge">
-          <Search size={10} /> <kbd>&#8984;K</kbd>
-        </span>
-
         <button
           type="button"
           className="home-url-go"

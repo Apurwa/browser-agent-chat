@@ -22,9 +22,7 @@
   font-size: 28px;
   font-weight: 600;
   margin-bottom: 24px;
-  width: 560px;
-  max-width: 90%;
-  text-align: left;
+  text-align: center;
 }
 
 /* Omnibox */
