@@ -237,6 +237,30 @@ export type Skill = z.infer<typeof SkillSchema>;
 // Progress Weights (constant)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Trace Failure
+// ---------------------------------------------------------------------------
+
+export interface TraceFailure {
+  errorType:
+    | 'element_not_found'
+    | 'element_not_interactable'
+    | 'navigation_timeout'
+    | 'llm_parse_error'
+    | 'llm_hallucination'
+    | 'page_context_lost'
+    | 'login_required'
+    | 'extraction_empty'
+    | 'budget_exhausted'
+    | 'stuck_loop'
+    | 'unknown';
+  errorMessage: string;
+}
+
+// ---------------------------------------------------------------------------
+// Progress Weights (constant)
+// ---------------------------------------------------------------------------
+
 export const PROGRESS_WEIGHTS = {
   goalProgress: 5,
   newPage: 3,
