@@ -8,13 +8,14 @@
   overflow-y: auto;
 }
 
-/* Center content — pinned position, not flex-centered, so typing doesn't shift layout */
+/* Center content — true vertical centering */
 .home-center {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   padding: 0 32px;
-  padding-top: 18vh;
 }
 
 .home-headline {
@@ -90,6 +91,7 @@
   color: var(--text-dim);
   margin-top: 8px;
   text-align: center;
+  min-height: 18px; /* reserve space so layout doesn't shift */
 }
 
 .home-omnibox-error {

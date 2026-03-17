@@ -1,7 +1,7 @@
 import { WebSocket } from 'ws';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
-import { createAgent, createNewAgent } from './agent.js';
+import { createAgent } from './agent.js';
 import { endSession as dbEndSession, getMessagesBySession, getAgent as dbGetAgent } from './db.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage, ChatMessage, RedisSession, ReapReason } from './types.js';
@@ -223,10 +223,9 @@ export async function createSession(
 
   const broadcastFn = makeBroadcast(agentId);
 
-  // Create agent via CDP — use new single-owner path when USE_NEW_AGENT=true
-  const agentFactory = process.env.USE_NEW_AGENT === 'true' ? createNewAgent : createAgent;
-  const agentSession = await agentFactory(
-    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url, userId
+  // Create agent via CDP
+  const agentSession = await createAgent(
+    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url, userId,
   );
 
   // Write session to Redis
@@ -430,10 +429,8 @@ export async function recoverSession(agentId: string): Promise<boolean> {
         const userId = agentRecord?.user_id ?? null;
 
         // Connect agent to existing browser — NO url (keep current page)
-        // Use new single-owner path when USE_NEW_AGENT=true
-        const agentFactory = process.env.USE_NEW_AGENT === 'true' ? createNewAgent : createAgent;
-        const agentSession = await agentFactory(
-          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined, userId
+        const agentSession = await createAgent(
+          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined, userId,
         );
         agents.set(agentId, agentSession);
         startAbsoluteTimeout(agentId);

@@ -409,10 +409,10 @@ export default function Omnibox({ onCreateAgent, isCreating, error, onInputChang
         </div>
       )}
 
-      {/* Preview hint */}
-      {previewText && !isCreating && (
-        <div className="home-omnibox-preview">{previewText}</div>
-      )}
+      {/* Preview hint — always rendered to reserve space and prevent layout shift */}
+      <div className="home-omnibox-preview">
+        {previewText && !isCreating ? previewText : '\u00A0'}
+      </div>
 
       {/* Error */}
       {error && <div className="home-omnibox-error">{error}</div>}
