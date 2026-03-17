@@ -10,7 +10,7 @@ import './Home.css';
 export default function Home() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
+
   const [omniboxHasInput, setOmniboxHasInput] = useState(false);
 
   const navigate = useNavigate();
@@ -59,19 +59,6 @@ export default function Home() {
     }
   }, [isCreating, getAccessToken, refreshAgents, navigate]);
 
-  const timeAgo = (dateStr: string | null): string => {
-    if (!dateStr) return '';
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  };
-
-  const displayAgents = showAll ? agents : agents.slice(0, 5);
-
   return (
     <div className="home-page">
       {/* Center content */}
@@ -103,36 +90,6 @@ export default function Home() {
           </div>
         )}
       </div>
-
-      {/* Recent Agents */}
-      {agents.length > 0 && (
-        <div className="home-projects">
-          <div className="home-projects-header">
-            <span className="home-projects-label">Recent Agents</span>
-            {agents.length > 5 && (
-              <button className="home-projects-viewall" onClick={() => setShowAll(prev => !prev)}>
-                {showAll ? 'Show less' : 'View all →'}
-              </button>
-            )}
-          </div>
-          <div className={`home-projects-grid${showAll ? ' home-projects-grid--expanded' : ''}`}>
-            {displayAgents.map(p => (
-              <button key={p.id} className="home-project-card" onClick={() => navigate(`/agents/${p.id}/testing`)}>
-                <div className="home-project-name">{p.name}</div>
-                <div className="home-project-url">{p.url}</div>
-                <div className="home-project-meta">
-                  {p.findings_count > 0 ? (
-                    <span className="home-project-badge home-project-badge--bugs">{p.findings_count} bugs</span>
-                  ) : (
-                    <span className="home-project-badge home-project-badge--clean">clean</span>
-                  )}
-                  {p.last_session_at && <span className="home-project-time">{timeAgo(p.last_session_at)}</span>}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
