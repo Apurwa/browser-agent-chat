@@ -8,55 +8,55 @@ import type { Intent, GoalConfirmation } from './agent-types.js';
  * Determine whether the overall goal has been achieved based on the current
  * status of its constituent intents.
  *
- * Rules (priority order):
- *  1. Any intent is 'failed'  → achieved=false, mention the failed intent
- *  2. Any intent is 'pending' → achieved=false, mention the pending intent
- *  3. All intents are 'completed' with confidence >= 0.6 → achieved=true
- *  4. Any completed intent has confidence < 0.6 → achieved=false
+ * Rules for 'task' type (priority order):
+ *  1. Any intent is 'failed'  → achieved=false, mention the failed intents
+ *  2. Any intent is 'pending' or 'active' → achieved=false, mention them
+ *  3. All intents are 'completed' → achieved=true
  *
- * LLM-based semantic judgment of goal completion is a future enhancement.
+ * Rules for 'explore' type (relaxed):
+ *  1. ≥1 completed intent → achieved=true (any meaningful discovery = success)
+ *  2. 0 completed intents → achieved=false
  */
 export function confirmGoalCompletion(
   goal: string,
   intents: Intent[],
+  taskType: 'task' | 'explore' = 'task',
+  pagesVisited: number = 0,
 ): GoalConfirmation {
   if (intents.length === 0) {
     return { achieved: true };
   }
 
-  // 1. Failed intents take top priority
-  const failedIntent = intents.find(i => i.status === 'failed');
-  if (failedIntent) {
+  const completed = intents.filter(i => i.status === 'completed');
+
+  if (taskType === 'explore') {
+    // For exploration, any meaningful discovery = success
+    if (completed.length >= 1 && pagesVisited >= 2) {
+      return { achieved: true };
+    }
+    if (completed.length >= 1) {
+      return { achieved: true };
+    }
     return {
       achieved: false,
-      remainingWork: `Failed intent: ${failedIntent.id} — ${failedIntent.description}`,
+      remainingWork: `Explored ${pagesVisited} pages but no intents completed`,
     };
   }
 
-  // 2. Pending intents
-  const pendingIntent = intents.find(i => i.status === 'pending');
-  if (pendingIntent) {
+  // For user tasks: all intents must complete
+  const failed = intents.filter(i => i.status === 'failed');
+  if (failed.length > 0) {
     return {
       achieved: false,
-      remainingWork: `Incomplete intent: ${pendingIntent.id} — ${pendingIntent.description}`,
+      remainingWork: `Failed: ${failed.map(i => i.description).join(', ')}`,
     };
   }
 
-  // 3. Active intents (not yet completed)
-  const activeIntent = intents.find(i => i.status === 'active');
-  if (activeIntent) {
+  const pending = intents.filter(i => i.status === 'pending' || i.status === 'active');
+  if (pending.length > 0) {
     return {
       achieved: false,
-      remainingWork: `Incomplete intent: ${activeIntent.id} — ${activeIntent.description}`,
-    };
-  }
-
-  // All intents are completed — check confidence
-  const lowConfidence = intents.find(i => i.confidence < 0.6);
-  if (lowConfidence) {
-    return {
-      achieved: false,
-      remainingWork: `Low-confidence completion for intent: ${lowConfidence.id} — ${lowConfidence.description}`,
+      remainingWork: `Incomplete: ${pending.map(i => i.description).join(', ')}`,
     };
   }
 
