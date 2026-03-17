@@ -14,6 +14,8 @@ import { createBudgetTracker } from './budget.js';
 import { getWorldContext } from './world-model.js';
 import { findSkillForIntent } from './skills.js';
 import { recordNavigation } from './nav-graph.js';
+import { createTaskTrace, classifyError } from './trace-helpers.js';
+import { getLangfuse } from './langfuse.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,6 +91,9 @@ export async function executeAgentLoop(
   const maxSteps = taskType === 'explore' ? 50 : 20;
   const budget = createBudgetTracker({ maxSteps });
 
+  // Create Langfuse trace for this task (null-safe — disabled when unconfigured)
+  const trace = createTaskTrace(goal, taskType, session.agentId, session.sessionId);
+
   try {
     // 1. Load world context
     const worldContext = session.agentId
@@ -102,7 +107,24 @@ export async function executeAgentLoop(
     // 3. Plan strategy
     broadcast({ type: 'thought', content: 'Planning strategy...' });
     const maxIntents = Math.min(7, Math.floor(maxSteps / 3));
-    const plan = await planStrategy(session.agent, goal, worldContext, startUrl, maxIntents);
+
+    const plannerGen = trace?.generation({
+      name: 'planner',
+      input: { goal, worldContext: worldContext || null, currentUrl: startUrl, maxIntents },
+    });
+
+    const { plan, prompt: plannerPrompt } = await planStrategy(
+      session.agent,
+      goal,
+      worldContext,
+      startUrl,
+      maxIntents,
+    );
+
+    plannerGen?.end({
+      output: plan,
+      metadata: { intentCount: plan.intents.length, prompt: plannerPrompt },
+    });
 
     broadcast({
       type: 'thought',
@@ -141,8 +163,10 @@ export async function executeAgentLoop(
     const clickedElementIds = new Set<string>();
     let lastProgressDelta = 0;
     let lastExtractedItemCount = 0;
+    let stepNum = 0;
 
     while (!budget.exhausted()) {
+      stepNum += 1;
       const currentPage = session.connector.getHarness().page;
       const urlBefore = await getPageUrl(currentPage);
 
@@ -150,7 +174,26 @@ export async function executeAgentLoop(
       // Cast to `any` to bridge the Playwright Page overloads with the narrower
       // structural types used by perception/executor modules.
       const activeIntent = findActiveIntent(taskMemory.intents);
+
+      const percSpan = trace?.span({
+        name: `perception-${stepNum}`,
+        input: { url: urlBefore, activeIntent: activeIntent?.description ?? null },
+      });
+
       const perception = await perceive(currentPage as any, activeIntent, '');
+
+      const ctx2 = categorizeElements(perception.uiElements, clickedElementIds);
+      percSpan?.end({
+        output: {
+          elementCount: perception.uiElements.length,
+          pageTitle: perception.pageTitle,
+          categories: {
+            nav: ctx2.navigation.length,
+            actions: ctx2.actions.length,
+          },
+        },
+        metadata: { pageAlreadyExtracted: extractedPages.has(urlBefore) },
+      });
 
       // b. Check for matching skill (MVP: log only, skip execution)
       if (session.agentId && activeIntent) {
@@ -190,6 +233,8 @@ export async function executeAgentLoop(
       const firstUnexploredNav = progressContext.unexplored.navigation[0];
 
       let action: AgentAction;
+      let heuristicOverride = false;
+
       if (allSameType && noProgress && firstUnexploredNav) {
         console.log(`[POLICY] Heuristic override: forcing click on "${firstUnexploredNav.label}" after 3 repeated ${last3[0].type} actions`);
         broadcast({ type: 'thought', content: `Switching strategy: clicking "${firstUnexploredNav.label}"` });
@@ -199,14 +244,32 @@ export async function executeAgentLoop(
           expectedOutcome: `Navigate to ${firstUnexploredNav.label} to discover new features`,
           intentId: activeIntent?.id ?? 'unknown',
         };
+        heuristicOverride = true;
       } else {
         // d. Normal policy decision
-        action = await decideNextAction(
+        const policyGen = trace?.generation({
+          name: `policy-${stepNum}`,
+          input: { activeIntent: activeIntent?.description ?? null },
+          metadata: { stepNum },
+        });
+
+        const { action: decidedAction, prompt: policyPrompt } = await decideNextAction(
           session.agent,
           perception,
           taskMemory.actionsAttempted.slice(-5),
           progressContext,
         );
+
+        policyGen?.end({
+          output: decidedAction,
+          metadata: {
+            prompt: policyPrompt,
+            heuristicOverride: false,
+            progressDelta: progressContext.progressDelta,
+          },
+        });
+
+        action = decidedAction;
       }
 
       broadcast({
@@ -216,6 +279,16 @@ export async function executeAgentLoop(
       });
 
       // d. Execute action
+      const execSpan = trace?.span({
+        name: `execute-${stepNum}`,
+        input: {
+          actionType: action.type,
+          elementId: action.elementId ?? null,
+          instruction: action.expectedOutcome,
+        },
+        metadata: { containsLlm: true },
+      });
+
       const result = await executeAction(
         session.agent as any,
         currentPage as any,
@@ -225,6 +298,23 @@ export async function executeAgentLoop(
 
       // e. Get URL after action
       const urlAfter = await getPageUrl(currentPage);
+
+      if (result.error) {
+        execSpan?.end({
+          output: result,
+          metadata: {
+            failure: {
+              errorType: classifyError(result.error),
+              errorMessage: result.error,
+            },
+          },
+          level: 'ERROR',
+        });
+      } else {
+        execSpan?.end({
+          output: { success: result.success, urlChanged: urlBefore !== urlAfter },
+        });
+      }
 
       // f. Log action errors for debugging
       if (result.error) {
@@ -247,7 +337,17 @@ export async function executeAgentLoop(
       }
 
       // h. Verify action
+      const verifySpan = trace?.span({
+        name: `verify-${stepNum}`,
+        input: { actionType: action.type, urlBefore, urlAfter },
+      });
+
       const verification = verifyAction(action, result, urlBefore, urlAfter);
+
+      verifySpan?.end({
+        output: { passed: verification.passed, confidence: verification.confidence },
+        level: verification.passed ? 'DEFAULT' : 'WARNING',
+      });
 
       // g. Update task memory (immutable update)
       const updatedActions = [...taskMemory.actionsAttempted, action];
@@ -358,7 +458,23 @@ export async function executeAgentLoop(
 
           try {
             const currentUrl = await getPageUrl(currentPage);
-            const replan = await planStrategy(session.agent, goal, worldContext, currentUrl);
+
+            const replanGen = trace?.generation({
+              name: `replan-${taskMemory.replanCount}`,
+              input: { goal, currentUrl, replanCount: taskMemory.replanCount },
+            });
+
+            const { plan: replan, prompt: replanPrompt } = await planStrategy(
+              session.agent,
+              goal,
+              worldContext,
+              currentUrl,
+            );
+
+            replanGen?.end({
+              output: replan,
+              metadata: { intentCount: replan.intents.length, prompt: replanPrompt },
+            });
 
             taskMemory = {
               ...taskMemory,
@@ -403,6 +519,16 @@ export async function executeAgentLoop(
     const confirmation = confirmGoalCompletion(goal, taskMemory.intents, taskType, taskMemory.visitedPages.length);
     const stepsCompleted = budget.snapshot().stepsUsed;
 
+    trace?.update({
+      output: {
+        success: confirmation.achieved,
+        stepsCompleted,
+        pagesVisited: taskMemory.visitedPages.length,
+        remainingWork: confirmation.remainingWork ?? null,
+      },
+    });
+    getLangfuse()?.flushAsync().catch(() => {});
+
     broadcast({ type: 'taskComplete', success: confirmation.achieved });
 
     if (!confirmation.achieved && confirmation.remainingWork) {
@@ -416,6 +542,13 @@ export async function executeAgentLoop(
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Agent loop failed';
     console.error('[AGENT-LOOP] Fatal error:', err);
+
+    trace?.update({
+      output: { success: false, error: message },
+      metadata: { fatalError: true },
+    });
+    getLangfuse()?.flushAsync().catch(() => {});
+
     broadcast({ type: 'error', message });
     broadcast({ type: 'taskComplete', success: false });
     return { success: false, stepsCompleted: budget.snapshot().stepsUsed };
