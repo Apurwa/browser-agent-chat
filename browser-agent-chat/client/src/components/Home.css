@@ -1,16 +1,14 @@
 .home-page {
   flex: 1;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow-y: auto;
 }
 
-/* Center content — true vertical centering, never shrinks */
+/* Center content — fixed height block, vertically centered via padding */
 .home-center {
-  flex: 1 0 auto;
+  min-height: calc(100vh - 120px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -336,9 +334,8 @@
   color: var(--text-dim);
 }
 
-/* Recent projects — pinned to bottom */
+/* Recent projects — grid row 2, natural height */
 .home-projects {
-  margin-top: auto;
   padding: 0 32px 32px;
 }
 
