@@ -34,6 +34,9 @@ export async function getSession(agentId: string): Promise<RedisSession | null> 
     createdAt: parseInt(data.createdAt, 10),
     lastActivityAt: parseInt(data.lastActivityAt, 10),
     detachedAt: parseInt(data.detachedAt, 10) || 0,
+    taskCount: parseInt(data.taskCount, 10) || 0,
+    navigationCount: parseInt(data.navigationCount, 10) || 0,
+    healthStatus: (data.healthStatus as RedisSession['healthStatus']) || 'healthy',
   };
 }
 
@@ -113,6 +116,30 @@ export async function allocatePort(agentId: string): Promise<number> {
 
 export async function freePort(port: number): Promise<void> {
   await redis.del(`browser:port:${port}`);
+}
+
+// -- Individual key deletion helpers --
+
+export async function deleteScreenshot(agentId: string): Promise<void> {
+  await redis.del(`screenshot:${agentId}`);
+}
+
+export async function deleteMessages(agentId: string): Promise<void> {
+  await redis.del(`messages:${agentId}`);
+}
+
+export async function removeFromExpiry(agentId: string): Promise<void> {
+  await redis.zrem('session:expiry', agentId);
+}
+
+// -- Session counter helpers --
+
+export async function incrementTaskCount(agentId: string): Promise<number> {
+  return redis.hincrby(`session:${agentId}`, 'taskCount', 1);
+}
+
+export async function incrementNavCount(agentId: string): Promise<number> {
+  return redis.hincrby(`session:${agentId}`, 'navigationCount', 1);
 }
 
 // -- Expiry --

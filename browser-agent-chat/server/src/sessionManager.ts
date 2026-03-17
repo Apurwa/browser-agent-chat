@@ -461,8 +461,9 @@ export async function sendSnapshot(agentId: string, ws: WebSocket): Promise<void
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
 
-  // Status
-  send({ type: 'status', status: session.status });
+  // Status — map Redis-only statuses to client-facing AgentStatus
+  const clientStatus = session.status === 'allocating' ? 'working' : session.status;
+  send({ type: 'status', status: clientStatus });
 
   // Current URL
   if (session.currentUrl) {
