@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the three competing Home page entry points (⌘K search bar, URL input, Recent Agents) with a single intent-aware omnibox that auto-detects URLs vs search queries, shows grouped results with default action preview, and is keyboard-first.
+**Goal:** Replace the three competing Home page entry points (⌘K search bar, URL input, Recent Agents) with a single intent-aware omnibox that handles both creating new agents and finding existing work.
 
-**Architecture:** Extract QUICK_ACTIONS to a shared module. Add an `omniboxActive` ref to SidebarContext. Build the Omnibox as a standalone component with intent detection, grouped results, keyboard navigation. Integrate into Home.tsx replacing the search hint + URL form. Update CommandPalette to respect the omnibox flag.
+**Architecture:** Extract QUICK_ACTIONS to a shared module. Add an `omniboxActive` ref to SidebarContext so CommandPalette defers to the omnibox on the Home page. Build the Omnibox as a new component with intent detection (URL vs search), grouped results dropdown, default action preview, and keyboard navigation. Modify Home.tsx to render it.
 
 **Tech Stack:** React 19, TypeScript, CSS custom properties (Delphi Tools theme)
 
@@ -21,7 +21,7 @@ All paths relative to `browser-agent-chat/`.
 | File | Responsibility |
 |------|---------------|
 | `client/src/lib/quick-actions.ts` | Shared QUICK_ACTIONS array + CmdItem type (extracted from CommandPalette) |
-| `client/src/components/Omnibox.tsx` | Unified input: intent detection, grouped results, keyboard nav, action preview |
+| `client/src/components/Omnibox.tsx` | The unified omnibox: input, intent detection, grouped results, keyboard nav, default action preview |
 
 ### Modified Files
 
@@ -29,8 +29,8 @@ All paths relative to `browser-agent-chat/`.
 |------|---------|
 | `client/src/contexts/SidebarContext.tsx` | Add `omniboxActiveRef` to context |
 | `client/src/components/CommandPalette.tsx` | Import QUICK_ACTIONS from shared module; check `omniboxActiveRef` before opening |
-| `client/src/components/Home.tsx` | Remove search hint + URL form; render `<Omnibox>`; set omniboxActiveRef |
-| `client/src/components/Home.css` | Remove old classes; add `.home-omnibox-*` classes |
+| `client/src/components/Home.tsx` | Remove search hint + URL form; render `<Omnibox>`; set `omniboxActiveRef` on mount |
+| `client/src/components/Home.css` | Remove `.home-search-hint`, `.home-url-form`; add `.home-omnibox-*` classes |
 
 ---
 
@@ -46,13 +46,14 @@ All paths relative to `browser-agent-chat/`.
 
 ```ts
 // client/src/lib/quick-actions.ts
+import type { ReactNode } from 'react'
 
 export interface CmdItem {
   id: string
   label: string
   sublabel?: string
   route: string
-  icon: 'agent' | 'vault' | 'observability' | 'action' | 'create'
+  icon: 'agent' | 'vault' | 'observability' | 'action'
   group: string
 }
 
@@ -65,10 +66,10 @@ export const QUICK_ACTIONS: CmdItem[] = [
 
 - [ ] **Step 2: Update CommandPalette to import from shared module**
 
-In `client/src/components/CommandPalette.tsx`:
-- Remove the local `CmdItem` interface and `QUICK_ACTIONS` constant
-- Add: `import { type CmdItem, QUICK_ACTIONS } from '../lib/quick-actions'`
-- Keep the `renderIcon` function and everything else unchanged
+In `CommandPalette.tsx`:
+- Remove the local `CmdItem` interface and `QUICK_ACTIONS` array
+- Add: `import { QUICK_ACTIONS, type CmdItem } from '../lib/quick-actions'`
+- Everything else stays the same
 
 - [ ] **Step 3: Verify build**
 
@@ -84,7 +85,7 @@ git add client/src/lib/quick-actions.ts client/src/components/CommandPalette.tsx
 
 ---
 
-### Task 2: Add omniboxActive ref to SidebarContext
+### Task 2: Add omniboxActiveRef to SidebarContext
 
 **Files:**
 - Modify: `client/src/contexts/SidebarContext.tsx`
@@ -92,46 +93,36 @@ git add client/src/lib/quick-actions.ts client/src/components/CommandPalette.tsx
 
 - [ ] **Step 1: Add ref to SidebarContext**
 
-In `client/src/contexts/SidebarContext.tsx`:
+In `SidebarContext.tsx`, add a `useRef` and expose it:
 
-Add `useRef` to the React import. Add `omniboxActiveRef` to the context interface and provider:
-
+Add to the interface:
 ```ts
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import type { ReactNode, MutableRefObject } from 'react';
-
-interface SidebarContextValue {
-  agents: AgentListItem[];
-  agentsLoading: boolean;
-  agentsError: string | null;
-  refreshAgents: () => Promise<void>;
-  omniboxActiveRef: MutableRefObject<boolean>;
-}
+omniboxActiveRef: React.RefObject<boolean>
 ```
 
-In `SidebarProvider`, add:
+In the provider, add:
 ```ts
-const omniboxActiveRef = useRef(false);
+const omniboxActiveRef = useRef(false)
 ```
 
-And include it in the provider value:
+Pass it in the value:
 ```ts
 <SidebarContext.Provider value={{ agents, agentsLoading, agentsError, refreshAgents, omniboxActiveRef }}>
 ```
 
-- [ ] **Step 2: Update CommandPalette to check the flag**
+- [ ] **Step 2: CommandPalette checks the ref before opening**
 
-In `CommandPalette.tsx`, in the `useSidebar()` destructuring, add `omniboxActiveRef`:
+In `CommandPalette.tsx`, get the ref from context:
 ```ts
-const { agents, omniboxActiveRef } = useSidebar();
+const { agents, omniboxActiveRef } = useSidebar()
 ```
 
-In the ⌘K handler (the `useEffect` with `window.addEventListener('keydown')`), add at the top of the handler:
+In the ⌘K handler (the `useEffect` with `window.addEventListener`), add at the top of the handler:
 ```ts
-if (omniboxActiveRef.current) return; // Home page omnibox handles ⌘K
+if (omniboxActiveRef.current) return // Home page omnibox handles it
 ```
 
-- [ ] **Step 3: Verify build**
+- [ ] **Step 3: Verify build + ⌘K still works on non-home pages**
 
 ```bash
 cd browser-agent-chat && npm run build
@@ -140,7 +131,7 @@ cd browser-agent-chat && npm run build
 - [ ] **Step 4: Commit**
 
 ```bash
-git add client/src/contexts/SidebarContext.tsx client/src/components/CommandPalette.tsx && git commit -m "feat: add omniboxActive ref to prevent CommandPalette conflict"
+git add client/src/contexts/SidebarContext.tsx client/src/components/CommandPalette.tsx && git commit -m "feat: add omniboxActive ref to prevent CommandPalette conflict on Home"
 ```
 
 ---
@@ -154,9 +145,33 @@ git add client/src/contexts/SidebarContext.tsx client/src/components/CommandPale
 
 - [ ] **Step 1: Create the Omnibox component**
 
-Build `Omnibox.tsx` with these sections. Read the existing `Home.tsx` first to understand the current `handleSubmit`, voice input, and plus menu logic — port them into the omnibox.
+The component handles:
+1. **Single input** — auto-focused, placeholder "Paste a URL or search anything..."
+2. **Intent detection** — `detectIntent(input)` returns `'url' | 'search'`
+3. **Grouped results** — Create (if URL), Agents (matching), Quick Actions (matching)
+4. **Default action preview** — shows what Enter will do
+5. **Keyboard navigation** — ↑/↓ to navigate, Enter to execute, Esc to clear
+6. **Submit button** — ArrowUp icon, spinner during creation
+7. **Plus menu** — paste from clipboard, upload file (carried over from Home.tsx)
+8. **Voice input** — mic button (carried over from Home.tsx)
 
-**Intent detection function:**
+Props:
+```ts
+interface OmniboxProps {
+  onCreateAgent: (url: string) => Promise<void>
+  isCreating: boolean
+  error: string | null
+}
+```
+
+The component should:
+- Import `QUICK_ACTIONS` and `CmdItem` from `../lib/quick-actions`
+- Import `useSidebar` to get `agents`
+- Import `useNavigate` for agent/action navigation
+- Import `useVoiceInput` for mic support
+- Use `role="combobox"` with `aria-expanded`, `aria-activedescendant`, and `role="option"` on items
+
+Intent detection function:
 ```ts
 function detectIntent(input: string): 'url' | 'search' {
   const trimmed = input.trim()
@@ -172,177 +187,38 @@ function detectIntent(input: string): 'url' | 'search' {
 }
 ```
 
-**Props:**
+Result grouping:
 ```ts
-interface OmniboxProps {
-  onCreateAgent: (url: string) => Promise<void>
-  isCreating: boolean
-  error: string | null
-}
+// When intent is 'url': show Create group + matching agents
+// When intent is 'search': show matching Agents + Quick Actions
+// Results are grouped with headers: "Create", "Agents", "Quick Actions"
 ```
 
-**Component structure:**
-1. Input container (pill shape, 560px max) with:
-   - Plus button + dropdown (left) — paste from clipboard, upload file
-   - Text input (center) — placeholder "Paste a URL or search anything..."
-   - Mic button (right, if voice supported)
-   - Submit button (right) — ArrowUp icon, spinner when creating
-   - ⌘K badge (right edge)
-2. Default action preview line below input
-3. Grouped results dropdown below preview (when input non-empty)
-
-**State:**
-```ts
-const [query, setQuery] = useState('')
-const [selectedIndex, setSelectedIndex] = useState(0)
-```
-
-**Data sources:**
-```ts
-import { useSidebar } from '../contexts/SidebarContext'
-import { QUICK_ACTIONS, type CmdItem } from '../lib/quick-actions'
-
-const { agents } = useSidebar()
-```
-
-**Build agent items from sidebar agents:**
-```ts
-const agentItems: CmdItem[] = agents.map(a => ({
-  id: `agent-${a.id}`,
-  label: a.name,
-  sublabel: a.url,
-  route: `/agents/${a.id}/testing`,
-  icon: 'agent' as const,
-  group: 'Agents',
-}))
-```
-
-**Build grouped results based on intent:**
-```ts
-const intent = detectIntent(query)
-const q = query.toLowerCase().trim()
-
-const groups: Array<{ label: string; items: CmdItem[] }> = []
-
-// Create group (only when URL detected)
-if (intent === 'url' && q) {
-  let domain = q
-  try { domain = new URL(q.startsWith('http') ? q : `https://${q}`).hostname } catch {}
-  groups.push({
-    label: 'Create',
-    items: [{ id: 'create-new', label: `Start new agent at ${domain}`, sublabel: q, route: '', icon: 'create', group: 'Create' }],
-  })
-}
-
-// Agents group
-const matchingAgents = q ? agentItems.filter(a =>
-  a.label.toLowerCase().includes(q) || (a.sublabel ?? '').toLowerCase().includes(q)
-) : agentItems.slice(0, 5)
-if (matchingAgents.length > 0 && q) {
-  groups.push({ label: 'Agents', items: matchingAgents })
-}
-
-// Quick Actions group
-const matchingActions = q ? QUICK_ACTIONS.filter(a => a.label.toLowerCase().includes(q)) : []
-if (matchingActions.length > 0) {
-  groups.push({ label: 'Quick Actions', items: matchingActions })
-}
-
-const flatItems = groups.flatMap(g => g.items)
-```
-
-**Default action preview:**
-```ts
-let preview = ''
-if (isCreating) {
-  preview = 'Creating agent & launching browser...'
-} else if (error) {
-  preview = error
-} else if (q && flatItems.length > 0) {
-  const top = flatItems[0]
-  if (top.id === 'create-new') {
-    preview = `Press Enter to start new agent at ${top.sublabel}`
-  } else {
-    preview = `Press Enter to open ${top.label}`
-  }
-} else if (q && flatItems.length === 0) {
-  preview = 'No results found'
-}
-```
-
-**Keyboard handler:**
-```ts
-const handleKeyDown = (e: React.KeyboardEvent) => {
-  switch (e.key) {
-    case 'ArrowDown':
-      e.preventDefault()
-      setSelectedIndex(prev => (prev + 1) % Math.max(flatItems.length, 1))
-      break
-    case 'ArrowUp':
-      e.preventDefault()
-      setSelectedIndex(prev => (prev - 1 + flatItems.length) % Math.max(flatItems.length, 1))
-      break
-    case 'Enter':
-      e.preventDefault()
-      if (isCreating) return
-      const selected = flatItems[selectedIndex]
-      if (selected?.id === 'create-new') {
-        onCreateAgent(query.trim())
-      } else if (selected) {
-        navigate(selected.route)
-      }
-      break
-    case 'Escape':
-      e.preventDefault()
-      setQuery('')
-      setSelectedIndex(0)
-      break
-  }
-}
-```
-
-**Render the results dropdown with `role="combobox"` accessibility:**
+The component renders:
 ```tsx
-<div className="home-omnibox" role="combobox" aria-expanded={query.length > 0} aria-haspopup="listbox">
+<div className="home-omnibox">
   <div className="home-omnibox-input-row">
-    {/* plus button, input, mic, submit, ⌘K badge */}
+    {/* Plus menu (left) */}
+    {/* Input */}
+    {/* Mic button */}
+    {/* Submit button */}
+    {/* ⌘K badge */}
   </div>
-  {preview && (
-    <div className={`home-omnibox-preview ${error ? 'home-omnibox-preview--error' : ''}`}>
-      ↳ {preview}
-    </div>
-  )}
-  {query.trim() && groups.length > 0 && (
-    <div className="home-omnibox-results" role="listbox">
-      {groups.map(group => (
-        <div key={group.label}>
-          <div className="home-omnibox-group">{group.label}</div>
-          {group.items.map(item => {
-            const idx = flatItems.indexOf(item)
-            return (
-              <div key={item.id}
-                   className={`home-omnibox-item ${idx === selectedIndex ? 'home-omnibox-item--selected' : ''}`}
-                   role="option" aria-selected={idx === selectedIndex}
-                   onClick={() => { /* execute item */ }}
-                   onMouseEnter={() => setSelectedIndex(idx)}>
-                <span className="home-omnibox-item-icon">{renderIcon(item.icon)}</span>
-                <span className="home-omnibox-item-text">
-                  <span className="home-omnibox-item-label">{item.label}</span>
-                  {item.sublabel && <span className="home-omnibox-item-sublabel">{item.sublabel}</span>}
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      ))}
-    </div>
-  )}
+  {/* Default action preview */}
+  {error && <div className="home-omnibox-error">{error}</div>}
+  {/* Grouped results dropdown (when input non-empty) */}
 </div>
 ```
 
-Import `renderIcon` from CommandPalette or duplicate it (it's 10 lines). Add a `create` case that renders a `Plus` icon.
+Target: ~180-220 lines.
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Verify types compile**
+
+```bash
+cd browser-agent-chat/client && npx tsc --noEmit
+```
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add client/src/components/Omnibox.tsx && git commit -m "feat: omnibox component with intent detection, grouped results, keyboard nav"
@@ -350,127 +226,21 @@ git add client/src/components/Omnibox.tsx && git commit -m "feat: omnibox compon
 
 ---
 
-### Task 4: Integrate Omnibox into Home page
+### Task 4: Add Omnibox CSS
 
 **Files:**
-- Modify: `client/src/components/Home.tsx`
 - Modify: `client/src/components/Home.css`
 
-- [ ] **Step 1: Update Home.tsx**
+- [ ] **Step 1: Remove old classes, add new ones**
 
-Read `Home.tsx`. Make these changes:
+Remove these CSS blocks from Home.css:
+- `.home-search-hint` and `.home-search-hint:hover` and `.home-search-hint kbd`
+- `.home-url-form` and `.home-url-form:focus-within`
 
-1. Import `Omnibox` and `useSidebar`:
-```ts
-import Omnibox from './Omnibox'
-```
+Add these new classes (use CSS variables, no hardcoded hex):
 
-2. Set `omniboxActiveRef` on mount/unmount:
-```ts
-const { omniboxActiveRef } = useSidebar()
-useEffect(() => {
-  omniboxActiveRef.current = true
-  return () => { omniboxActiveRef.current = false }
-}, [omniboxActiveRef])
-```
-
-3. Add ⌘K handler that focuses the omnibox input (via a ref passed to Omnibox):
-```ts
-const omniboxInputRef = useRef<HTMLInputElement>(null)
-useEffect(() => {
-  const handler = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault()
-      omniboxInputRef.current?.focus()
-    }
-  }
-  window.addEventListener('keydown', handler)
-  return () => window.removeEventListener('keydown', handler)
-}, [])
-```
-
-4. Remove the `home-search-hint` div entirely (the clickable ⌘K bar)
-
-5. Remove the `home-url-form` and all its contents (plus menu, URL input, mic button, submit button)
-
-6. Replace with:
-```tsx
-<Omnibox
-  inputRef={omniboxInputRef}
-  onCreateAgent={handleCreateAgent}
-  isCreating={isCreating}
-  error={error}
-/>
-```
-
-7. Extract agent creation into a callback:
-```ts
-const handleCreateAgent = async (rawUrl: string) => {
-  if (!rawUrl || isCreating) return
-  setIsCreating(true)
-  setError(null)
-  let normalizedUrl = rawUrl
-  if (!/^https?:\/\//i.test(normalizedUrl)) {
-    normalizedUrl = `https://${normalizedUrl}`
-  }
-  try {
-    const token = await getAccessToken()
-    const name = deriveProjectName(normalizedUrl)
-    const res = await apiAuthFetch('/api/agents', token, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, url: normalizedUrl }),
-    })
-    if (res.ok) {
-      const agent = await res.json()
-      refreshAgents()
-      navigate(`/agents/${agent.id}/testing`, { state: { autoStart: true } })
-    } else {
-      setError('Failed to create agent. Please try again.')
-      setIsCreating(false)
-    }
-  } catch {
-    setError('Network error. Please check your connection.')
-    setIsCreating(false)
-  }
-}
-```
-
-8. Conditionally hide chips and Recent Agents when omnibox has input. Pass a state up from Omnibox or use a local state:
-```ts
-const [omniboxHasQuery, setOmniboxHasQuery] = useState(false)
-```
-Pass `onQueryChange={(q) => setOmniboxHasQuery(q.trim().length > 0)}` to Omnibox.
-
-Then wrap chips and Recent Agents:
-```tsx
-{!omniboxHasQuery && !isCreating && (
-  <>
-    <div className="home-chips">...</div>
-    {agents.length === 0 && <p className="home-hint">...</p>}
-  </>
-)}
-
-{!omniboxHasQuery && agents.length > 0 && (
-  <div className="home-projects">...</div>
-)}
-```
-
-9. Remove imports that are no longer needed: `Plus`, `ArrowUp`, `Clipboard`, `Upload`, `Search` (if only used by removed elements). Keep `Mic` only if the voice logic stays in Home (it should move to Omnibox).
-
-- [ ] **Step 2: Update Home.css**
-
-Remove these classes (no longer used):
-- `.home-search-hint`, `.home-search-hint:hover`, `.home-search-hint kbd`
-- `.home-url-form`, `.home-url-form:focus-within`
-- `.home-plus-wrapper`, `.home-plus-btn`, `.home-plus-btn:hover`, `.home-plus-dropdown`
-- `.home-url-input`, `.home-url-input::placeholder`
-- `.home-mic-btn`, `.home-mic-pulse`, `@keyframes homeMicPulse`
-- `.home-url-go`, `.home-spinner`, `@keyframes home-spin`
-
-Add these new classes:
 ```css
-/* Omnibox container */
+/* Omnibox */
 .home-omnibox {
   width: 560px;
   max-width: 90%;
@@ -502,7 +272,6 @@ Add these new classes:
   outline: none;
   padding: 10px 4px;
   min-width: 0;
-  font-family: inherit;
 }
 
 .home-omnibox-input::placeholder {
@@ -516,18 +285,24 @@ Add these new classes:
   font-size: 12px;
   color: var(--text-dim);
   flex-shrink: 0;
-  font-family: inherit;
 }
 
-/* Action preview */
 .home-omnibox-preview {
   font-size: 12px;
   color: var(--text-dim);
-  padding: 6px 16px 0;
+  margin-top: 8px;
+  padding-left: 16px;
 }
 
-.home-omnibox-preview--error {
+.home-omnibox-preview strong {
+  color: var(--text-body);
+}
+
+.home-omnibox-error {
+  font-size: 12px;
   color: var(--accent);
+  margin-top: 8px;
+  padding-left: 16px;
 }
 
 /* Results dropdown */
@@ -538,12 +313,12 @@ Add these new classes:
   right: 0;
   background: var(--bg-card);
   border: 1px solid var(--border-primary);
-  border-radius: 14px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  z-index: 50;
   max-height: 320px;
   overflow-y: auto;
-  padding: 8px;
-  z-index: 100;
 }
 
 .home-omnibox-group {
@@ -551,15 +326,14 @@ Add these new classes:
   text-transform: uppercase;
   letter-spacing: 1px;
   color: var(--text-dim);
-  padding: 8px 8px 4px;
+  padding: 8px 14px 4px;
 }
 
 .home-omnibox-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 8px 14px;
   cursor: pointer;
   transition: background 0.1s;
 }
@@ -572,60 +346,139 @@ Add these new classes:
 .home-omnibox-item-icon {
   color: var(--text-dim);
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-
-.home-omnibox-item-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
 }
 
 .home-omnibox-item-label {
-  font-size: 14px;
-  color: var(--text-body);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 13px;
+  color: var(--text-primary);
 }
 
 .home-omnibox-item-sublabel {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Reuse existing button styles for plus, mic, submit inside omnibox */
-.home-omnibox .home-plus-wrapper { position: relative; flex-shrink: 0; }
-.home-omnibox .home-plus-btn,
-.home-omnibox .home-mic-btn,
-.home-omnibox .home-url-go {
-  /* Keep existing styles — these class names stay but are scoped under .home-omnibox */
+  margin-left: 8px;
 }
 ```
 
-Actually — simpler approach: keep the existing button CSS classes (`.home-plus-btn`, `.home-mic-btn`, `.home-url-go`) as they are in the CSS file. Just move the HTML elements from the old form into the new omnibox input row. Don't delete the button CSS — only delete the container CSS (`.home-url-form`, `.home-search-hint`).
+- [ ] **Step 2: Commit**
 
-- [ ] **Step 3: Verify build**
+```bash
+git add client/src/components/Home.css && git commit -m "feat: omnibox CSS with grouped results dropdown"
+```
+
+---
+
+## Chunk 3: Home Page Integration
+
+### Task 5: Wire Omnibox into Home.tsx
+
+**Files:**
+- Modify: `client/src/components/Home.tsx`
+
+- [ ] **Step 1: Replace search hint + URL form with Omnibox**
+
+Read `Home.tsx` first. Then:
+
+1. Remove the `home-search-hint` div (lines ~128-137)
+2. Remove the `home-url-form` form (lines ~139-193)
+3. Remove the `showPlusMenu`, `fileInputRef`, `handlePasteFromClipboard`, `handleFileUpload` state/handlers (moved to Omnibox)
+4. Remove voice input state/handlers (moved to Omnibox)
+5. Import and render `<Omnibox>` in their place:
+
+```tsx
+import Omnibox from './Omnibox'
+
+// In the render, replace search-hint + url-form with:
+<Omnibox
+  onCreateAgent={handleCreateAgent}
+  isCreating={isCreating}
+  error={error}
+/>
+```
+
+6. Simplify `handleSubmit` into a `handleCreateAgent(url: string)` function that takes the URL directly (the Omnibox handles normalization):
+
+```tsx
+const handleCreateAgent = async (rawUrl: string) => {
+  setIsCreating(true)
+  setError(null)
+  let normalizedUrl = rawUrl.trim()
+  if (!/^https?:\/\//i.test(normalizedUrl)) {
+    normalizedUrl = `https://${normalizedUrl}`
+  }
+  try {
+    const token = await getAccessToken()
+    const name = deriveProjectName(normalizedUrl)
+    const res = await apiAuthFetch('/api/agents', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, url: normalizedUrl }),
+    })
+    if (res.ok) {
+      const agent = await res.json()
+      refreshAgents()
+      navigate(`/agents/${agent.id}/testing`, { state: { autoStart: true } })
+    } else {
+      setError('Failed to create agent. Please try again.')
+      setIsCreating(false)
+    }
+  } catch {
+    setError('Network error. Please check your connection.')
+    setIsCreating(false)
+  }
+}
+```
+
+7. Set `omniboxActiveRef` on mount/unmount:
+
+```tsx
+const { omniboxActiveRef } = useSidebar()
+
+useEffect(() => {
+  omniboxActiveRef.current = true
+  return () => { omniboxActiveRef.current = false }
+}, [omniboxActiveRef])
+```
+
+8. Conditionally hide chips + Recent Agents when omnibox has input (pass a state down or let Omnibox control visibility via a callback):
+
+```tsx
+const [omniboxHasInput, setOmniboxHasInput] = useState(false)
+
+// Pass to Omnibox:
+<Omnibox ... onInputChange={(hasInput) => setOmniboxHasInput(hasInput)} />
+
+// Conditionally render:
+{!isCreating && !omniboxHasInput && (
+  <>
+    <div className="home-chips">...</div>
+    {agents.length === 0 && <p className="home-hint">...</p>}
+  </>
+)}
+
+// Recent Agents:
+{agents.length > 0 && !omniboxHasInput && (
+  <div className="home-projects">...</div>
+)}
+```
+
+- [ ] **Step 2: Verify build**
 
 ```bash
 cd browser-agent-chat && npm run build
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add client/src/components/Home.tsx client/src/components/Home.css client/src/components/Omnibox.tsx && git commit -m "feat: integrate omnibox into home page replacing search + URL inputs"
+git add client/src/components/Home.tsx && git commit -m "feat: integrate omnibox into Home page, remove redundant inputs"
 ```
 
 ---
 
-### Task 5: Final verification and cleanup
+### Task 6: Final cleanup and verification
 
-- [ ] **Step 1: Run build**
+- [ ] **Step 1: Run full build**
 
 ```bash
 cd browser-agent-chat && npm run build
@@ -637,21 +490,18 @@ cd browser-agent-chat && npm run build
 cd browser-agent-chat/client && npx vitest run
 ```
 
-- [ ] **Step 3: Manually verify in browser**
+- [ ] **Step 3: Verify manually**
 
-Open http://localhost:5175 and check:
-- Single input visible (no separate search bar)
-- Type a URL (stripe.com) → "Create" group appears with "Start new agent at stripe.com"
-- Type a word (langfuse) → matching agents appear in "Agents" group
-- Arrow keys navigate results
-- Enter executes top result
+Open http://localhost:5175 and test:
+- Type `stripe.com` → see "Create" group with "Start new agent at stripe.com"
+- Type `stripe` → see matching agents in "Agents" group
+- Arrow keys navigate, Enter executes
 - ⌘K focuses the input
-- Esc clears input and hides results
-- Chips and Recent Agents show when input is empty, hide when typing
-- From a non-home page, ⌘K still opens CommandPalette overlay
+- Empty input shows chips + Recent Agents
+- Non-empty input hides chips + Recent Agents, shows results dropdown
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "chore: unified omnibox — final integration"
+git add -A && git commit -m "chore: unified omnibox — final cleanup"
 ```
