@@ -17,6 +17,7 @@ export async function planStrategy(
   goal: string,
   worldContext: string,
   currentUrl: string,
+  maxIntents?: number,
 ): Promise<StrategyPlan> {
   const contextParts: string[] = [
     `Goal: ${goal}`,
@@ -27,6 +28,8 @@ export async function planStrategy(
     contextParts.push(`Known app context:\n${worldContext}`);
   }
 
+  const effectiveMax = maxIntents ?? 7;
+
   const prompt = `You are a strategic planner for a browser automation agent. Decompose the following goal into high-level intent steps.
 
 ${contextParts.join('\n')}
@@ -36,12 +39,17 @@ Rules:
 - For complex multi-step goals, produce multiple intents in order
 - Each intent describes WHAT to achieve, not HOW to click
 - Include success criteria (how to know the intent is done)
-- All intents start with status "pending" and confidence 0`;
+- All intents start with status "pending" and confidence 0
+- Generate at most ${effectiveMax} high-level intents. Each intent takes approximately 3 actions to complete. Focus on the most important areas first.`;
 
   try {
     const result = await agent.extract(prompt, PlannerOutputSchema);
     console.log('[PLANNER] Raw LLM result:', JSON.stringify(result));
-    return StrategyPlanSchema.parse(result);
+    const plan = StrategyPlanSchema.parse(result);
+    return {
+      ...plan,
+      intents: plan.intents.slice(0, effectiveMax),
+    };
   } catch (error) {
     // Fallback: create a single intent from the goal
     console.error('[PLANNER] LLM planning failed, using single-intent fallback:', error);

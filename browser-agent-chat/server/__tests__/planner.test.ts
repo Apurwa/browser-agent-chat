@@ -84,4 +84,49 @@ describe('planStrategy', () => {
       expect(intent.status).toBe('pending');
     }
   });
+
+  it('truncates intents to maxIntents', async () => {
+    const agent = mockAgent({
+      goal: 'explore everything',
+      intents: [
+        { id: 'i1', description: 'Step 1', successCriteria: 'Done', status: 'pending', confidence: 0 },
+        { id: 'i2', description: 'Step 2', successCriteria: 'Done', status: 'pending', confidence: 0 },
+        { id: 'i3', description: 'Step 3', successCriteria: 'Done', status: 'pending', confidence: 0 },
+        { id: 'i4', description: 'Step 4', successCriteria: 'Done', status: 'pending', confidence: 0 },
+        { id: 'i5', description: 'Step 5', successCriteria: 'Done', status: 'pending', confidence: 0 },
+      ],
+    });
+
+    const result = await planStrategy(agent, 'explore everything', '', 'https://example.com', 3);
+    expect(result.intents).toHaveLength(3);
+    expect(result.intents[0].id).toBe('i1');
+    expect(result.intents[2].id).toBe('i3');
+  });
+
+  it('includes maxIntents value in the prompt', async () => {
+    const agent = mockAgent({
+      goal: 'test',
+      intents: [{ id: 'i1', description: 'Do it', successCriteria: 'Done', status: 'pending', confidence: 0 }],
+    });
+
+    await planStrategy(agent, 'test', '', 'https://example.com', 4);
+
+    const prompt = agent.extract.mock.calls[0][0];
+    expect(prompt).toContain('4');
+    expect(prompt).toContain('high-level intents');
+  });
+
+  it('uses default max of 7 when maxIntents is not provided', async () => {
+    const manyIntents = Array.from({ length: 10 }, (_, i) => ({
+      id: `i${i + 1}`,
+      description: `Step ${i + 1}`,
+      successCriteria: 'Done',
+      status: 'pending' as const,
+      confidence: 0,
+    }));
+    const agent = mockAgent({ goal: 'big task', intents: manyIntents });
+
+    const result = await planStrategy(agent, 'big task', '', 'https://example.com');
+    expect(result.intents).toHaveLength(7);
+  });
 });

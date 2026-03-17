@@ -101,7 +101,8 @@ export async function executeAgentLoop(
 
     // 3. Plan strategy
     broadcast({ type: 'thought', content: 'Planning strategy...' });
-    const plan = await planStrategy(session.agent, goal, worldContext, startUrl);
+    const maxIntents = Math.min(7, Math.floor(maxSteps / 3));
+    const plan = await planStrategy(session.agent, goal, worldContext, startUrl, maxIntents);
 
     broadcast({
       type: 'thought',
@@ -326,7 +327,16 @@ export async function executeAgentLoop(
             };
 
             const { intents: nextIntents, next } = advanceToNextIntent(taskMemory.intents);
-            taskMemory = { ...taskMemory, intents: nextIntents };
+            taskMemory = {
+              ...taskMemory,
+              intents: nextIntents,
+              stuckSignals: {
+                repeatedActionCount: 0,
+                samePageCount: 0,
+                failedExecutionCount: 0,
+                stepsSinceProgress: 0,
+              },
+            };
 
             if (!next) {
               broadcast({ type: 'thought', content: 'All intents completed' });
@@ -390,7 +400,7 @@ export async function executeAgentLoop(
     }
 
     // 7. Confirm goal completion
-    const confirmation = confirmGoalCompletion(goal, taskMemory.intents);
+    const confirmation = confirmGoalCompletion(goal, taskMemory.intents, taskType, taskMemory.visitedPages.length);
     const stepsCompleted = budget.snapshot().stepsUsed;
 
     broadcast({ type: 'taskComplete', success: confirmation.achieved });
