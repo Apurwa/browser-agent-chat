@@ -218,25 +218,6 @@
   background: var(--bg-hover);
 }
 
-/* URL input */
-.home-url-input {
-  flex: 1;
-  border: none !important;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 15px;
-  outline: none;
-  padding: 10px 4px;
-  box-shadow: none;
-  -webkit-appearance: none;
-  appearance: none;
-  min-width: 0;
-}
-
-.home-url-input::placeholder {
-  color: var(--text-dim);
-}
-
 /* Mic button */
 .home-mic-btn {
   position: relative;
@@ -326,13 +307,6 @@
 }
 
 .home-status-text {
-  margin-top: 12px;
-  font-size: 13px;
-  color: var(--accent);
-  font-weight: 500;
-}
-
-.home-error-text {
   margin-top: 12px;
   font-size: 13px;
   color: var(--accent);
