@@ -3,7 +3,8 @@ import type { ServerMessage } from './types.js';
 import type { TaskMemory, Intent, AgentAction } from './agent-types.js';
 import { planStrategy } from './planner.js';
 import { perceive } from './perception.js';
-import { decideNextAction } from './policy.js';
+import { decideNextAction, categorizeElements } from './policy.js';
+import type { ProgressContext } from './policy.js';
 import { executeAction } from './executor.js';
 import { verifyAction } from './verify-action.js';
 import { verifyIntent } from './verify-intent.js';
@@ -134,7 +135,12 @@ export async function executeAgentLoop(
       };
     }
 
-    // 6. Policy loop
+    // 6. Policy loop — state tracking for progress signal
+    const extractedPages = new Set<string>();
+    const clickedElementIds = new Set<string>();
+    let lastProgressDelta = 0;
+    let lastExtractedItemCount = 0;
+
     while (!budget.exhausted()) {
       const currentPage = session.connector.getHarness().page;
       const urlBefore = await getPageUrl(currentPage);
@@ -161,12 +167,46 @@ export async function executeAgentLoop(
         }
       }
 
-      // c. Decide next action
-      const action: AgentAction = await decideNextAction(
-        session.agent,
-        perception,
-        taskMemory.actionsAttempted.slice(-5),
-      );
+      // c. Compute progress context for policy
+      const progressContext: ProgressContext = {
+        pageAlreadyExtracted: extractedPages.has(urlBefore),
+        progressDelta: lastProgressDelta,
+        urlChanged: false, // will be set after looking at recent history
+        visitedUrls: [...taskMemory.visitedPages],
+        unexplored: categorizeElements(perception.uiElements, clickedElementIds),
+      };
+
+      // Check if last action changed URL
+      if (taskMemory.actionsAttempted.length > 0) {
+        const prevUrl = taskMemory.visitedPages[taskMemory.visitedPages.length - 2];
+        progressContext.urlChanged = prevUrl !== urlBefore;
+      }
+
+      // c2. Heuristic override: 3 consecutive same-action with no progress → force click nav
+      const last3 = taskMemory.actionsAttempted.slice(-3);
+      const allSameType = last3.length === 3 && last3.every(a => a.type === last3[0].type);
+      const noProgress = taskMemory.stuckSignals.stepsSinceProgress >= 3;
+      const firstUnexploredNav = progressContext.unexplored.navigation[0];
+
+      let action: AgentAction;
+      if (allSameType && noProgress && firstUnexploredNav) {
+        console.log(`[POLICY] Heuristic override: forcing click on "${firstUnexploredNav.label}" after 3 repeated ${last3[0].type} actions`);
+        broadcast({ type: 'thought', content: `Switching strategy: clicking "${firstUnexploredNav.label}"` });
+        action = {
+          type: 'click',
+          elementId: firstUnexploredNav.id,
+          expectedOutcome: `Navigate to ${firstUnexploredNav.label} to discover new features`,
+          intentId: activeIntent?.id ?? 'unknown',
+        };
+      } else {
+        // d. Normal policy decision
+        action = await decideNextAction(
+          session.agent,
+          perception,
+          taskMemory.actionsAttempted.slice(-5),
+          progressContext,
+        );
+      }
 
       broadcast({
         type: 'action',
@@ -191,7 +231,21 @@ export async function executeAgentLoop(
         broadcast({ type: 'thought', content: `Action failed: ${result.error}` });
       }
 
-      // g. Verify action
+      // g. Track progress for next iteration's policy context
+      if (action.type === 'extract' && result.success) {
+        extractedPages.add(urlBefore);
+        // Compute progress delta from extracted data
+        const extractedItems = Array.isArray((result.data as any)?.items) ? (result.data as any).items.length : 0;
+        lastProgressDelta = Math.max(0, extractedItems - lastExtractedItemCount);
+        lastExtractedItemCount = extractedItems;
+      } else if (action.type === 'click' && action.elementId) {
+        clickedElementIds.add(action.elementId);
+        lastProgressDelta = urlBefore !== urlAfter ? 1 : 0;
+      } else {
+        lastProgressDelta = urlBefore !== urlAfter ? 1 : 0;
+      }
+
+      // h. Verify action
       const verification = verifyAction(action, result, urlBefore, urlAfter);
 
       // g. Update task memory (immutable update)
