@@ -365,7 +365,7 @@ describe('sessionManager — LRU eviction', () => {
     await createSession('agent-a', 'http://a.com', 'db-a');
     vi.clearAllMocks();
 
-    const mockWsA = { readyState: 1, send: vi.fn() } as any;
+    const mockWsA = { readyState: 1, send: vi.fn(), close: vi.fn() } as any;
     addClient('agent-a', mockWsA);
 
     (redisStore.getSession as any)

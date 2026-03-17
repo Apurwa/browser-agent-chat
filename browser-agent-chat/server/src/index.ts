@@ -128,8 +128,8 @@ function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessag
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
 }
 
-// Track in-progress session creations to deduplicate concurrent start messages
-const pendingCreations = new Map<string, Promise<void>>();
+// Server instance ID — used as distributed lock owner for session creation
+const SERVER_ID = `srv-${crypto.randomUUID().slice(0, 8)}-${process.pid}`;
 
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
@@ -158,32 +158,18 @@ wss.on('connection', (ws: WebSocket) => {
     if (msg.type === 'start') {
       console.log('[START] Starting agent for:', msg.agentId);
 
-      // Deduplicate: if a session creation is already in progress for this agent, just wait and reattach
-      if (pendingCreations.has(msg.agentId)) {
-        console.log('[START] Session creation already in progress, waiting...');
-        try {
-          await pendingCreations.get(msg.agentId);
-          // Creation finished — reattach
-          if (sessionManager.getAgent(msg.agentId)) {
-            sessionManager.addClient(msg.agentId, ws);
-            clientAgents.set(ws, msg.agentId);
-            await sessionManager.sendSnapshot(msg.agentId, ws);
-          }
-        } catch {
-          ws.send(JSON.stringify({ type: 'error', message: 'Session creation failed' } as ServerMessage));
-        }
-        return;
-      }
-
       const prevAgentId = clientAgents.get(ws);
       if (prevAgentId && prevAgentId !== msg.agentId) {
         sessionManager.removeClient(prevAgentId, ws);
         clientAgents.delete(ws);
       }
 
-      // Fast path: reattach to existing session
-      const hasExisting = await sessionManager.hasSession(msg.agentId);
-      if (hasExisting && sessionManager.getAgent(msg.agentId)) {
+      // ── Idempotent start: check Redis session state first ──
+
+      const existingSession = await redisStore.getSession(msg.agentId);
+
+      // Path 1: Session active + agent alive locally → reattach
+      if (existingSession && existingSession.status !== 'allocating' && sessionManager.getAgent(msg.agentId)) {
         console.log('[START] Reattaching to existing session');
         sessionManager.addClient(msg.agentId, ws);
         clientAgents.set(ws, msg.agentId);
@@ -191,19 +177,55 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
-      // Clean up stale Redis data if agent is dead
-      if (hasExisting) {
+      // Path 2: Session allocating → another creator is working, poll until ready
+      if (existingSession && existingSession.status === 'allocating') {
+        console.log('[START] Session allocating, waiting for creator...');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        const readySession = await redisStore.waitForSessionReady(msg.agentId);
+        if (readySession && sessionManager.getAgent(msg.agentId)) {
+          sessionManager.addClient(msg.agentId, ws);
+          clientAgents.set(ws, msg.agentId);
+          await sessionManager.sendSnapshot(msg.agentId, ws);
+        } else {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session creation timed out' } as ServerMessage));
+          ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+        }
+        return;
+      }
+
+      // Path 3: Stale session in Redis but agent dead locally → clean up first
+      if (existingSession) {
         await sessionManager.destroySession(msg.agentId);
       }
 
-      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+      // Path 4: No session → acquire distributed lock and create
 
-      // Register client→agent mapping early so viewport messages
-      // arriving during async agent creation can find the agent.
+      const lockAcquired = await redisStore.acquireSessionLock(msg.agentId, SERVER_ID);
+      if (!lockAcquired) {
+        // Another server is creating — poll for ready
+        console.log('[START] Lock held by another creator, waiting...');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        const readySession = await redisStore.waitForSessionReady(msg.agentId);
+        if (readySession && sessionManager.getAgent(msg.agentId)) {
+          sessionManager.addClient(msg.agentId, ws);
+          clientAgents.set(ws, msg.agentId);
+          await sessionManager.sendSnapshot(msg.agentId, ws);
+        } else {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session creation by another server timed out' } as ServerMessage));
+        }
+        return;
+      }
+
+      // Lock acquired — create session
+      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
       clientAgents.set(ws, msg.agentId);
 
-      // Wrap creation in pendingCreations for deduplication
-      const creationPromise = (async () => {
+      // Refresh lock periodically during creation
+      const lockRefresh = setInterval(() => {
+        redisStore.extendSessionLock(msg.agentId, SERVER_ID).catch(() => {});
+      }, 7000);
+
+      try {
         const agent = await getAgent(msg.agentId);
         if (!agent) {
           clientAgents.delete(ws);
@@ -216,7 +238,6 @@ wss.on('connection', (ws: WebSocket) => {
 
         clientUserIds.set(ws, agent.user_id);
 
-        // Ensure capacity before creating new browser
         await sessionManager.ensureCapacity();
 
         const dbSessionId = await createSession(agent.id);
@@ -227,7 +248,6 @@ wss.on('connection', (ws: WebSocket) => {
 
         sessionManager.addClient(msg.agentId, ws);
 
-        // Signal new session to client
         ws.send(JSON.stringify({ type: 'session_new', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
@@ -242,11 +262,6 @@ wss.on('connection', (ws: WebSocket) => {
             agentSession.loginInProgress = false;
           });
         }
-      })();
-
-      pendingCreations.set(msg.agentId, creationPromise);
-      try {
-        await creationPromise;
       } catch (err) {
         console.error('[START] Error creating agent:', err);
         clientAgents.delete(ws);
@@ -254,7 +269,8 @@ wss.on('connection', (ws: WebSocket) => {
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
       } finally {
-        pendingCreations.delete(msg.agentId);
+        clearInterval(lockRefresh);
+        await redisStore.releaseSessionLock(msg.agentId, SERVER_ID);
       }
 
     } else if (msg.type === 'task') {

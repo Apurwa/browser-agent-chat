@@ -237,6 +237,7 @@ export async function createSession(
     currentUrl: url,
     memoryContext: agentSession.memoryContext,
     browserPid: browser.pid,
+    owner: process.env.SERVER_ID || `srv-${process.pid}`,
     lastTask: '',
     createdAt: Date.now(),
     lastActivityAt: Date.now(),

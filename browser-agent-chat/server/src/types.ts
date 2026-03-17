@@ -167,6 +167,7 @@ export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected' | 'crash
 export interface RedisSession {
   dbSessionId: string;
   status: RedisSessionStatus;
+  owner: string;  // server instance ID — for distributed ownership tracking
   cdpPort: number;
   cdpEndpoint: string;
   currentUrl: string;

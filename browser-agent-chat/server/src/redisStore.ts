@@ -37,6 +37,7 @@ export async function getSession(agentId: string): Promise<RedisSession | null> 
     taskCount: parseInt(data.taskCount, 10) || 0,
     navigationCount: parseInt(data.navigationCount, 10) || 0,
     healthStatus: (data.healthStatus as RedisSession['healthStatus']) || 'healthy',
+    owner: data.owner || '',
   };
 }
 
@@ -140,6 +141,53 @@ export async function incrementTaskCount(agentId: string): Promise<number> {
 
 export async function incrementNavCount(agentId: string): Promise<number> {
   return redis.hincrby(`session:${agentId}`, 'navigationCount', 1);
+}
+
+// -- Distributed session creation lock --
+
+const SESSION_LOCK_TTL_MS = 20000; // 20s — covers browser spawn + CDP connect
+
+/**
+ * Acquire a distributed lock for session creation.
+ * Returns true if acquired, false if another creator holds it.
+ */
+export async function acquireSessionLock(agentId: string, serverId: string): Promise<boolean> {
+  const result = await redis.set(`lock:session:${agentId}`, serverId, 'PX', SESSION_LOCK_TTL_MS, 'NX');
+  return result === 'OK';
+}
+
+/**
+ * Extend the lock TTL while creation is in progress (prevents expiry during slow spawn).
+ */
+export async function extendSessionLock(agentId: string, serverId: string): Promise<boolean> {
+  const owner = await redis.get(`lock:session:${agentId}`);
+  if (owner !== serverId) return false;
+  await redis.pexpire(`lock:session:${agentId}`, SESSION_LOCK_TTL_MS);
+  return true;
+}
+
+/**
+ * Release the lock. Only succeeds if caller is the owner.
+ */
+export async function releaseSessionLock(agentId: string, serverId: string): Promise<void> {
+  const owner = await redis.get(`lock:session:${agentId}`);
+  if (owner === serverId) {
+    await redis.del(`lock:session:${agentId}`);
+  }
+}
+
+/**
+ * Wait for a session to transition from 'allocating' to a usable state.
+ * Polls every 500ms, max 10 attempts (5 seconds).
+ */
+export async function waitForSessionReady(agentId: string, maxAttempts = 10): Promise<RedisSession | null> {
+  for (let i = 0; i < maxAttempts; i++) {
+    const session = await getSession(agentId);
+    if (!session) return null; // session was cleaned up
+    if (session.status !== 'allocating') return session; // ready
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return null; // timed out
 }
 
 // -- Expiry --
