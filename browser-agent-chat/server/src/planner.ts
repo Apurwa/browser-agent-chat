@@ -18,7 +18,7 @@ export async function planStrategy(
   worldContext: string,
   currentUrl: string,
   maxIntents?: number,
-): Promise<StrategyPlan> {
+): Promise<{ plan: StrategyPlan; prompt: string }> {
   const contextParts: string[] = [
     `Goal: ${goal}`,
     `Current URL: ${currentUrl}`,
@@ -45,15 +45,16 @@ Rules:
   try {
     const result = await agent.extract(prompt, PlannerOutputSchema);
     console.log('[PLANNER] Raw LLM result:', JSON.stringify(result));
-    const plan = StrategyPlanSchema.parse(result);
-    return {
-      ...plan,
-      intents: plan.intents.slice(0, effectiveMax),
+    const parsed = StrategyPlanSchema.parse(result);
+    const plan: StrategyPlan = {
+      ...parsed,
+      intents: parsed.intents.slice(0, effectiveMax),
     };
+    return { plan, prompt };
   } catch (error) {
     // Fallback: create a single intent from the goal
     console.error('[PLANNER] LLM planning failed, using single-intent fallback:', error);
-    return {
+    const plan: StrategyPlan = {
       goal,
       intents: [{
         id: 'intent_1',
@@ -63,5 +64,6 @@ Rules:
         confidence: 0,
       }],
     };
+    return { plan, prompt };
   }
 }

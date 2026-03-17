@@ -38,11 +38,13 @@ describe('decideNextAction', () => {
       intentId: 'intent_1',
     });
 
-    const result = await decideNextAction(agent, samplePerception, []);
+    const { action, prompt } = await decideNextAction(agent, samplePerception, []);
 
-    const parsed = AgentActionSchema.safeParse(result);
+    const parsed = AgentActionSchema.safeParse(action);
     expect(parsed.success).toBe(true);
-    expect(result.type).toBe('click');
+    expect(action.type).toBe('click');
+    expect(typeof prompt).toBe('string');
+    expect(prompt.length).toBeGreaterThan(0);
   });
 
   it('passes perception data to agent.extract', async () => {
@@ -88,10 +90,10 @@ describe('decideNextAction', () => {
   it('falls back to extract action on failure', async () => {
     const agent = { extract: vi.fn().mockRejectedValue(new Error('LLM failed')) };
 
-    const result = await decideNextAction(agent, samplePerception, []);
+    const { action } = await decideNextAction(agent, samplePerception, []);
 
     // Should not throw — falls back to extract
-    expect(result.type).toBe('extract');
+    expect(action.type).toBe('extract');
   });
 
   it('returns action with valid type enum', async () => {
@@ -102,7 +104,20 @@ describe('decideNextAction', () => {
       intentId: 'intent_1',
     });
 
-    const result = await decideNextAction(agent, samplePerception, []);
-    expect(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']).toContain(result.type);
+    const { action } = await decideNextAction(agent, samplePerception, []);
+    expect(['click', 'type', 'scroll', 'select', 'submit', 'extract', 'navigate']).toContain(action.type);
+  });
+
+  it('returns the prompt string used for the LLM call', async () => {
+    const agent = mockAgent({
+      type: 'click',
+      elementId: 'el_2',
+      expectedOutcome: 'Login form submitted',
+      intentId: 'intent_1',
+    });
+
+    const { prompt } = await decideNextAction(agent, samplePerception, []);
+    expect(typeof prompt).toBe('string');
+    expect(prompt).toContain('browser automation agent');
   });
 });

@@ -40,7 +40,7 @@ export const planStrategyStep = createStep({
     // Workflow steps are placeholders — real orchestration is in agent-loop.ts
     // Pass a stub agent since workflow steps aren't used directly
     const stubAgent = { extract: async () => ({ goal: inputData.goal, intents: [] }) };
-    const plan = await planStrategy(stubAgent as any, inputData.goal, '', '');
+    const { plan } = await planStrategy(stubAgent as any, inputData.goal, '', '');
     return {
       ...plan,
       agentId: inputData.agentId,
@@ -88,7 +88,8 @@ export const decideActionStep = createStep({
   execute: async ({ inputData }) => {
     const perception = inputData;
     const stubAgent = { extract: async () => ({ type: 'extract', expectedOutcome: '', intentId: '' }) };
-    return decideNextAction(stubAgent as any, perception, []);
+    const { action } = await decideNextAction(stubAgent as any, perception, []);
+    return action;
   },
 });
 

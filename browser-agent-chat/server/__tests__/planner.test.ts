@@ -23,12 +23,14 @@ describe('planStrategy', () => {
       }],
     });
 
-    const result = await planStrategy(agent, 'click Settings', '', 'https://example.com');
+    const { plan, prompt } = await planStrategy(agent, 'click Settings', '', 'https://example.com');
 
-    const parsed = StrategyPlanSchema.safeParse(result);
+    const parsed = StrategyPlanSchema.safeParse(plan);
     expect(parsed.success).toBe(true);
-    expect(result.goal).toBe('click Settings');
-    expect(result.intents).toHaveLength(1);
+    expect(plan.goal).toBe('click Settings');
+    expect(plan.intents).toHaveLength(1);
+    expect(typeof prompt).toBe('string');
+    expect(prompt.length).toBeGreaterThan(0);
   });
 
   it('returns multiple intents for a complex goal', async () => {
@@ -40,8 +42,8 @@ describe('planStrategy', () => {
       ],
     });
 
-    const result = await planStrategy(agent, 'Log in and export report', '', 'https://example.com');
-    expect(result.intents.length).toBeGreaterThan(1);
+    const { plan } = await planStrategy(agent, 'Log in and export report', '', 'https://example.com');
+    expect(plan.intents.length).toBeGreaterThan(1);
   });
 
   it('passes goal and context to agent.extract', async () => {
@@ -62,12 +64,12 @@ describe('planStrategy', () => {
   it('falls back to single intent on extract failure', async () => {
     const agent = { extract: vi.fn().mockRejectedValue(new Error('LLM failed')) };
 
-    const result = await planStrategy(agent, 'test goal', '', 'https://example.com');
+    const { plan } = await planStrategy(agent, 'test goal', '', 'https://example.com');
 
     // Should not throw — falls back gracefully
-    expect(result.goal).toBe('test goal');
-    expect(result.intents).toHaveLength(1);
-    expect(result.intents[0].description).toBe('test goal');
+    expect(plan.goal).toBe('test goal');
+    expect(plan.intents).toHaveLength(1);
+    expect(plan.intents[0].description).toBe('test goal');
   });
 
   it('all returned intents have status "pending"', async () => {
@@ -79,8 +81,8 @@ describe('planStrategy', () => {
       ],
     });
 
-    const result = await planStrategy(agent, 'do tasks', '', 'https://example.com');
-    for (const intent of result.intents) {
+    const { plan } = await planStrategy(agent, 'do tasks', '', 'https://example.com');
+    for (const intent of plan.intents) {
       expect(intent.status).toBe('pending');
     }
   });
@@ -97,10 +99,10 @@ describe('planStrategy', () => {
       ],
     });
 
-    const result = await planStrategy(agent, 'explore everything', '', 'https://example.com', 3);
-    expect(result.intents).toHaveLength(3);
-    expect(result.intents[0].id).toBe('i1');
-    expect(result.intents[2].id).toBe('i3');
+    const { plan } = await planStrategy(agent, 'explore everything', '', 'https://example.com', 3);
+    expect(plan.intents).toHaveLength(3);
+    expect(plan.intents[0].id).toBe('i1');
+    expect(plan.intents[2].id).toBe('i3');
   });
 
   it('includes maxIntents value in the prompt', async () => {
@@ -126,7 +128,18 @@ describe('planStrategy', () => {
     }));
     const agent = mockAgent({ goal: 'big task', intents: manyIntents });
 
-    const result = await planStrategy(agent, 'big task', '', 'https://example.com');
-    expect(result.intents).toHaveLength(7);
+    const { plan } = await planStrategy(agent, 'big task', '', 'https://example.com');
+    expect(plan.intents).toHaveLength(7);
+  });
+
+  it('returns the prompt string used for the LLM call', async () => {
+    const agent = mockAgent({
+      goal: 'test',
+      intents: [{ id: 'i1', description: 'Do it', successCriteria: 'Done', status: 'pending', confidence: 0 }],
+    });
+
+    const { prompt } = await planStrategy(agent, 'test', '', 'https://example.com');
+    expect(typeof prompt).toBe('string');
+    expect(prompt).toContain('strategic planner');
   });
 });

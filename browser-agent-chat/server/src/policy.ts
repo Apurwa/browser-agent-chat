@@ -117,7 +117,7 @@ export async function decideNextAction(
   perception: Perception,
   stepHistory: AgentAction[],
   progress?: ProgressContext,
-): Promise<AgentAction> {
+): Promise<{ action: AgentAction; prompt: string }> {
   const intentId = perception.activeIntent?.id ?? 'unknown';
 
   // Default progress context if not provided (backward compat)
@@ -141,14 +141,16 @@ export async function decideNextAction(
       expectedOutcome: result.expectedOutcome,
       intentId: result.intentId || intentId,
     };
-    return AgentActionSchema.parse(cleaned);
+    const action = AgentActionSchema.parse(cleaned);
+    return { action, prompt };
   } catch (error) {
     console.error('[POLICY] LLM decision failed, falling back to extract:', error instanceof Error ? error.message : error);
-    return {
+    const action: AgentAction = {
       type: 'extract',
       expectedOutcome: 'Gather information about the current page',
       intentId,
     };
+    return { action, prompt };
   }
 }
 
