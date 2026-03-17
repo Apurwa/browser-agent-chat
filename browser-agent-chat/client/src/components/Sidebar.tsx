@@ -97,7 +97,9 @@ export default function Sidebar() {
 
   const renderLogo = () => (
     <button className="sidebar-logo" onClick={() => navigate('/')}>
-      QA
+      {expanded
+        ? <><span className="sidebar-logo-qa">QA</span> <span className="sidebar-logo-agent">Agent</span></>
+        : 'QA'}
     </button>
   );
 
@@ -150,9 +152,6 @@ export default function Sidebar() {
         {expanded && <span className="sidebar-label">{theme === 'dark' ? 'Light' : 'Dark'}</span>}
       </button>
 
-      <button className="sidebar-toggle" onClick={toggle} title={expanded ? 'Collapse' : 'Expand'}>
-        {expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
-      </button>
     </>
   );
 
@@ -317,7 +316,12 @@ export default function Sidebar() {
 
   return (
     <nav className={`sidebar${expanded ? ' sidebar--expanded' : ''}`}>
-      {renderLogo()}
+      <div className="sidebar-top-row">
+        {renderLogo()}
+        <button className="sidebar-toggle" onClick={toggle} title={expanded ? 'Collapse' : 'Expand'}>
+          {expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        </button>
+      </div>
       {renderWorkspaceSection()}
       {isAgentView ? renderAgentCapabilities() : renderOrgAgentList()}
       {renderBottomSection()}
