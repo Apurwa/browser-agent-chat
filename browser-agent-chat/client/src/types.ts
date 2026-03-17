@@ -115,6 +115,14 @@ export interface StartupMetrics {
   steps: MetricStep[];
 }
 
+// === WebSocket Close Codes ===
+
+export const WS_CLOSE_CODES = {
+  SESSION_EXPIRED: 4001,
+  AGENT_NOT_FOUND: 4002,
+  SESSION_TERMINATED: 4003,
+} as const;
+
 // === WebSocket Messages ===
 
 export type ClientMessage =
@@ -148,7 +156,10 @@ export type ServerMessage =
   | { type: 'credential_needed'; agentId: string; domain: string; strategy: string }
   | { type: 'session_evicted'; agentId: string; reason: 'capacity' }
   | { type: 'session_expiring'; remainingSeconds: number }
-  | { type: 'session_new'; agentId: string };
+  | { type: 'session_new'; agentId: string }
+  | { type: 'session_expired'; agentId: string }
+  | { type: 'session_terminated'; agentId: string }
+  | { type: 'agent_not_found'; agentId: string };
 
 // === Chat ===
 

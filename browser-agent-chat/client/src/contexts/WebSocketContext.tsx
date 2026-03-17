@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import type { ClientMessage, ServerMessage, AgentStatus, ChatMessage, Finding, Suggestion } from '../types';
+import { WS_CLOSE_CODES } from '../types';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
 const HEARTBEAT_INTERVAL = 30_000;
@@ -75,6 +76,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   // Stable ref for the active agent so message handlers don't get stale closures
   const activeAgentRef = useRef<string | null>(null);
   const pendingTasksRef = useRef<string[]>([]);
+
+  // Terminal state: true means the session ended intentionally — do NOT reconnect
+  const terminalRef = useRef(false);
 
   // Track the last URL so we can resume at the same page after reconnect
   const lastUrlRef = useRef<string | null>(null);
@@ -288,10 +292,37 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         setSessionWarning(null);
         setSessionEvicted(false);
         break;
+      case 'session_expired':
+        addMessage('system', 'Session expired. Please start a new session.');
+        activeAgentRef.current = null;
+        setActiveAgentId(null);
+        setStatus('disconnected');
+        setPendingCredentialRequest(null);
+        terminalRef.current = true;
+        break;
+      case 'session_terminated':
+        addMessage('system', 'Session terminated.');
+        activeAgentRef.current = null;
+        setActiveAgentId(null);
+        setStatus('disconnected');
+        setPendingCredentialRequest(null);
+        terminalRef.current = true;
+        break;
+      case 'agent_not_found':
+        addMessage('system', 'Agent not found. It may have been deleted.');
+        activeAgentRef.current = null;
+        setActiveAgentId(null);
+        setStatus('disconnected');
+        setPendingCredentialRequest(null);
+        terminalRef.current = true;
+        break;
     }
   }, [addMessage, send]);
 
   const startAgent = useCallback((agentId: string, isReconnect = false) => {
+    // Reset terminal state so reconnect logic is re-enabled for the new session
+    terminalRef.current = false;
+
     // Clear stale state if switching agents
     if (activeAgentRef.current && activeAgentRef.current !== agentId) {
       setMessages([]);
@@ -343,14 +374,33 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     ws.onmessage = handleMessage;
 
-    ws.onclose = () => {
+    ws.onclose = (event: CloseEvent) => {
       setConnected(false);
       setPendingCredentialRequest(null);
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
       }
-      // Reconnect with backoff
+
+      // Don't reconnect if we received a terminal lifecycle message
+      if (terminalRef.current) {
+        terminalRef.current = false; // reset for future connections
+        return;
+      }
+
+      // Also check semantic close codes from server
+      if (
+        event.code === WS_CLOSE_CODES.SESSION_EXPIRED ||
+        event.code === WS_CLOSE_CODES.AGENT_NOT_FOUND ||
+        event.code === WS_CLOSE_CODES.SESSION_TERMINATED
+      ) {
+        activeAgentRef.current = null;
+        setActiveAgentId(null);
+        setStatus('disconnected');
+        return; // Don't reconnect — session is gone
+      }
+
+      // Normal reconnect with backoff
       reconnectTimeoutRef.current = setTimeout(connect, 3000);
     };
 

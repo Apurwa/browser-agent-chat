@@ -24,6 +24,7 @@ import * as browserManager from './browserManager.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 import { initLangfuse, shutdownLangfuse, isLangfuseEnabled } from './langfuse.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
+import { WS_CLOSE_CODES } from './types.js';
 import feedbackRouter from './routes/feedback.js';
 import { processFeedback } from './learning/pipeline.js';
 import { MIN_CLUSTER_RUNS } from './learning/extraction.js';
@@ -185,8 +186,10 @@ wss.on('connection', (ws: WebSocket) => {
         const agent = await getAgent(msg.agentId);
         if (!agent) {
           clientAgents.delete(ws);
+          ws.send(JSON.stringify({ type: 'agent_not_found', agentId: msg.agentId } as ServerMessage));
           ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
           ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+          ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
           return;
         }
 
@@ -243,7 +246,7 @@ wss.on('connection', (ws: WebSocket) => {
       const limits = await sessionManager.checkSessionLimits(agentId);
       if (limits.exceeded) {
         broadcastToAgent(agentId, { type: 'error', message: limits.reason || 'Session limits exceeded' });
-        sessionManager.reap(agentId).catch(err =>
+        sessionManager.reap(agentId, 'expired').catch(err =>
           console.error('[TASK] Reap after limit exceeded failed:', err)
         );
         return;
@@ -309,7 +312,9 @@ wss.on('connection', (ws: WebSocket) => {
       try {
         const agent = await getAgent(agentId);
         if (!agent) {
+          ws.send(JSON.stringify({ type: 'agent_not_found', agentId } as ServerMessage));
           ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
+          ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
           return;
         }
 
@@ -361,7 +366,7 @@ wss.on('connection', (ws: WebSocket) => {
       const exploreLimits = await sessionManager.checkSessionLimits(agentId);
       if (exploreLimits.exceeded) {
         broadcastToAgent(agentId, { type: 'error', message: exploreLimits.reason || 'Session limits exceeded' });
-        sessionManager.reap(agentId).catch(err =>
+        sessionManager.reap(agentId, 'expired').catch(err =>
           console.error('[EXPLORE] Reap after limit exceeded failed:', err)
         );
         return;
@@ -369,7 +374,9 @@ wss.on('connection', (ws: WebSocket) => {
 
       const agent = await getAgent(msg.agentId);
       if (!agent) {
+        ws.send(JSON.stringify({ type: 'agent_not_found', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'error', message: 'Agent not found.' } as ServerMessage));
+        ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
         return;
       }
 

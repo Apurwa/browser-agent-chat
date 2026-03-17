@@ -4,7 +4,8 @@ import * as browserManager from './browserManager.js';
 import { createAgent } from './agent.js';
 import { endSession as dbEndSession, getMessagesBySession, getAgent as dbGetAgent } from './db.js';
 import type { AgentSession } from './agent.js';
-import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
+import type { ServerMessage, ChatMessage, RedisSession, ReapReason } from './types.js';
+import { WS_CLOSE_CODES } from './types.js';
 
 // -- Configuration --
 
@@ -61,7 +62,7 @@ function startDetachedTimer(agentId: string): void {
   const timer = setTimeout(async () => {
     detachedTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await reap(agentId);
+    await reap(agentId, 'terminated');
   }, DETACHED_TIMEOUT_SECONDS * 1000);
 
   detachedTimers.set(agentId, timer);
@@ -86,7 +87,7 @@ function startAbsoluteTimeout(agentId: string): void {
     absoluteTimers.delete(agentId);
     warningTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await reap(agentId);
+    await reap(agentId, 'expired');
   }, ABSOLUTE_TIMEOUT_SECONDS * 1000);
 
   absoluteTimers.set(agentId, absTimer);
@@ -252,7 +253,7 @@ export async function createSession(
 
 // -- Unified cleanup (single exit path for all teardown) --
 
-export async function reap(agentId: string): Promise<void> {
+export async function reap(agentId: string, reason: ReapReason = 'terminated'): Promise<void> {
   // 1. Clear all local timers
   const detTimer = detachedTimers.get(agentId);
   if (detTimer) { clearTimeout(detTimer); detachedTimers.delete(agentId); }
@@ -277,8 +278,25 @@ export async function reap(agentId: string): Promise<void> {
     await browserManager.killBrowser(session.browserPid, session.cdpPort);
   }
 
-  // 5. Notify connected WS clients
+  // 5. Send lifecycle message + close WS connections with semantic codes
+  const lifecycleType: ServerMessage['type'] = reason === 'expired' ? 'session_expired' : 'session_terminated';
+  const closeCode = reason === 'expired'
+    ? WS_CLOSE_CODES.SESSION_EXPIRED
+    : WS_CLOSE_CODES.SESSION_TERMINATED;
+  const closeReason = reason === 'expired' ? 'SESSION_EXPIRED' : 'SESSION_TERMINATED';
+
+  broadcastToClients(agentId, { type: lifecycleType, agentId } as ServerMessage);
   broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
+
+  // Close all WS connections for this agent with the semantic code
+  const clients = wsClients.get(agentId);
+  if (clients) {
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.close(closeCode, closeReason);
+      }
+    }
+  }
 
   // 6. End DB session
   if (session?.dbSessionId) {
@@ -320,7 +338,7 @@ export async function checkSessionLimits(agentId: string): Promise<{ exceeded: b
 // -- Destroy session (delegates to reap) --
 
 export async function destroySession(agentId: string): Promise<void> {
-  await reap(agentId);
+  await reap(agentId, 'terminated');
 }
 
 // -- LRU Eviction --
@@ -361,7 +379,7 @@ export async function evictLRUSession(): Promise<string | null> {
     await onBeforeEvict(target.agentId);
   }
 
-  await reap(target.agentId);
+  await reap(target.agentId, 'evicted');
   return target.agentId;
 }
 
@@ -521,7 +539,7 @@ export async function listActiveSessions(): Promise<string[]> {
 
 export async function handleExpiry(agentId: string): Promise<void> {
   console.log(`[SessionManager] Session ${agentId} expired, reaping...`);
-  await reap(agentId);
+  await reap(agentId, 'expired');
 }
 
 // -- Graceful shutdown --
