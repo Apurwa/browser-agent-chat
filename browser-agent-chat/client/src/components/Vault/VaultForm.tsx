@@ -1,9 +1,8 @@
-import { useState, useCallback, useRef, useEffect, type KeyboardEvent } from 'react';
+import { useState, useCallback, type KeyboardEvent } from 'react';
 import type { VaultEntry } from '../../types/assistant';
 
 interface VaultFormProps {
   editing?: VaultEntry | null;
-  prefillDomain?: string;
   onSave: (data: {
     label: string;
     credential_type: string;
@@ -18,26 +17,17 @@ function normalizeDomain(d: string): string {
   return d.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase().trim();
 }
 
-export default function VaultForm({ editing, prefillDomain, onSave, onCancel }: VaultFormProps) {
-  const labelRef = useRef<HTMLInputElement>(null);
+export default function VaultForm({ editing, onSave, onCancel }: VaultFormProps) {
   const [label, setLabel] = useState(editing?.label ?? '');
   const [credType, setCredType] = useState(editing?.credential_type ?? 'username_password');
   const [username, setUsername] = useState((editing?.metadata?.username as string) ?? '');
   const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [showPasswordField, setShowPasswordField] = useState(!editing);
-  const [domains, setDomains] = useState<string[]>(
-    editing?.domains ?? (prefillDomain ? [prefillDomain] : [])
-  );
+  const [domains, setDomains] = useState<string[]>(editing?.domains ?? []);
   const [domainInput, setDomainInput] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (prefillDomain && labelRef.current) {
-      labelRef.current.focus();
-    }
-  }, [prefillDomain]);
 
   const addDomain = useCallback(() => {
     const normalized = normalizeDomain(domainInput);
@@ -99,7 +89,7 @@ export default function VaultForm({ editing, prefillDomain, onSave, onCancel }: 
 
       <div className="vault-form-row">
         <label>Label</label>
-        <input ref={labelRef} type="text" value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g., Github Work" />
+        <input type="text" value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g., Github Work" />
       </div>
 
       {credType === 'username_password' && (
