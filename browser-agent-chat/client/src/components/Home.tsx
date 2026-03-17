@@ -89,8 +89,8 @@ export default function Home() {
           <p className="home-status-text">Creating agent &amp; launching browser...</p>
         )}
 
-        {!isCreating && !omniboxHasInput && (
-          <>
+        {!isCreating && (
+          <div style={{ visibility: omniboxHasInput ? 'hidden' : 'visible' }}>
             <div className="home-chips">
               <span className="home-chip">Explore &amp; learn features</span>
               <span className="home-chip">Test a specific flow</span>
@@ -100,12 +100,12 @@ export default function Home() {
             {agents.length === 0 && (
               <p className="home-hint">Paste any web app URL to get started</p>
             )}
-          </>
+          </div>
         )}
       </div>
 
       {/* Recent Agents */}
-      {agents.length > 0 && !omniboxHasInput && (
+      {agents.length > 0 && (
         <div className="home-projects">
           <div className="home-projects-header">
             <span className="home-projects-label">Recent Agents</span>
