@@ -190,6 +190,35 @@ export async function waitForSessionReady(agentId: string, maxAttempts = 10): Pr
   return null; // timed out
 }
 
+// -- Execution lock (task mutex) --
+
+const EXEC_LOCK_TTL_MS = 20000;
+
+export async function acquireExecLock(agentId: string, taskId: string): Promise<boolean> {
+  const result = await redis.set(`session:lock:exec:${agentId}`, taskId, 'PX', EXEC_LOCK_TTL_MS, 'NX');
+  return result === 'OK';
+}
+
+export async function releaseExecLock(agentId: string, taskId: string): Promise<boolean> {
+  const owner = await redis.get(`session:lock:exec:${agentId}`);
+  if (owner === taskId) {
+    await redis.del(`session:lock:exec:${agentId}`);
+    return true;
+  }
+  return false;
+}
+
+export async function extendExecLock(agentId: string, taskId: string): Promise<boolean> {
+  const owner = await redis.get(`session:lock:exec:${agentId}`);
+  if (owner !== taskId) return false;
+  await redis.pexpire(`session:lock:exec:${agentId}`, EXEC_LOCK_TTL_MS);
+  return true;
+}
+
+export async function forceReleaseExecLock(agentId: string): Promise<void> {
+  await redis.del(`session:lock:exec:${agentId}`);
+}
+
 // -- Expiry --
 
 let expiryInterval: ReturnType<typeof setInterval> | null = null;

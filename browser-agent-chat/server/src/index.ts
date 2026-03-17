@@ -296,6 +296,38 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Pre-task health check
+      const healthy = await sessionManager.healthCheck(agentId);
+      if (!healthy) {
+        const hBroadcast = sessionManager.makeBroadcast(agentId);
+        hBroadcast({ type: 'thought', content: 'Browser crashed. Restarting session...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser crashed. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Pre-task sanity check
+      const sane = await sessionManager.ensureSessionIsSane(agentId);
+      if (!sane) {
+        const sBroadcast = sessionManager.makeBroadcast(agentId);
+        sBroadcast({ type: 'thought', content: 'Browser unrecoverable. Restarting...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser unrecoverable. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Acquire execution lock (prevents concurrent tasks)
+      const execTaskId = crypto.randomUUID();
+      const locked = await redisStore.acquireExecLock(agentId, execTaskId);
+      if (!locked) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent is busy. Wait for current task to complete.' } as ServerMessage));
+        return;
+      }
+
+      const execLockRenew = setInterval(() => {
+        redisStore.extendExecLock(agentId, execTaskId).catch(() => {});
+      }, 7000);
+
       const userMsg = makeChatMessage('user', msg.content);
       redisStore.pushMessage(agentId, userMsg).catch(() => {});
 
@@ -314,7 +346,6 @@ wss.on('connection', (ws: WebSocket) => {
 
       const baseBroadcast = sessionManager.makeBroadcast(agentId);
       const taskBroadcast = (broadcastMsg: ServerMessage) => {
-        // Intercept taskComplete to update task record and enrich with metadata
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);
           if (activeTask) {
@@ -331,17 +362,21 @@ wss.on('connection', (ws: WebSocket) => {
               success,
               completed_at: new Date().toISOString(),
             }).catch(err => console.error('[TASK] Failed to update task:', err));
-            // Don't delete from activeTasks yet — need it for feedback
             baseBroadcast(enriched);
 
-            // Increment task count after completion
             redisStore.incrementTaskCount(agentId).catch(() => {});
             return;
           }
         }
         baseBroadcast(broadcastMsg);
       };
-      dispatchTask(agentSession, msg.content, taskBroadcast);
+
+      try {
+        await dispatchTask(agentSession, msg.content, taskBroadcast);
+      } finally {
+        clearInterval(execLockRenew);
+        await redisStore.releaseExecLock(agentId, execTaskId);
+      }
 
     } else if (msg.type === 'restart') {
       const agentId = msg.agentId;
@@ -416,8 +451,42 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Pre-explore health check
+      const exploreHealthy = await sessionManager.healthCheck(agentId);
+      if (!exploreHealthy) {
+        const hb = sessionManager.makeBroadcast(agentId);
+        hb({ type: 'thought', content: 'Browser crashed. Restarting session...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser crashed. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Pre-explore sanity check
+      const exploreSane = await sessionManager.ensureSessionIsSane(agentId);
+      if (!exploreSane) {
+        const sb = sessionManager.makeBroadcast(agentId);
+        sb({ type: 'thought', content: 'Browser unrecoverable. Restarting...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser unrecoverable. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Acquire execution lock
+      const exploreExecId = crypto.randomUUID();
+      const exploreLocked = await redisStore.acquireExecLock(agentId, exploreExecId);
+      if (!exploreLocked) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent is busy. Wait for current task to complete.' } as ServerMessage));
+        return;
+      }
+
+      const exploreLockRenew = setInterval(() => {
+        redisStore.extendExecLock(agentId, exploreExecId).catch(() => {});
+      }, 7000);
+
       const agent = await getAgent(msg.agentId);
       if (!agent) {
+        clearInterval(exploreLockRenew);
+        await redisStore.releaseExecLock(agentId, exploreExecId);
         ws.send(JSON.stringify({ type: 'agent_not_found', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'error', message: 'Agent not found.' } as ServerMessage));
         ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
@@ -432,7 +501,10 @@ wss.on('connection', (ws: WebSocket) => {
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
       dispatchExplore(agentSession, agent?.context || null, exploreBroadcast).then(() => {
         redisStore.incrementTaskCount(agentId).catch(() => {});
-      }).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        clearInterval(exploreLockRenew);
+        redisStore.releaseExecLock(agentId, exploreExecId).catch(() => {});
+      });
 
     } else if (msg.type === 'taskFeedback') {
       const agentId = clientAgents.get(ws);

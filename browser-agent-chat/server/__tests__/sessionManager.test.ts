@@ -18,6 +18,10 @@ vi.mock('../src/redisStore.js', () => ({
   removeFromExpiry: vi.fn().mockResolvedValue(undefined),
   incrementTaskCount: vi.fn().mockResolvedValue(1),
   incrementNavCount: vi.fn().mockResolvedValue(1),
+  acquireExecLock: vi.fn().mockResolvedValue(true),
+  releaseExecLock: vi.fn().mockResolvedValue(true),
+  extendExecLock: vi.fn().mockResolvedValue(true),
+  forceReleaseExecLock: vi.fn().mockResolvedValue(undefined),
   getRedis: vi.fn().mockReturnValue({
     set: vi.fn().mockResolvedValue('OK'),
     del: vi.fn().mockResolvedValue(1),

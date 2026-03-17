@@ -308,11 +308,14 @@ export async function reap(agentId: string, reason: ReapReason = 'terminated'): 
   //    deleteSession handles all of these in one call
   await redisStore.deleteSession(agentId);
 
-  // 8. Clear local maps
+  // 8. Release execution lock if held
+  await redisStore.forceReleaseExecLock(agentId);
+
+  // 9. Clear local maps
   agents.delete(agentId);
   wsClients.delete(agentId);
 
-  // 9. Replenish warm pool (fire-and-forget)
+  // 10. Replenish warm pool (fire-and-forget)
   browserManager.replenish().catch(err =>
     console.error(`[REAP] Replenish after reap failed:`, err)
   );
@@ -334,6 +337,84 @@ export async function checkSessionLimits(agentId: string): Promise<{ exceeded: b
     return { exceeded: true, reason: `Session navigation limit reached (${session.navigationCount}/${maxNavs})` };
   }
   return { exceeded: false };
+}
+
+// -- Health check (pre-task) --
+
+export async function healthCheck(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  try {
+    const page = session.connector.getHarness().page;
+    const result = await Promise.race([
+      page.evaluate('true'),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 3000)),
+    ]);
+    return result === 'true' || result === true;
+  } catch {
+    console.error(`[HEALTH] Browser unhealthy for ${agentId}`);
+    await redisStore.setSession(agentId, { healthStatus: 'unhealthy' }).catch(() => {});
+    return false;
+  }
+}
+
+// -- Pre-task sanity check --
+
+export async function ensureSessionIsSane(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  const page = session.connector.getHarness().page;
+
+  try {
+    // 1. Page alive (3s timeout)
+    await Promise.race([
+      page.evaluate('true'),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 3000)),
+    ]);
+
+    // 2. Wait for in-flight navigation
+    await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+
+    // 3. Dismiss blocking overlays (cookie banners, modals, toasts)
+    await page.evaluate(`(() => {
+      var sels = ['[role="dialog"] button[aria-label="Close"]','[role="dialog"] button[aria-label="Dismiss"]','.modal-close','.toast-close'];
+      for (var i = 0; i < sels.length; i++) {
+        var el = document.querySelector(sels[i]);
+        if (el && el.offsetParent !== null) el.click();
+      }
+    })()`).catch(() => {});
+
+    // 4. Document ready
+    const readyState = await page.evaluate('document.readyState');
+    if (readyState !== 'complete') {
+      await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+    }
+
+    return true;
+  } catch {
+    return await softReset(agentId);
+  }
+}
+
+export async function softReset(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  const redisSession = await redisStore.getSession(agentId);
+  const baseUrl = redisSession?.currentUrl || '';
+  if (!baseUrl) return false;
+
+  try {
+    const page = session.connector.getHarness().page;
+    const url = new URL(baseUrl);
+    await page.goto(url.origin, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    console.log(`[SESSION] Soft reset to ${url.origin} for ${agentId}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // -- Destroy session (delegates to reap) --
