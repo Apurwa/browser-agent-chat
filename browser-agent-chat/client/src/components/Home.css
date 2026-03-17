@@ -87,7 +87,7 @@
 .home-omnibox-preview {
   font-size: 12px;
   color: var(--text-dim);
-  margin-top: 8px;
+  margin-top: 4px;
   text-align: center;
   min-height: 18px; /* reserve space so layout doesn't shift */
 }
@@ -317,9 +317,8 @@
 .home-chips {
   display: flex;
   gap: 8px;
-  margin-top: 16px;
-  width: 560px;
-  max-width: 90%;
+  margin-top: 6px;
+  justify-content: center;
 }
 
 .home-chip {
