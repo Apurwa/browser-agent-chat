@@ -29,6 +29,8 @@ import feedbackRouter from './routes/feedback.js';
 import { processFeedback } from './learning/pipeline.js';
 import { MIN_CLUSTER_RUNS } from './learning/extraction.js';
 import { initLearningJobs } from './learning/jobs.js';
+import { apiReference } from '@scalar/express-api-reference';
+import openapiSpec from './openapi.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -36,7 +38,32 @@ const server = http.createServer(app);
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
-// Health check
+// API documentation (Scalar UI)
+app.get('/openapi.json', (_req, res) => res.json(openapiSpec));
+app.use('/api-docs', apiReference({ sources: [{ content: openapiSpec as Record<string, unknown> }] } as any));
+
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Server health check
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Server status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: ok }
+ *                 supabase: { type: boolean }
+ *                 heygenEnabled: { type: boolean }
+ *                 langfuseEnabled: { type: boolean }
+ *                 redis: { type: boolean }
+ *                 activeSessions: { type: integer }
+ */
 app.get('/health', async (_req, res) => {
   const sessions = await sessionManager.listActiveSessions();
   const redisOk = redisStore.getRedis()?.status === 'ready';
