@@ -26,7 +26,7 @@ export default function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
-  const { agents } = useSidebar();
+  const { agents, omniboxActiveRef } = useSidebar();
 
   const agentItems: CmdItem[] = useMemo(
     () =>
@@ -92,6 +92,7 @@ export default function CommandPalette() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        if (omniboxActiveRef.current) return;
         e.preventDefault();
         setOpen((prev) => !prev);
       }

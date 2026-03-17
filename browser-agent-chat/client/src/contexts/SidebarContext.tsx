@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { apiAuthFetch } from '../lib/api';
@@ -9,6 +9,7 @@ interface SidebarContextValue {
   agentsLoading: boolean;
   agentsError: string | null;
   refreshAgents: () => Promise<void>;
+  omniboxActiveRef: React.RefObject<boolean>;
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null);
@@ -18,6 +19,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [agentsError, setAgentsError] = useState<string | null>(null);
+  const omniboxActiveRef = useRef(false);
 
   const refreshAgents = useCallback(async () => {
     setAgentsLoading(true);
@@ -47,7 +49,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   }, [refreshAgents]);
 
   return (
-    <SidebarContext.Provider value={{ agents, agentsLoading, agentsError, refreshAgents }}>
+    <SidebarContext.Provider value={{ agents, agentsLoading, agentsError, refreshAgents, omniboxActiveRef }}>
       {children}
     </SidebarContext.Provider>
   );
