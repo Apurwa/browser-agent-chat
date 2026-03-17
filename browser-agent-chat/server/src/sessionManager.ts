@@ -57,7 +57,7 @@ export function _resetLocalState(): void {
 
 function startDetachedTimer(agentId: string): void {
   // Store detachedAt in Redis for crash recovery
-  redisStore.setSession(agentId, { detachedAt: Date.now() } as Partial<RedisSession>).catch(() => {});
+  redisStore.setSession(agentId, { detachedAt: Date.now(), status: 'disconnected' } as Partial<RedisSession>).catch(() => {});
 
   const timer = setTimeout(async () => {
     detachedTimers.delete(agentId);
