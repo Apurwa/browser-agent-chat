@@ -212,6 +212,42 @@ export async function createSession(
     browser = await browserManager.launchBrowser(agentId);
   }
 
+  // Navigate warm browser to the target URL BEFORE creating the agent session.
+  // Warm browsers may retain pages from previous agent sessions (e.g. a different
+  // agent's app). Without this, login detection and magnitude-core would see a
+  // stale page from a different agent, causing cross-agent contamination.
+  try {
+    const cdpRes = await fetch(`${browser.cdpEndpoint}/json/list`);
+    const targets = await cdpRes.json() as Array<{ url: string; webSocketDebuggerUrl: string }>;
+    const pageTarget = targets.find(t => !t.url.startsWith('devtools://'));
+    if (pageTarget) {
+      const currentUrl = pageTarget.url;
+      const targetHost = new URL(url).hostname;
+      const currentHost = currentUrl.startsWith('about:') ? '' : new URL(currentUrl).hostname;
+      if (currentHost && currentHost !== targetHost) {
+        console.log(`[SESSION] Warm browser on ${currentHost}, navigating to ${url} before agent creation`);
+        // Use CDP to navigate — avoids needing a Playwright page reference at this point
+        const ws = await import('ws');
+        const cdpWs = new ws.default(pageTarget.webSocketDebuggerUrl);
+        await new Promise<void>((resolve, reject) => {
+          cdpWs.on('open', () => {
+            cdpWs.send(JSON.stringify({ id: 1, method: 'Page.navigate', params: { url } }));
+          });
+          cdpWs.on('message', (data: Buffer) => {
+            const msg = JSON.parse(data.toString());
+            if (msg.id === 1) { cdpWs.close(); resolve(); }
+          });
+          cdpWs.on('error', () => { cdpWs.close(); resolve(); });
+          setTimeout(() => { cdpWs.close(); resolve(); }, 10000);
+        });
+        // Wait for page to start loading
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  } catch (err) {
+    console.warn('[SESSION] Pre-navigation of warm browser failed (non-fatal):', err);
+  }
+
   const broadcastFn = makeBroadcast(agentId);
 
   // Create agent via CDP
