@@ -212,7 +212,8 @@ body {
 }
 
 .sidebar-logo-agent {
-  color: var(--text-dim);
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 .sidebar-logo:hover {
