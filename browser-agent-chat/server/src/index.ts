@@ -128,6 +128,9 @@ function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessag
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
 }
 
+// Track in-progress session creations to deduplicate concurrent start messages
+const pendingCreations = new Map<string, Promise<void>>();
+
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
 
@@ -154,6 +157,23 @@ wss.on('connection', (ws: WebSocket) => {
 
     if (msg.type === 'start') {
       console.log('[START] Starting agent for:', msg.agentId);
+
+      // Deduplicate: if a session creation is already in progress for this agent, just wait and reattach
+      if (pendingCreations.has(msg.agentId)) {
+        console.log('[START] Session creation already in progress, waiting...');
+        try {
+          await pendingCreations.get(msg.agentId);
+          // Creation finished — reattach
+          if (sessionManager.getAgent(msg.agentId)) {
+            sessionManager.addClient(msg.agentId, ws);
+            clientAgents.set(ws, msg.agentId);
+            await sessionManager.sendSnapshot(msg.agentId, ws);
+          }
+        } catch {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session creation failed' } as ServerMessage));
+        }
+        return;
+      }
 
       const prevAgentId = clientAgents.get(ws);
       if (prevAgentId && prevAgentId !== msg.agentId) {
@@ -182,7 +202,8 @@ wss.on('connection', (ws: WebSocket) => {
       // arriving during async agent creation can find the agent.
       clientAgents.set(ws, msg.agentId);
 
-      try {
+      // Wrap creation in pendingCreations for deduplication
+      const creationPromise = (async () => {
         const agent = await getAgent(msg.agentId);
         if (!agent) {
           clientAgents.delete(ws);
@@ -221,12 +242,19 @@ wss.on('connection', (ws: WebSocket) => {
             agentSession.loginInProgress = false;
           });
         }
+      })();
+
+      pendingCreations.set(msg.agentId, creationPromise);
+      try {
+        await creationPromise;
       } catch (err) {
         console.error('[START] Error creating agent:', err);
         clientAgents.delete(ws);
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+      } finally {
+        pendingCreations.delete(msg.agentId);
       }
 
     } else if (msg.type === 'task') {
