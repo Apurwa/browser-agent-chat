@@ -239,6 +239,16 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Check session lifecycle limits before dispatching
+      const limits = await sessionManager.checkSessionLimits(agentId);
+      if (limits.exceeded) {
+        broadcastToAgent(agentId, { type: 'error', message: limits.reason || 'Session limits exceeded' });
+        sessionManager.reap(agentId).catch(err =>
+          console.error('[TASK] Reap after limit exceeded failed:', err)
+        );
+        return;
+      }
+
       const userMsg = makeChatMessage('user', msg.content);
       redisStore.pushMessage(agentId, userMsg).catch(() => {});
 
@@ -276,6 +286,9 @@ wss.on('connection', (ws: WebSocket) => {
             }).catch(err => console.error('[TASK] Failed to update task:', err));
             // Don't delete from activeTasks yet — need it for feedback
             baseBroadcast(enriched);
+
+            // Increment task count after completion
+            redisStore.incrementTaskCount(agentId).catch(() => {});
             return;
           }
         }
@@ -344,6 +357,16 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Check session lifecycle limits before dispatching
+      const exploreLimits = await sessionManager.checkSessionLimits(agentId);
+      if (exploreLimits.exceeded) {
+        broadcastToAgent(agentId, { type: 'error', message: exploreLimits.reason || 'Session limits exceeded' });
+        sessionManager.reap(agentId).catch(err =>
+          console.error('[EXPLORE] Reap after limit exceeded failed:', err)
+        );
+        return;
+      }
+
       const agent = await getAgent(msg.agentId);
       if (!agent) {
         ws.send(JSON.stringify({ type: 'error', message: 'Agent not found.' } as ServerMessage));
@@ -356,7 +379,9 @@ wss.on('connection', (ws: WebSocket) => {
       redisStore.pushMessage(agentId, exploreMsg).catch(() => {});
 
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
-      dispatchExplore(agentSession, agent?.context || null, exploreBroadcast);
+      dispatchExplore(agentSession, agent?.context || null, exploreBroadcast).then(() => {
+        redisStore.incrementTaskCount(agentId).catch(() => {});
+      }).catch(() => {});
 
     } else if (msg.type === 'taskFeedback') {
       const agentId = clientAgents.get(ws);

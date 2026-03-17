@@ -12,6 +12,11 @@ const MAX_CONCURRENT_BROWSERS = parseInt(process.env.MAX_CONCURRENT_BROWSERS || 
 const DETACHED_TIMEOUT_SECONDS = parseInt(process.env.DETACHED_TIMEOUT_SECONDS || '120', 10);
 const ABSOLUTE_TIMEOUT_SECONDS = parseInt(process.env.ABSOLUTE_TIMEOUT_SECONDS || '1800', 10);
 
+// -- Session lifecycle limits --
+
+const MAX_TASKS = () => parseInt(process.env.MAX_TASKS_PER_SESSION || '20', 10);
+const MAX_NAVIGATIONS = () => parseInt(process.env.MAX_NAVIGATIONS_PER_SESSION || '50', 10);
+
 // -- Local state (thin cache, NOT source of truth — Redis is) --
 
 const agents = new Map<string, AgentSession>();
@@ -178,6 +183,7 @@ export function makeBroadcast(agentId: string): (msg: ServerMessage) => void {
       redisStore.setScreenshot(agentId, msg.data).catch(() => {});
     } else if (msg.type === 'nav') {
       redisStore.setSession(agentId, { currentUrl: msg.url }).catch(() => {});
+      redisStore.incrementNavCount(agentId).catch(() => {});
     } else if (msg.type === 'status') {
       const statusMap: Record<string, RedisSession['status']> = {
         idle: 'idle', working: 'working', error: 'idle', disconnected: 'disconnected',
@@ -291,6 +297,24 @@ export async function reap(agentId: string): Promise<void> {
   browserManager.replenish().catch(err =>
     console.error(`[REAP] Replenish after reap failed:`, err)
   );
+}
+
+// -- Session lifecycle checks --
+
+export async function checkSessionLimits(agentId: string): Promise<{ exceeded: boolean; reason?: string }> {
+  const session = await redisStore.getSession(agentId);
+  if (!session) return { exceeded: false };
+
+  const maxTasks = MAX_TASKS();
+  const maxNavs = MAX_NAVIGATIONS();
+
+  if (session.taskCount >= maxTasks) {
+    return { exceeded: true, reason: `Session task limit reached (${session.taskCount}/${maxTasks})` };
+  }
+  if (session.navigationCount >= maxNavs) {
+    return { exceeded: true, reason: `Session navigation limit reached (${session.navigationCount}/${maxNavs})` };
+  }
+  return { exceeded: false };
 }
 
 // -- Destroy session (delegates to reap) --
