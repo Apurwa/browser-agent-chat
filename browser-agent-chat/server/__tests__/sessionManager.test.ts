@@ -13,6 +13,11 @@ vi.mock('../src/redisStore.js', () => ({
   pushMessage: vi.fn().mockResolvedValue(undefined),
   getMessages: vi.fn().mockResolvedValue([]),
   listSessions: vi.fn().mockResolvedValue([]),
+  deleteScreenshot: vi.fn().mockResolvedValue(undefined),
+  deleteMessages: vi.fn().mockResolvedValue(undefined),
+  removeFromExpiry: vi.fn().mockResolvedValue(undefined),
+  incrementTaskCount: vi.fn().mockResolvedValue(1),
+  incrementNavCount: vi.fn().mockResolvedValue(1),
   getRedis: vi.fn().mockReturnValue({
     set: vi.fn().mockResolvedValue('OK'),
     del: vi.fn().mockResolvedValue(1),
@@ -25,6 +30,7 @@ vi.mock('../src/browserManager.js', () => ({
   launchBrowser: vi.fn().mockResolvedValue({ pid: 12345, port: 19300, cdpEndpoint: 'http://localhost:19300' }),
   killBrowser: vi.fn().mockResolvedValue(undefined),
   isAlive: vi.fn().mockResolvedValue(true),
+  replenish: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock agent — factory must not reference top-level variables (hoisting rules)
@@ -178,6 +184,9 @@ const mockRedisSession = {
   createdAt: 1710000000000,
   lastActivityAt: 1710000000000,
   detachedAt: 0,
+  taskCount: 0,
+  navigationCount: 0,
+  healthStatus: 'healthy' as const,
 };
 
 describe('sessionManager — recovery', () => {

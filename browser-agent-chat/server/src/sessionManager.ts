@@ -56,7 +56,7 @@ function startDetachedTimer(agentId: string): void {
   const timer = setTimeout(async () => {
     detachedTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await destroySession(agentId);
+    await reap(agentId);
   }, DETACHED_TIMEOUT_SECONDS * 1000);
 
   detachedTimers.set(agentId, timer);
@@ -81,7 +81,7 @@ function startAbsoluteTimeout(agentId: string): void {
     absoluteTimers.delete(agentId);
     warningTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await destroySession(agentId);
+    await reap(agentId);
   }, ABSOLUTE_TIMEOUT_SECONDS * 1000);
 
   absoluteTimers.set(agentId, absTimer);
@@ -206,46 +206,12 @@ export async function createSession(
   dbSessionId: string | null,
   userId: string | null = null,
 ): Promise<AgentSession> {
-  // Claim warm browser or launch new
+  // Claim warm browser or launch new.
+  // With kill-and-replace, warm browsers always start on about:blank,
+  // so no pre-navigation CDP hack is needed.
   let browser = await browserManager.claimWarm(agentId);
   if (!browser) {
     browser = await browserManager.launchBrowser(agentId);
-  }
-
-  // Navigate warm browser to the target URL BEFORE creating the agent session.
-  // Warm browsers may retain pages from previous agent sessions (e.g. a different
-  // agent's app). Without this, login detection and magnitude-core would see a
-  // stale page from a different agent, causing cross-agent contamination.
-  try {
-    const cdpRes = await fetch(`${browser.cdpEndpoint}/json/list`);
-    const targets = await cdpRes.json() as Array<{ url: string; webSocketDebuggerUrl: string }>;
-    const pageTarget = targets.find(t => !t.url.startsWith('devtools://'));
-    if (pageTarget) {
-      const currentUrl = pageTarget.url;
-      const targetHost = new URL(url).hostname;
-      const currentHost = currentUrl.startsWith('about:') ? '' : new URL(currentUrl).hostname;
-      if (currentHost && currentHost !== targetHost) {
-        console.log(`[SESSION] Warm browser on ${currentHost}, navigating to ${url} before agent creation`);
-        // Use CDP to navigate — avoids needing a Playwright page reference at this point
-        const ws = await import('ws');
-        const cdpWs = new ws.default(pageTarget.webSocketDebuggerUrl);
-        await new Promise<void>((resolve, reject) => {
-          cdpWs.on('open', () => {
-            cdpWs.send(JSON.stringify({ id: 1, method: 'Page.navigate', params: { url } }));
-          });
-          cdpWs.on('message', (data: Buffer) => {
-            const msg = JSON.parse(data.toString());
-            if (msg.id === 1) { cdpWs.close(); resolve(); }
-          });
-          cdpWs.on('error', () => { cdpWs.close(); resolve(); });
-          setTimeout(() => { cdpWs.close(); resolve(); }, 10000);
-        });
-        // Wait for page to start loading
-        await new Promise(r => setTimeout(r, 2000));
-      }
-    }
-  } catch (err) {
-    console.warn('[SESSION] Pre-navigation of warm browser failed (non-fatal):', err);
   }
 
   const broadcastFn = makeBroadcast(agentId);
@@ -268,6 +234,9 @@ export async function createSession(
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     detachedAt: 0,
+    taskCount: 0,
+    navigationCount: 0,
+    healthStatus: 'healthy',
   });
 
   agents.set(agentId, agentSession);
@@ -275,10 +244,10 @@ export async function createSession(
   return agentSession;
 }
 
-// -- Destroy session --
+// -- Unified cleanup (single exit path for all teardown) --
 
-export async function destroySession(agentId: string): Promise<void> {
-  // Clean up timers
+export async function reap(agentId: string): Promise<void> {
+  // 1. Clear all local timers
   const detTimer = detachedTimers.get(agentId);
   if (detTimer) { clearTimeout(detTimer); detachedTimers.delete(agentId); }
   const absTimer = absoluteTimers.get(agentId);
@@ -286,31 +255,48 @@ export async function destroySession(agentId: string): Promise<void> {
   const warnTimer = warningTimers.get(agentId);
   if (warnTimer) { clearTimeout(warnTimer); warningTimers.delete(agentId); }
 
+  // 2. Read session from Redis (before we delete it)
   const session = await redisStore.getSession(agentId);
 
-  // Remove from local maps
+  // 3. Close agent session (drops event listeners, does NOT close browser context)
   const agentSession = agents.get(agentId);
-  agents.delete(agentId);
-
-  // Notify connected clients
-  broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
-  wsClients.delete(agentId);
-
-  // Close agent (drops event listeners only, does NOT close browser context)
   if (agentSession) {
     await agentSession.close().catch(err =>
-      console.error(`[SessionManager] Error closing agent for ${agentId}:`, err)
+      console.error(`[REAP] Error closing agent for ${agentId}:`, err)
     );
   }
 
+  // 4. Kill browser process
   if (session) {
-    // Kill browser process
     await browserManager.killBrowser(session.browserPid, session.cdpPort);
-    // End DB session
-    if (session.dbSessionId) await dbEndSession(session.dbSessionId);
-    // Remove from Redis
-    await redisStore.deleteSession(agentId);
   }
+
+  // 5. Notify connected WS clients
+  broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
+
+  // 6. End DB session
+  if (session?.dbSessionId) {
+    await dbEndSession(session.dbSessionId);
+  }
+
+  // 7. Delete all Redis keys (session, screenshot, messages, expiry)
+  //    deleteSession handles all of these in one call
+  await redisStore.deleteSession(agentId);
+
+  // 8. Clear local maps
+  agents.delete(agentId);
+  wsClients.delete(agentId);
+
+  // 9. Replenish warm pool (fire-and-forget)
+  browserManager.replenish().catch(err =>
+    console.error(`[REAP] Replenish after reap failed:`, err)
+  );
+}
+
+// -- Destroy session (delegates to reap) --
+
+export async function destroySession(agentId: string): Promise<void> {
+  await reap(agentId);
 }
 
 // -- LRU Eviction --
@@ -351,7 +337,7 @@ export async function evictLRUSession(): Promise<string | null> {
     await onBeforeEvict(target.agentId);
   }
 
-  await destroySession(target.agentId);
+  await reap(target.agentId);
   return target.agentId;
 }
 
@@ -510,8 +496,8 @@ export async function listActiveSessions(): Promise<string[]> {
 // -- Handle expiry (called by polling loop) --
 
 export async function handleExpiry(agentId: string): Promise<void> {
-  console.log(`[SessionManager] Session ${agentId} expired, destroying...`);
-  await destroySession(agentId);
+  console.log(`[SessionManager] Session ${agentId} expired, reaping...`);
+  await reap(agentId);
 }
 
 // -- Graceful shutdown --
