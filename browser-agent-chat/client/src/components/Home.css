@@ -324,9 +324,9 @@
 .home-chip {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 20px;
-  padding: 6px 14px;
-  font-size: 12px;
+  border-radius: 14px;
+  padding: 4px 10px;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
