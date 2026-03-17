@@ -271,8 +271,8 @@
   background: var(--text-body);
   color: var(--bg-primary);
   border: none;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   font-size: 18px;
   cursor: pointer;
