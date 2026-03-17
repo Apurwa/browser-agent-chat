@@ -21,6 +21,9 @@
   font-size: 28px;
   font-weight: 600;
   margin-bottom: 24px;
+  width: 560px;
+  max-width: 90%;
+  text-align: left;
 }
 
 /* Omnibox */
@@ -315,6 +318,8 @@
   display: flex;
   gap: 8px;
   margin-top: 16px;
+  width: 560px;
+  max-width: 90%;
 }
 
 .home-chip {
