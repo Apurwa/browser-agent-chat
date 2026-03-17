@@ -176,9 +176,12 @@ export interface RedisSession {
   createdAt: number;
   lastActivityAt: number;
   detachedAt: number;  // 0 = not detached, Date.now() = detach timestamp
+  taskCount: number;
+  navigationCount: number;
+  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
 }
 
-export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted';
+export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted' | 'allocating';
 
 // === Navigation Graph ===
 
