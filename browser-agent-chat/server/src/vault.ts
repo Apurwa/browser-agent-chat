@@ -12,7 +12,7 @@ export const pendingCredentialRequests = new Map<string, {
 }>();
 
 // Select columns for metadata-only queries (excludes encrypted_secret)
-const VAULT_METADATA_COLS = 'id, user_id, label, credential_type, metadata, domains, scope, version, use_count, last_used_at, last_used_by_agent, created_by_agent, created_at, updated_at, enabled';
+const VAULT_METADATA_COLS = 'id, user_id, label, credential_type, metadata, domains, scope, version, use_count, last_used_at, last_used_by_agent, created_by_agent, created_at, updated_at';
 
 // --- Core CRUD ---
 
@@ -182,7 +182,7 @@ export async function getCredentialForAgent(agentId: string, domain: string): Pr
   for (const row of data as any[]) {
     const cred = row.credentials_vault;
     if (cred.deleted_at) continue;
-    if (cred.enabled === false) continue;
+    // enabled column removed — all non-deleted credentials are active
     if (cred.domains.includes(normalizedDomain)) {
       return cred as VaultEntry;
     }
