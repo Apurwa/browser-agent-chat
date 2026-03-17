@@ -8,15 +8,14 @@
   overflow-y: auto;
 }
 
-/* Center content — true vertical centering */
+/* Center content — true vertical centering, never shrinks */
 .home-center {
-  flex: 1;
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 0 32px;
-  flex-shrink: 0;
 }
 
 .home-headline {
@@ -378,8 +377,6 @@
 
 .home-projects-grid--expanded {
   flex-wrap: wrap;
-  max-height: 200px;
-  overflow-y: auto;
 }
 
 .home-project-card {
