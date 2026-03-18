@@ -997,6 +997,30 @@ body {
   background: var(--accent-light);
 }
 
+.chat-status-indicator {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.chat-status-indicator.reconnecting {
+  color: var(--accent);
+}
+
+.chat-status-banner {
+  font-size: 12px;
+  padding: 6px 12px;
+  text-align: center;
+}
+
+.chat-status-banner.warning {
+  color: var(--accent);
+  background: var(--bg-hover);
+  border-top: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
 .chat-input {
   display: flex;
   gap: 8px;
