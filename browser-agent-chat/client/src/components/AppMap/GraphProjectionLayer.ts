@@ -145,7 +145,7 @@ export function projectNavigation(
       type: nodeType,
       label: (page.metadata.pageTitle as string) || (page.metadata.urlPattern as string),
       urlPattern: page.metadata.urlPattern as string,
-      parent: parentMap.get(page.id),
+      parent: page.id === rootId ? undefined : parentMap.get(page.id),
       state: { ...DEFAULT_NODE_STATE, exploration: explorationState },
       featureCount: pageFeatures.length,
       criticality: getHighestCriticality(pageFeatures),

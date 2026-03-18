@@ -88,7 +88,7 @@ export function useAppMap(agentId: string): AppMapData {
     try {
       const token = await getAccessToken();
       const res = await apiAuthFetch(`/api/agents/${agentId}/map?mode=${mode}`, token);
-      if (!res.ok) throw new Error('Failed to load map');
+      if (!res.ok) throw new Error(`Failed to load map: ${res.status}`);
       const data = await res.json();
 
       const prevIds = prevNodeIdsRef.current;
@@ -108,16 +108,13 @@ export function useAppMap(agentId: string): AppMapData {
       } else {
         const canonical = buildCanonicalGraph(data);
         const projected = projectNavigation(canonical);
-        useGraphStore.getState().setGraph(projected.nodes, projected.edges);
-
-        // Auto-expand the root node so the initial view shows sections
+        // Set graph and auto-expand root in a single store update
         const rootNode = projected.nodes.find(n => n.type === 'root');
-        if (rootNode) {
-          const { expandedNodeIds, toggleExpand } = useGraphStore.getState();
-          if (!expandedNodeIds.has(rootNode.id)) {
-            toggleExpand(rootNode.id);
-          }
-        }
+        useGraphStore.setState(state => {
+          const expanded = new Set(state.expandedNodeIds);
+          if (rootNode) expanded.add(rootNode.id);
+          return { nodes: projected.nodes, edges: projected.edges, expandedNodeIds: expanded };
+        });
       }
 
       setUnlinkedSuggestions(data.unlinkedSuggestions || []);

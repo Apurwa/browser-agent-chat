@@ -717,8 +717,9 @@ export async function executeExplore(
 
   session.stepsHistory.length = 0;
 
+  // Reuse caller's trace if one exists, otherwise create a new one
   const langfuse = getLangfuse();
-  const trace = langfuse?.trace({
+  const trace = session.currentTrace ?? langfuse?.trace({
     name: 'explore',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
@@ -874,9 +875,9 @@ export async function executeTask(
   // Reset step counter for this task
   session.stepsHistory.length = 0;
 
-  // Create Langfuse trace for this task
+  // Reuse caller's trace (e.g. from dispatchTask) or create a new one
   const langfuse = getLangfuse();
-  const trace = langfuse?.trace({
+  const trace = session.currentTrace ?? langfuse?.trace({
     name: 'user-task',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },

@@ -140,8 +140,8 @@ export async function executeAgentLoop(
   const maxSteps = taskType === 'explore' ? 50 : 20;
   const budget = createBudgetTracker({ maxSteps });
 
-  // Create Langfuse trace for this task (null-safe — disabled when unconfigured)
-  const trace = createTaskTrace(goal, taskType, session.agentId, session.sessionId);
+  // Reuse caller's trace (from dispatchTask/dispatchExplore) or create a new one
+  const trace = session.currentTrace ?? createTaskTrace(goal, taskType, session.agentId, session.sessionId);
 
   try {
     // 1. Load world context

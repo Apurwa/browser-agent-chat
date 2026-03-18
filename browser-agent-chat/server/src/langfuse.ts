@@ -13,6 +13,8 @@ export interface TraceSummary {
 }
 
 export interface TraceObservation {
+  id: string;
+  type: 'GENERATION' | 'SPAN';
   name: string | null;
   startTime: string;
   endTime: string | null;
@@ -20,6 +22,11 @@ export interface TraceObservation {
   model: string | null;
   tokenCount: number | null;
   level: string;
+  input: unknown;
+  output: unknown;
+  metadata: Record<string, unknown> | null;
+  statusMessage: string | null;
+  parentObservationId: string | null;
 }
 
 export interface TraceDetail {
@@ -160,6 +167,8 @@ export async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
     }
 
     return {
+      id: obs.id,
+      type: (obs.type === 'GENERATION' ? 'GENERATION' : 'SPAN') as 'GENERATION' | 'SPAN',
       name: obs.name ?? null,
       startTime: obs.startTime,
       endTime: obs.endTime ?? null,
@@ -167,6 +176,11 @@ export async function fetchTraceDetail(traceId: string): Promise<TraceDetail> {
       model: obs.model ?? null,
       tokenCount,
       level: obs.level ?? 'DEFAULT',
+      input: obs.input ?? null,
+      output: obs.output ?? null,
+      metadata: (obs.metadata as Record<string, unknown>) ?? null,
+      statusMessage: obs.statusMessage ?? null,
+      parentObservationId: obs.parentObservationId ?? null,
     };
   });
 

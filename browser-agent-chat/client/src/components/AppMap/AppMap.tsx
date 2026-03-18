@@ -114,6 +114,13 @@ function AppMapInner({ agentId, onSendTask, onExplore }: AppMapProps) {
           },
         }
       }))
+
+      // Fit view after layout — double rAF ensures React has committed the DOM update
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          reactFlow.fitView({ padding: 0.15, duration: 300 })
+        })
+      })
     })
   }, [visibleNodes, visibleEdges, isReady, selectedNodeId, searchQuery, handleExploreNode, mapNodes, mapEdges, computeLayout, setRfNodes, setRfEdges])
 
