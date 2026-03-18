@@ -13,6 +13,7 @@ import EvalDashboard from './components/EvalDashboard';
 import ObservabilityPanel from './components/ObservabilityPanel';
 import ObservabilityDashboard from './components/ObservabilityDashboard';
 import VaultPage from './components/Vault/VaultPage';
+import AgentDetailLayout from './components/AgentDetailLayout';
 import { useHealth } from './contexts/HealthContext';
 
 function TracesGuard() {
@@ -42,12 +43,15 @@ export default function App() {
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
         <Route element={<ProtectedRoute><SidebarLayout /></ProtectedRoute>}>
           <Route index element={<Home />} />
-          <Route path="/agents/:id/testing" element={<TestingView />} />
-          <Route path="/agents/:id/findings" element={<FindingsDashboard />} />
-          <Route path="/agents/:id/memory" element={<MemoryViewer />} />
-          <Route path="/agents/:id/settings" element={<AgentSettings />} />
-          <Route path="/agents/:id/evals" element={<EvalDashboard />} />
-          <Route path="/agents/:id/traces" element={<TracesGuard />} />
+          <Route path="/agents/:id" element={<AgentDetailLayout />}>
+            <Route path="testing" element={<TestingView />} />
+            <Route path="findings" element={<FindingsDashboard />} />
+            <Route path="memory" element={<MemoryViewer />} />
+            <Route path="settings" element={<AgentSettings />} />
+            <Route path="evals" element={<EvalDashboard />} />
+            <Route path="traces" element={<TracesGuard />} />
+            <Route index element={<Navigate to="testing" replace />} />
+          </Route>
           <Route path="/vault" element={<VaultPage />} />
           <Route path="/observability" element={<DashboardGuard />} />
         </Route>
