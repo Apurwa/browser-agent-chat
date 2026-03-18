@@ -50,7 +50,22 @@ export const agentCycleStep = createStep({
   execute: async ({ inputData, suspend, resumeData }) => {
     const ctx = getSessionContext(inputData.sessionId);
     const { session } = ctx;
-    const page = session.connector.getHarness().page;
+
+    // Guard: check if browser/page is still alive before doing anything
+    let page: any;
+    try {
+      page = session.connector.getHarness().page;
+      await page.evaluate('1'); // quick liveness check
+    } catch (err) {
+      console.error('[AGENT-CYCLE] Browser/page is dead:', err);
+      ctx.broadcast({ type: 'error', message: 'Browser session ended' });
+      return {
+        ...inputData,
+        taskComplete: false,
+        escalated: true,
+        budgetSnapshot: ctx.budget.snapshot(),
+      };
+    }
 
     // 0. Check for login page (proactive credential detection)
     if (!resumeData) {
@@ -75,6 +90,7 @@ export const agentCycleStep = createStep({
     // After resume from credential suspension, credential has been injected
     // by the WebSocket handler. Continue with the cycle.
 
+    try {
     const urlBefore = await getPageUrl(page);
 
     // 1. Perceive current state
@@ -299,6 +315,23 @@ export const agentCycleStep = createStep({
       taskComplete,
       escalated,
     };
+
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      const isBrowserDead = errMsg.includes('Target page') || errMsg.includes('browser has been closed') || errMsg.includes('Target closed')
+      if (isBrowserDead) {
+        console.error('[AGENT-CYCLE] Browser died mid-step:', errMsg)
+        ctx.broadcast({ type: 'error', message: 'Browser session ended unexpectedly' })
+        return {
+          ...inputData,
+          taskComplete: false,
+          escalated: true,
+          budgetSnapshot: ctx.budget.snapshot(),
+        }
+      }
+      // Re-throw non-browser errors
+      throw err
+    }
   },
 });
 
