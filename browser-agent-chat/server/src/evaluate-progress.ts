@@ -1,5 +1,6 @@
 import type {
   TaskMemory,
+  AgentAction,
   ActionVerification,
   EvaluateProgressDecision,
   StuckSignals,
@@ -7,38 +8,36 @@ import type {
 import type { BudgetTracker } from './budget.js';
 
 // ---------------------------------------------------------------------------
-// evaluateProgress — pure function, no LLM, no I/O
+// evaluateProgress — pure function, no LLM, no I/O, no mutation
 // ---------------------------------------------------------------------------
 
 /**
  * Decide the next high-level control action for the agent loop.
  *
  * Logic:
- *  1. Update stuck signals based on last action outcome.
- *  2. If budget exhausted → 'done'
+ *  1. Compute stuck signals based on last action outcome.
+ *  2. If budget exhausted -> 'done'
  *  3. If stuck rule fires:
  *     - repeatedAction >= 3 OR samePage >= 4 OR failedExecution >= 2
  *       AND stepsSinceProgress >= 5
- *     → if replans available → 'replan', else → 'escalate_to_user'
- *  4. If lastVerification failed → 'retry_action'
- *  5. Otherwise → 'continue'
+ *     -> if replans available -> 'replan', else -> 'escalate_to_user'
+ *  4. If lastVerification failed -> 'retry_action'
+ *  5. Otherwise -> 'continue'
  *
- * Intent completion check (→ VERIFY_INTENT) is handled by the caller in the workflow.
+ * Intent completion check (-> VERIFY_INTENT) is handled by the caller in the workflow.
  *
- * Note: This function mutates `taskMemory.stuckSignals` in place to reflect
- * the updated counts after processing the last action. This is intentional —
- * the caller owns the memory object and should treat evaluateProgress as the
- * authoritative updater of stuck signal state.
+ * PURE: This function does NOT mutate taskMemory. The computed signals are
+ * returned alongside the decision so the caller can apply them immutably.
  */
 export function evaluateProgress(
-  taskMemory: TaskMemory,
+  taskMemory: Readonly<TaskMemory>,
   budget: BudgetTracker,
   lastVerification: ActionVerification,
   urlBefore: string,
   urlAfter: string,
-): { decision: EvaluateProgressDecision; reason: string } {
-  // 1. Update stuck signals
-  const signals = updateStuckSignals(
+): { decision: EvaluateProgressDecision; reason: string; signals: StuckSignals } {
+  // 1. Compute stuck signals (no mutation)
+  const signals = computeStuckSignals(
     taskMemory.stuckSignals,
     taskMemory.actionsAttempted,
     lastVerification,
@@ -46,12 +45,9 @@ export function evaluateProgress(
     urlAfter,
   );
 
-  // Persist updated signals back into memory (caller-owned object)
-  taskMemory.stuckSignals = signals;
-
   // 2. Budget exhausted
   if (budget.exhausted()) {
-    return { decision: 'done', reason: 'Agent budget exhausted' };
+    return { decision: 'done', reason: 'Agent budget exhausted', signals };
   }
 
   // 3. Stuck rule
@@ -66,11 +62,13 @@ export function evaluateProgress(
       return {
         decision: 'replan',
         reason: buildStuckReason(signals),
+        signals,
       };
     }
     return {
       decision: 'escalate_to_user',
       reason: `${buildStuckReason(signals)}. No replan attempts remaining.`,
+      signals,
     };
   }
 
@@ -78,25 +76,68 @@ export function evaluateProgress(
   if (!lastVerification.passed) {
     if (signals.failedExecutionCount >= 3) {
       if (budget.canReplan()) {
-        return { decision: 'replan', reason: `${signals.failedExecutionCount} consecutive action failures — replanning` };
+        return { decision: 'replan', reason: `${signals.failedExecutionCount} consecutive action failures — replanning`, signals };
       }
-      return { decision: 'escalate_to_user', reason: `${signals.failedExecutionCount} consecutive action failures. No replan attempts remaining.` };
+      return { decision: 'escalate_to_user', reason: `${signals.failedExecutionCount} consecutive action failures. No replan attempts remaining.`, signals };
     }
     const errorDetail = lastVerification.findings?.[0]?.description ?? '';
-    return { decision: 'retry_action', reason: `Last action verification failed${errorDetail ? ': ' + errorDetail : ''}` };
+    return { decision: 'retry_action', reason: `Last action verification failed${errorDetail ? ': ' + errorDetail : ''}`, signals };
   }
 
   // 5. Continue
-  return { decision: 'continue', reason: 'Progress detected, continuing execution' };
+  return { decision: 'continue', reason: 'Progress detected, continuing execution', signals };
+}
+
+// ---------------------------------------------------------------------------
+// updateTaskMemory — pure function that returns a new TaskMemory
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a new TaskMemory with updated fields after an action + verification.
+ * Does NOT mutate the input memory.
+ */
+export function updateTaskMemory(
+  memory: Readonly<TaskMemory>,
+  action: AgentAction,
+  verification: ActionVerification,
+  urlBefore: string,
+  urlAfter: string,
+): TaskMemory {
+  const updatedActions = [...memory.actionsAttempted, action];
+
+  const updatedFailed = verification.passed
+    ? memory.failedActions
+    : [...memory.failedActions, action];
+
+  const updatedPages =
+    urlAfter && !memory.visitedPages.includes(urlAfter)
+      ? [...memory.visitedPages, urlAfter]
+      : [...memory.visitedPages];
+
+  const updatedSignals = computeStuckSignals(
+    memory.stuckSignals,
+    updatedActions,
+    verification,
+    urlBefore,
+    urlAfter,
+  );
+
+  return {
+    ...memory,
+    actionsAttempted: updatedActions,
+    failedActions: updatedFailed,
+    visitedPages: updatedPages,
+    stuckSignals: updatedSignals,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function updateStuckSignals(
-  prev: StuckSignals,
-  actionsAttempted: TaskMemory['actionsAttempted'],
+function computeStuckSignals(
+  prev: Readonly<StuckSignals>,
+  actionsAttempted: ReadonlyArray<AgentAction>,
   lastVerification: ActionVerification,
   urlBefore: string,
   urlAfter: string,

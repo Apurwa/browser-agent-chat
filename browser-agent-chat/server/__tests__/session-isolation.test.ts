@@ -336,24 +336,24 @@ describe('Progress Evaluation', () => {
     const mem = makeMemory({
       stuckSignals: { repeatedActionCount: 0, samePageCount: 3, failedExecutionCount: 0, stepsSinceProgress: 4 },
     });
-    evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/b');
-    expect(mem.stuckSignals.stepsSinceProgress).toBe(0);
+    const { signals } = evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/b');
+    expect(signals.stepsSinceProgress).toBe(0);
   });
 
   it('48. Same page increments samePageCount', () => {
     const mem = makeMemory({
       stuckSignals: { repeatedActionCount: 0, samePageCount: 0, failedExecutionCount: 0, stepsSinceProgress: 0 },
     });
-    evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
-    expect(mem.stuckSignals.samePageCount).toBe(1);
+    const { signals } = evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
+    expect(signals.samePageCount).toBe(1);
   });
 
   it('49. Failed verification increments failedExecutionCount', () => {
     const mem = makeMemory({
       stuckSignals: { repeatedActionCount: 0, samePageCount: 0, failedExecutionCount: 0, stepsSinceProgress: 0 },
     });
-    evaluateProgress(mem, makeBudget(), failingVerification, '/a', '/a');
-    expect(mem.stuckSignals.failedExecutionCount).toBe(1);
+    const { signals } = evaluateProgress(mem, makeBudget(), failingVerification, '/a', '/a');
+    expect(signals.failedExecutionCount).toBe(1);
   });
 
   it('50. Reason string includes stuck signals', () => {
@@ -371,8 +371,8 @@ describe('Progress Evaluation', () => {
       actionsAttempted: [action1, action2],
       stuckSignals: { repeatedActionCount: 0, samePageCount: 0, failedExecutionCount: 0, stepsSinceProgress: 0 },
     });
-    evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
-    expect(mem.stuckSignals.repeatedActionCount).toBe(1);
+    const { signals } = evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
+    expect(signals.repeatedActionCount).toBe(1);
   });
 
   it('52. Different actions → no repeated count increase', () => {
@@ -382,8 +382,8 @@ describe('Progress Evaluation', () => {
       actionsAttempted: [action1, action2],
       stuckSignals: { repeatedActionCount: 0, samePageCount: 0, failedExecutionCount: 0, stepsSinceProgress: 0 },
     });
-    evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
-    expect(mem.stuckSignals.repeatedActionCount).toBe(0);
+    const { signals } = evaluateProgress(mem, makeBudget(), passingVerification, '/a', '/a');
+    expect(signals.repeatedActionCount).toBe(0);
   });
 });
 

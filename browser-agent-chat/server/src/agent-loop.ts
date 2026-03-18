@@ -401,14 +401,17 @@ export async function executeAgentLoop(
         }
       }
 
-      // j. Evaluate progress
-      const { decision, reason } = evaluateProgress(
+      // j. Evaluate progress (pure — does not mutate taskMemory)
+      const { decision, reason, signals } = evaluateProgress(
         taskMemory,
         budget,
         verification,
         urlBefore,
         urlAfter,
       );
+
+      // Apply the updated stuck signals immutably
+      taskMemory = { ...taskMemory, stuckSignals: signals };
 
       broadcast({ type: 'thought', content: reason });
 
