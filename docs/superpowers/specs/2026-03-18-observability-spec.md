@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-18
 **Status:** Active — updated as new signals are added
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-18 (v3 — AI Engineer review incorporated)
 
 ---
 
@@ -238,44 +238,64 @@ Task complete
 
 ## Implementation Priorities
 
-### Phase 1: LLM Call Tracking (Our Code)
+### Phase 1: LLM Call Interception — The Black Box First
 
-Wrap planner, policy, and executor `agent.extract()` calls with Langfuse generations that capture:
-- Full prompt text
-- Full response object
-- Token counts (from magnitude-core's response if available)
-- Duration
-- Model name
+**Rationale:** If you can't see what magnitude-core is sending to the Anthropic API, you can't distinguish Policy failures (your logic) from Execution failures (the core agent's logic). This is the #1 blind spot.
+
+**Approach:** Anthropic SDK auto-instrumentation first. If magnitude-core uses `@anthropic-ai/sdk`, Langfuse's `observeAnthropicSDK()` wrapper captures every call automatically. If that doesn't work, HTTP-level interception via a fetch/undici hook.
+
+**What gets captured:**
+- Full request body (model, system prompt, messages, tools, temperature)
+- Full response body (completion, tokens, finish_reason, cache stats)
+- Duration, cost computation
+- Prompt version tag
+
+**Also in Phase 1:** Wrap our planner/policy/executor `agent.extract()` calls with Langfuse generations (full prompt + response + `PROMPT_VERSIONS` tag).
+
+**Effort:** 2-3 days
+**Impact:** Full LLM visibility across all 6 call sources. Enables prompt debugging and cost tracking.
+
+### Phase 2: Session/Task Linking + Cost Aggregation
+
+Create a Langfuse session trace when the browser session starts. All task traces link to it via `sessionId`. Aggregate cost/tokens at task and session level.
+
+**What gets added:**
+- Session-level trace with lifecycle events (start, end, reason)
+- `TaskCostSummary` in every trace output (llmCalls, tokens, cost by module)
+- Redis session fields: `totalLlmCalls`, `totalTokensInput`, `totalTokensOutput`, `totalCostUsd`
+- Session end event with totals
 
 **Effort:** 1-2 days
-**Impact:** Covers 3/6 LLM call sources. Enables prompt debugging for planning and policy decisions.
+**Impact:** Cost visibility per task, per session, per agent. Enables "how much does each agent cost?" dashboard.
 
-### Phase 2: Session-Level Aggregation
+### Phase 3: Failure Taxonomy + HITL Tracing
 
-Create a Langfuse session trace when the browser session starts. All task traces link to it via `sessionId`. Session trace updated on end with:
-- Total tasks, navigations, LLM calls, tokens, cost
-- End reason
-- Health transitions
+Classify every failure with `FailureCategory`. Enable human-in-the-loop pause/resume traces.
 
-**Effort:** 1 day
-**Impact:** Groups all tasks under one session. Enables session-level cost analysis.
+**What gets added:**
+- `classifyFailure()` function applied to every error
+- `FailureRecord` attached to spans and aggregated at task level
+- HITL events: `human_intervention_requested`, `human_intervention_resolved`
+- Session state: `paused` / `active` / `terminated`
+- New endpoint: `GET /api/observability/failures?category=...`
 
-### Phase 3: Magnitude-Core Interception
+**Effort:** 1-2 days
+**Impact:** PM goldmine — "30% of failures are element_not_found" enables targeted fixes. HITL tracking enables measuring agent autonomy improvement over time.
 
-Options (pick one):
-- **(a) HTTP proxy:** Intercept all outbound Anthropic API calls at the HTTP client level. Captures every LLM call regardless of source.
-- **(b) Magnitude event hooks:** If magnitude-core emits LLM call events, subscribe and log them.
-- **(c) Anthropic SDK instrumentation:** Langfuse has auto-instrumentation for the Anthropic SDK. If magnitude-core uses the standard SDK, this may work.
+### Phase 4: Perception Artifacts + DOM Tracking
 
-**Effort:** 2-3 days (depends on approach)
-**Impact:** Covers remaining 3/6 LLM call sources. Full visibility into agent.act() internals.
+Heavy artifacts — only build once the piping is solid.
 
-### Phase 4: Orchestration Graph
+**What gets added:**
+- Conditional `StepSnapshot` capture (full on URL change or failure, lightweight otherwise)
+- `domSnapshotHash` with delta detection
+- `consecutiveNoOps` counter with soft_reset trigger
+- `tabCount` + `activeTabId` tracking
+- Screenshot refs in Redis (1hr TTL, not inline)
+- Orchestration graph spans for pre-task checks (health, sanity, login, exec lock)
 
-Add spans for pre-task checks (health, sanity, login, exec lock) so the full orchestration flow is visible in Langfuse as a connected trace tree.
-
-**Effort:** 1 day
-**Impact:** Complete debugging visibility. Any failure traceable to exact orchestration step.
+**Effort:** 2-3 days
+**Impact:** Root-cause debugging for DOM-level failures. Catches tab drift, state stasis, and invisible UI changes.
 
 ---
 
@@ -331,10 +351,20 @@ interface StepSnapshot {
   url: string;
   pageTitle: string;
   domSnapshotHash: string;  // SHA-256 of serialized DOM structure (lightweight)
-  screenshotRef?: string;   // S3/Redis key to screenshot (not inline)
+  domHashChanged: boolean;  // true if hash differs from previous step
+  screenshotRef?: string;   // Redis key to screenshot (not inline, 1hr TTL)
   elementCount: number;
   visibleText?: string;     // first 500 chars of visible text (for search)
+  tabCount: number;         // number of open tabs/pages in browser context
+  activeTabId: string;      // which tab is focused (catches target="_blank" drift)
+  consecutiveNoOps: number; // steps with identical domHash (triggers soft_reset at 3)
 }
+
+// IMPORTANT: StepSnapshot is captured conditionally to avoid happy-path latency:
+//   - ALWAYS: url, pageTitle, elementCount, tabCount, activeTabId
+//   - ON URL CHANGE: domSnapshotHash, visibleText
+//   - ON FAILURE: domSnapshotHash, visibleText, screenshotRef
+//   - NEVER on happy-path extract-only steps (saves 200-500ms per step)
 
 // Task-level cost aggregation
 interface TaskCostSummary {
@@ -550,6 +580,136 @@ Every `FailureRecord` is:
 1. Attached to the relevant Langfuse span as metadata
 2. Aggregated at task level in trace output
 3. Queryable via `/api/observability/failures?category=llm_error&from=...&to=...`
+
+---
+
+## Stuck Detector Refinement
+
+### Consecutive No-Op Counter
+
+The existing stuck signals (`repeatedActionCount`, `samePageCount`) detect behavioral loops, but miss **DOM-level stasis** — the agent scrolls, refreshes, or waits without changing anything.
+
+```ts
+// In agent-loop, after each step:
+if (currentDomHash === previousDomHash) {
+  consecutiveNoOps++;
+} else {
+  consecutiveNoOps = 0;
+}
+
+// Trigger soft reset at threshold
+if (consecutiveNoOps >= 3) {
+  broadcast({ type: 'thought', content: 'DOM unchanged for 3 steps — triggering soft reset' });
+  await softReset(agentId);
+  consecutiveNoOps = 0;
+}
+```
+
+This catches: page refreshes that don't change state, scroll-without-discovery loops, wait-for-element patterns on static pages.
+
+---
+
+## Human-in-the-Loop (HITL) Tracing
+
+For B2B usage, agents will hit states where human intervention is needed. The trace must not "end" — it must **pause**.
+
+### Session-Level Signal
+
+```ts
+// Add to Redis session state
+interface RedisSession {
+  // ... existing fields ...
+  totalHumanInterventions: number;
+  currentState: 'active' | 'paused' | 'terminated';
+  pauseReason?: string;  // 'budget_exhausted' | 'auth_required' | 'user_requested'
+}
+```
+
+### Trace Representation
+
+When the agent needs help:
+
+```ts
+// Instead of ending the trace:
+trace.event({
+  name: 'human_intervention_requested',
+  input: {
+    reason: 'auth_required',
+    domain: 'console.qa.redblock.ai',
+    context: 'Login page detected, no vault credentials for this domain',
+  },
+});
+trace.update({ metadata: { state: 'paused', pausedAt: Date.now() } });
+
+// When human provides input (e.g., credential):
+trace.event({
+  name: 'human_intervention_resolved',
+  input: {
+    resolution: 'credential_provided',
+    durationMs: 45000,  // how long the human took
+  },
+});
+trace.update({ metadata: { state: 'active' } });
+```
+
+### Signals to Track
+
+| Signal | Level | Purpose |
+|--------|-------|---------|
+| `total_human_interventions` | Session | How often humans are needed |
+| `pause_duration_ms` | Task | How long the agent waited for human |
+| `pause_reason` | Task | What triggered the pause |
+| `resolution_type` | Task | How it was resolved |
+
+---
+
+## Prompt Versioning
+
+When tuning prompts, knowing which version produced a result is critical for A/B comparison.
+
+### Prompt Version IDs
+
+Every LLM-calling module tags its calls with a version:
+
+```ts
+const PROMPT_VERSIONS = {
+  planner: 'planner_v3.0_structured_intents',
+  policy: 'policy_v2.1_progress_context',
+  executor: 'executor_v1.0_extract_schema',
+  taskPrompt: 'task_v2.0_credential_policy',
+} as const;
+```
+
+### Langfuse Metadata
+
+Every generation span includes the prompt version:
+
+```ts
+trace.generation({
+  name: 'policy-decision',
+  input: { ... },
+  metadata: {
+    promptVersion: PROMPT_VERSIONS.policy,
+    // ... other metadata
+  },
+});
+```
+
+### Querying by Prompt Version
+
+```sql
+-- Compare success rates across planner versions
+SELECT
+  metadata->>'promptVersion' as version,
+  COUNT(*) as total,
+  COUNT(*) FILTER (WHERE output->>'success' = 'true') as successes,
+  AVG(latency) as avg_latency
+FROM observations
+WHERE name = 'planner'
+GROUP BY metadata->>'promptVersion'
+```
+
+This replaces weeks of manual A/B testing with a single query.
 
 ---
 
