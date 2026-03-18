@@ -5,11 +5,6 @@ import { useWS } from '../contexts/WebSocketContext';
 import { useHealth } from '../contexts/HealthContext';
 import { useSidebar } from '../contexts/SidebarContext';
 import {
-  FlaskConical,
-  Bug,
-  BrainCircuit,
-  ClipboardCheck,
-  Settings,
   Sun,
   Moon,
   PanelLeftClose,
@@ -40,7 +35,7 @@ export default function Sidebar() {
   const location = useLocation();
   const { id: agentId } = useParams<{ id: string }>();
   const { theme, toggleTheme } = useTheme();
-  const { findingsCount, pendingSuggestionCount, activeAgentId } = useWS();
+  const { activeAgentId } = useWS();
   const { langfuseEnabled } = useHealth();
   const { agents, agentsLoading, agentsError } = useSidebar();
 
@@ -59,7 +54,6 @@ export default function Sidebar() {
     });
   }, []);
 
-  const isActive = (path: string) => location.pathname.includes(path);
   const isExactActive = (path: string) => location.pathname === path;
 
   // Close dropdown on outside click or Escape
@@ -129,29 +123,10 @@ export default function Sidebar() {
     <>
       <div className="sidebar-spacer" />
 
-      {isAgentView ? (
-        <button
-          className={`sidebar-item${isActive('settings') ? ' active' : ''}`}
-          onClick={() => navigate(`/agents/${agentId}/settings`)}
-        >
-          <Settings size={18} />
-          {expanded && <span className="sidebar-label">Settings</span>}
-        </button>
-      ) : (
-        <button
-          className="sidebar-item disabled"
-          title="Coming soon"
-        >
-          <Settings size={18} />
-          {expanded && <span className="sidebar-label">Settings</span>}
-        </button>
-      )}
-
       <button className="sidebar-item" onClick={toggleTheme}>
         {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
         {expanded && <span className="sidebar-label">{theme === 'dark' ? 'Light' : 'Dark'}</span>}
       </button>
-
     </>
   );
 
@@ -176,31 +151,33 @@ export default function Sidebar() {
           {expanded ? 'No agents yet' : '—'}
         </div>
       )}
-      {agents.map((agent) => (
-        <button
-          key={agent.id}
-          className="sidebar-agent-item"
-          onClick={() => navigate(`/agents/${agent.id}/testing`)}
-          title={expanded ? undefined : agent.name}
-        >
-          {expanded ? (
-            <>
+      <div className="sidebar-agents-scroll">
+        {agents.map((agent) => (
+          <button
+            key={agent.id}
+            className="sidebar-agent-item"
+            onClick={() => navigate(`/agents/${agent.id}/testing`)}
+            title={expanded ? undefined : agent.name}
+          >
+            {expanded ? (
+              <>
+                <span
+                  className="sidebar-agent-dot"
+                  data-active={isAgentActive(agent.id)}
+                />
+                <span className="sidebar-label">{agent.name}</span>
+              </>
+            ) : (
               <span
-                className="sidebar-agent-dot"
+                className="sidebar-agent-initial"
                 data-active={isAgentActive(agent.id)}
-              />
-              <span className="sidebar-label">{agent.name}</span>
-            </>
-          ) : (
-            <span
-              className="sidebar-agent-initial"
-              data-active={isAgentActive(agent.id)}
-            >
-              {agent.name.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </button>
-      ))}
+              >
+                {agent.name.charAt(0).toUpperCase()}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
     </>
   );
 
@@ -279,53 +256,6 @@ export default function Sidebar() {
           );
         })()}
       </div>
-
-      {/* Capability items */}
-      <button
-        className={`sidebar-item sidebar-capability${isActive('testing') ? ' active' : ''}`}
-        onClick={() => navigate(`/agents/${agentId}/testing`)}
-      >
-        <FlaskConical size={18} />
-        {expanded && <span className="sidebar-label">Testing</span>}
-      </button>
-
-      <button
-        className={`sidebar-item sidebar-capability${isActive('findings') ? ' active' : ''}`}
-        onClick={() => navigate(`/agents/${agentId}/findings`)}
-      >
-        <Bug size={18} />
-        {expanded && <span className="sidebar-label">Findings</span>}
-        {findingsCount > 0 && <span className="sidebar-badge">{findingsCount}</span>}
-      </button>
-
-      <button
-        className={`sidebar-item sidebar-capability${isActive('memory') ? ' active' : ''}`}
-        onClick={() => navigate(`/agents/${agentId}/memory`)}
-      >
-        <BrainCircuit size={18} />
-        {expanded && <span className="sidebar-label">Memory</span>}
-        {pendingSuggestionCount > 0 && (
-          <span className="sidebar-badge sidebar-badge--warn">{pendingSuggestionCount}</span>
-        )}
-      </button>
-
-      <button
-        className={`sidebar-item sidebar-capability${isActive('evals') ? ' active' : ''}`}
-        onClick={() => navigate(`/agents/${agentId}/evals`)}
-      >
-        <ClipboardCheck size={18} />
-        {expanded && <span className="sidebar-label">Evals</span>}
-      </button>
-
-      {langfuseEnabled && (
-        <button
-          className={`sidebar-item sidebar-capability${isActive('traces') ? ' active' : ''}`}
-          onClick={() => navigate(`/agents/${agentId}/traces`)}
-        >
-          <Activity size={18} />
-          {expanded && <span className="sidebar-label">Traces</span>}
-        </button>
-      )}
     </>
   );
 

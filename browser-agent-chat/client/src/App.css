@@ -531,13 +531,21 @@ body {
   background: var(--bg-hover);
 }
 
-/* Capability items (indented in agent view) */
-.sidebar-capability {
-  /* Slight indent in expanded mode handled via padding */
+/* Scrollable agent list */
+.sidebar-agents-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
 }
 
-.sidebar--expanded .sidebar-capability {
-  padding-left: 20px;
+.sidebar-agents-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-agents-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 2px;
 }
 
 /* ===========================
