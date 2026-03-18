@@ -10,6 +10,7 @@ import FindingsDashboard from './components/FindingsDashboard';
 import MemoryViewer from './components/MemoryViewer';
 import AgentSettings from './components/AgentSettings';
 import EvalDashboard from './components/EvalDashboard';
+import AppMapView from './components/AppMapView';
 import ObservabilityPanel from './components/ObservabilityPanel';
 import ObservabilityDashboard from './components/ObservabilityDashboard';
 import VaultPage from './components/Vault/VaultPage';
@@ -45,6 +46,7 @@ export default function App() {
           <Route index element={<Home />} />
           <Route path="/agents/:id" element={<AgentDetailLayout />}>
             <Route path="testing" element={<TestingView />} />
+            <Route path="map" element={<AppMapView />} />
             <Route path="findings" element={<FindingsDashboard />} />
             <Route path="memory" element={<MemoryViewer />} />
             <Route path="settings" element={<AgentSettings />} />

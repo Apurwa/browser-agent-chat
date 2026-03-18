@@ -3,7 +3,7 @@ import { useHealth } from '../contexts/HealthContext';
 import { useWS } from '../contexts/WebSocketContext';
 import { useSidebar } from '../contexts/SidebarContext';
 import type { LucideIcon } from 'lucide-react';
-import { FlaskConical, Bug, BrainCircuit, ClipboardCheck, Activity, Settings } from 'lucide-react';
+import { FlaskConical, Map, Bug, BrainCircuit, ClipboardCheck, Activity, Settings } from 'lucide-react';
 import './AgentDetailLayout.css';
 
 type BadgeKey = 'findingsCount' | 'pendingSuggestionCount';
@@ -18,6 +18,7 @@ interface TabDef {
 
 const TABS: readonly TabDef[] = [
   { label: 'Testing', path: 'testing', icon: FlaskConical },
+  { label: 'App Graph', path: 'map', icon: Map },
   { label: 'Findings', path: 'findings', icon: Bug, badgeKey: 'findingsCount' },
   { label: 'Memory', path: 'memory', icon: BrainCircuit, badgeKey: 'pendingSuggestionCount' },
   { label: 'Evals', path: 'evals', icon: ClipboardCheck },
