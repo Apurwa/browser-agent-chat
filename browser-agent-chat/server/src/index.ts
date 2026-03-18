@@ -14,7 +14,7 @@ import tracesRouter from './routes/traces.js';
 import observabilityRouter from './routes/observability.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
-import { dispatchTask, dispatchExplore } from './agent-dispatch.js';
+import { dispatchTask, dispatchExplore, USE_MASTRA_WORKFLOW } from './agent-dispatch.js';
 import { pendingCredentialRequests } from './vault.js';
 import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask, getNavNodeById } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
@@ -652,9 +652,40 @@ wss.on('connection', (ws: WebSocket) => {
     } else if (msg.type === 'credential_provided') {
       const agentId = clientAgents.get(ws);
       if (!agentId) return;
-      const pending = pendingCredentialRequests.get(agentId);
-      if (pending) {
-        pending.resolve(msg.credentialId);
+
+      const agentSession = sessionManager.getAgent(agentId);
+
+      if (USE_MASTRA_WORKFLOW && agentSession && (agentSession as any).currentWorkflowRunId) {
+        // Mastra workflow path — resume the suspended workflow run
+        try {
+          const { mastra } = await import('./mastra/index.js');
+          const workflow = mastra.getWorkflow('multiStepWorkflow');
+          const runId = (agentSession as any).currentWorkflowRunId as string;
+
+          // Look up the run from the workflow's active runs
+          const run = workflow.runs.get(runId);
+          if (!run) {
+            console.error('[MASTRA] Cannot resume: run not found for', runId);
+            const errBroadcast = sessionManager.makeBroadcast(agentId);
+            errBroadcast({ type: 'error', message: 'Workflow not found — please retry' });
+          } else {
+            const { agentCycleStep } = await import('./mastra/steps/agent-cycle.js');
+            await run.resume({
+              step: agentCycleStep,
+              resumeData: { credentialId: msg.credentialId },
+            });
+          }
+        } catch (err) {
+          console.error('[MASTRA] Resume failed:', err);
+          const errBroadcast = sessionManager.makeBroadcast(agentId);
+          errBroadcast({ type: 'error', message: 'Failed to resume after credential' });
+        }
+      } else {
+        // Existing Promise-based path
+        const pending = pendingCredentialRequests.get(agentId);
+        if (pending) {
+          pending.resolve(msg.credentialId);
+        }
       }
       return;
     }
