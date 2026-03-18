@@ -1,6 +1,7 @@
-import { Outlet, useParams, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, useParams, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { useHealth } from '../contexts/HealthContext';
 import { useWS } from '../contexts/WebSocketContext';
+import { useSidebar } from '../contexts/SidebarContext';
 import type { LucideIcon } from 'lucide-react';
 import { FlaskConical, Bug, BrainCircuit, ClipboardCheck, Activity, Settings } from 'lucide-react';
 import './AgentDetailLayout.css';
@@ -30,6 +31,11 @@ export default function AgentDetailLayout() {
   const navigate = useNavigate();
   const { langfuseEnabled } = useHealth();
   const ws = useWS();
+  const { agents } = useSidebar();
+
+  if (!id) return <Navigate to="/" replace />;
+
+  const currentAgent = agents.find(a => a.id === id);
 
   const badges: Record<BadgeKey, number> = {
     findingsCount: ws.findingsCount,
@@ -42,6 +48,9 @@ export default function AgentDetailLayout() {
 
   return (
     <div className="agent-detail">
+      <div className="agent-detail-header">
+        <span className="agent-detail-name">{currentAgent?.name ?? 'Agent'}</span>
+      </div>
       <div className="agent-tabs">
         {visibleTabs.map((tab) => {
           const isActive = location.pathname.includes(`/${tab.path}`);
