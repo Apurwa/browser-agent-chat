@@ -1,0 +1,63 @@
+Layer,Test Case,Module,Description,Status,Priority,Exists,Test File,Runs In,Est. Time
+1-Unit,URL change → confidence boost,verify-action.ts,URL changes between before/after should increase verification confidence,Not Started,P0-Critical,No,__tests__/verify-action.test.ts,CI,<1s
+1-Unit,Data extracted → confidence boost,verify-action.ts,Successful data extraction should increase confidence,Not Started,P0-Critical,No,__tests__/verify-action.test.ts,CI,<1s
+1-Unit,Error present → passed=false,verify-action.ts,Any error in result should set passed to false,Not Started,P0-Critical,No,__tests__/verify-action.test.ts,CI,<1s
+1-Unit,No change → baseline confidence,verify-action.ts,No URL change and no data → baseline 0.6 confidence,Not Started,P1-High,No,__tests__/verify-action.test.ts,CI,<1s
+1-Unit,Success criteria keyword match → passed,verify-intent.ts,Intent success criteria keywords found in URL/title → passed,Not Started,P0-Critical,No,__tests__/verify-intent.test.ts,CI,<1s
+1-Unit,No keyword match → not passed,verify-intent.ts,No criteria keywords found → not passed,Not Started,P0-Critical,No,__tests__/verify-intent.test.ts,CI,<1s
+1-Unit,Fuzzy partial match,verify-intent.ts,Partial keyword overlap should still pass with lower confidence,Not Started,P1-High,No,__tests__/verify-intent.test.ts,CI,<1s
+1-Unit,Empty criteria,verify-intent.ts,Empty success criteria string → default pass,Not Started,P2-Medium,No,__tests__/verify-intent.test.ts,CI,<1s
+1-Unit,All intents completed → achieved,planner-confirm.ts,Task mode: all intents completed → goal achieved,Not Started,P0-Critical,No,__tests__/planner-confirm.test.ts,CI,<1s
+1-Unit,Task mode partial → not achieved,planner-confirm.ts,Task mode: some intents pending → not achieved,Not Started,P0-Critical,No,__tests__/planner-confirm.test.ts,CI,<1s
+1-Unit,Explore mode ≥1 completed → achieved,planner-confirm.ts,Explore mode: at least one intent done → achieved,Not Started,P1-High,No,__tests__/planner-confirm.test.ts,CI,<1s
+1-Unit,Zero intents,planner-confirm.ts,Edge case: empty intents array,Not Started,P2-Medium,No,__tests__/planner-confirm.test.ts,CI,<1s
+1-Unit,Exhaustion by steps,budget.ts,Budget exhausted when stepsUsed >= maxSteps,Not Started,P0-Critical,No,__tests__/budget.test.ts,CI,<1s
+1-Unit,Exhaustion by time,budget.ts,Budget exhausted when elapsed >= maxTimeMs,Not Started,P0-Critical,No,__tests__/budget.test.ts,CI,<1s
+1-Unit,canReplan() limits,budget.ts,canReplan returns false after maxReplanAttempts,Not Started,P1-High,No,__tests__/budget.test.ts,CI,<1s
+1-Unit,snapshot() shape,budget.ts,Snapshot returns correct stepsUsed/stepsRemaining/etc,Not Started,P1-High,No,__tests__/budget.test.ts,CI,<1s
+1-Unit,warning() at 80%,budget.ts,Warning fires at 80% of steps or time,Not Started,P2-Medium,No,__tests__/budget.test.ts,CI,<1s
+1-Unit,First active intent,getCurrentIntent,Returns first intent with status=active,Not Started,P0-Critical,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Fallback to first pending,getCurrentIntent,No active → returns first pending,Not Started,P1-High,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,All completed → null,getCurrentIntent,All intents completed → returns null,Not Started,P1-High,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Empty array → null,getCurrentIntent,Empty intents array → returns null,Not Started,P2-Medium,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Marks active as completed,advanceIntent,Current active intent becomes completed,Not Started,P0-Critical,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Activates next pending,advanceIntent,First pending becomes active after advance,Not Started,P0-Critical,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Returns new array (no mutation),advanceIntent,Original array unchanged after advance,Not Started,P1-High,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Single intent,advanceIntent,Single intent → completed after advance,Not Started,P2-Medium,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Fires at threshold,checkHeuristicOverride,3 repeated + 3 steps without progress → override,Not Started,P1-High,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Returns null below threshold,checkHeuristicOverride,Below stuck thresholds → null,Not Started,P1-High,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,No nav elements → null,checkHeuristicOverride,Stuck but no nav elements available → null,Not Started,P2-Medium,No,__tests__/agent-loop-helpers.test.ts,CI,<1s
+1-Unit,Exact boundary: 3 repeated,evaluateProgress,Exactly 3 repeated actions triggers stuck,Not Started,P1-High,Yes (extend),__tests__/evaluate-progress-pure.test.ts,CI,<1s
+1-Unit,Exact boundary: 4 same-page,evaluateProgress,Exactly 4 same-page count triggers stuck,Not Started,P1-High,Yes (extend),__tests__/evaluate-progress-pure.test.ts,CI,<1s
+1-Unit,Budget exhausted → done,evaluateProgress,Budget.exhausted() true → decision=done,Not Started,P0-Critical,Yes (extend),__tests__/evaluate-progress-pure.test.ts,CI,<1s
+1-Unit,No mutation of stuckSignals,evaluateProgress,evaluateProgress does not mutate input,Done,P0-Critical,Yes,__tests__/evaluate-progress-pure.test.ts,CI,<1s
+1-Unit,updateTaskMemory returns new object,updateTaskMemory,Input not mutated,Done,P0-Critical,Yes,__tests__/evaluate-progress-pure.test.ts,CI,<1s
+2-Step Integration,Happy path cycle,agentCycleStep,Perceive → decide → execute → verify → continue,Not Started,P0-Critical,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,Browser death mid-step,agentCycleStep,page.evaluate throws Target closed → escalated=true,Not Started,P0-Critical,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,Login page detected → suspend,agentCycleStep,detectLoginPage returns true → calls suspend(),Not Started,P1-High,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,Replan after stuck,agentCycleStep,evaluateProgress returns replan → planStrategy called,Not Started,P1-High,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,All 5 decisions,agentCycleStep,continue / retry_action / replan / done / escalate_to_user,Not Started,P0-Critical,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,LLM returns valid plan,planStrategyStep,Mock planStrategy returns 3 intents → output shape correct,Not Started,P1-High,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,LLM fails → fallback,planStrategyStep,planStrategy throws → single-intent fallback,Not Started,P1-High,No,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,loginDone wait,initializeStep,Waits for loginDone promise before proceeding,Done,P1-High,Yes,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,page.evaluate fails,initializeStep,Returns fallback URL on page.evaluate error,Done,P1-High,Yes,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,Broadcasts taskComplete + idle,cleanupStep,Two broadcasts in correct order,Done,P0-Critical,Yes,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,agent.act() called,executeSingleShotStep,Calls agent.act with goal string,Done,P0-Critical,Yes,__tests__/mastra-steps-integration.test.ts,CI,<5s
+2-Step Integration,Budget accessible from registry,Session registry,Budget tracker methods work from registry context,Done,P1-High,Yes,__tests__/mastra-steps-integration.test.ts,CI,<5s
+3-Workflow E2E,Multi-step happy path,multiStepWorkflow,3-iteration loop → task complete → workflow success,Not Started,P0-Critical,No,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Multi-step replan,multiStepWorkflow,Stuck after 5 steps → replan → completes,Not Started,P1-High,No,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Budget exhaustion,multiStepWorkflow,maxSteps=5 → loop exits → confirm reports incomplete,Not Started,P1-High,No,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Browser death mid-loop,multiStepWorkflow,Page closes → escalated → loop exits → error broadcast,Not Started,P0-Critical,No,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Credential suspension,multiStepWorkflow,Login detected → suspend → resume → loop continues,Not Started,P1-High,No,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Single-shot success,singleShotWorkflow,agent.act succeeds → workflow completes,Done,P0-Critical,Yes,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+3-Workflow E2E,Single-shot failure,singleShotWorkflow,agent.act throws → error broadcast,Done,P1-High,Yes,__tests__/mastra-workflow-e2e.test.ts,CI,<10s
+4-Local E2E,Navigate to settings,test-app,Agent: "Go to settings" → URL ends with /settings,Not Started,P0-Critical,No,__tests__/e2e-local/navigate.test.ts,CI,30s
+4-Local E2E,Fill a form,test-app,Agent: "Change username to TestUser" → input value matches,Not Started,P0-Critical,No,__tests__/e2e-local/form-fill.test.ts,CI,30s
+4-Local E2E,Extract data,test-app,Agent: "List all users" → returns array with expected names,Not Started,P0-Critical,No,__tests__/e2e-local/extract-data.test.ts,CI,30s
+4-Local E2E,Login flow,test-app,Agent: "Log in with admin/password123" → redirected to /dashboard,Not Started,P0-Critical,No,__tests__/e2e-local/login-flow.test.ts,CI,45s
+4-Local E2E,Handle 404,test-app,Agent: "Go to reports" (broken) → reports failure without hanging,Not Started,P1-High,No,__tests__/e2e-local/error-handling.test.ts,CI,30s
+4-Local E2E,Multi-step explore,test-app,Agent: "Explore the app" → visits ≥2 pages + returns descriptions,Not Started,P1-High,No,__tests__/e2e-local/explore.test.ts,CI,60s
+5-Smoke,Langfuse traces,Langfuse (local),Agent: "List last 3 traces" → returns ≥1 trace name,Not Started,P2-Medium,No,__tests__/e2e-smoke/langfuse.test.ts,Schedule,90s
+5-Smoke,Hacker News top story,Hacker News,Agent: "What is the #1 story?" → returns non-empty title,Not Started,P2-Medium,No,__tests__/e2e-smoke/hackernews.test.ts,Schedule,90s
+5-Smoke,GitHub issues page,GitHub,Agent: "Go to issues page" → URL contains /issues,Not Started,P2-Medium,No,__tests__/e2e-smoke/github.test.ts,Schedule,90s
+5-Smoke,Wikipedia extract,Wikipedia,Agent: "First paragraph about TypeScript" → contains "programming language",Not Started,P3-Low,No,__tests__/e2e-smoke/wikipedia.test.ts,Schedule,90s
