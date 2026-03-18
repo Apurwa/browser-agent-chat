@@ -6,7 +6,7 @@
 
 **Architecture:** Create two Mastra workflows (multi-step with `.dountil()` and single-shot). Modify `agent-dispatch.ts` to call `workflow.start()` behind a `USE_MASTRA_WORKFLOW` feature flag. Update the WebSocket handler for `credential_provided` to call `workflow.resume()`. Add step-level integration tests with mock sessions before going live. Remove `agent-loop.ts` after verification.
 
-**Tech Stack:** @mastra/core, TypeScript, Zod, vitest, InMemoryStore (for suspend/resume)
+**Tech Stack:** @mastra/core, TypeScript, Zod, vitest, Redis (production storage) / InMemoryStore (dev fallback)
 
 **Spec:** `docs/superpowers/specs/2026-03-18-mastra-agent-orchestration.md`
 
@@ -276,15 +276,34 @@ import { InMemoryStore } from '@mastra/core/storage'
 import { multiStepWorkflow } from './workflows/multi-step.js'
 import { singleShotWorkflow } from './workflows/single-shot.js'
 
+// Use Redis in production, InMemoryStore in dev
+// InMemoryStore loses workflow state on restart — Redis persists it
+function createStorage() {
+  if (process.env.REDIS_URL) {
+    // Import RedisStore dynamically to avoid hard dependency
+    // If @mastra/core doesn't ship RedisStore, use a custom adapter wrapping ioredis
+    try {
+      const { RedisStore } = require('@mastra/core/storage')
+      return new RedisStore({ url: process.env.REDIS_URL })
+    } catch {
+      console.warn('[MASTRA] RedisStore not available, falling back to InMemoryStore')
+      return new InMemoryStore()
+    }
+  }
+  return new InMemoryStore()
+}
+
 export const mastra = new Mastra({
   ...(observability ? { observability } : {}),
-  storage: new InMemoryStore(), // Required for workflow suspend/resume
+  storage: createStorage(),
   workflows: {
     'agent-task-multistep': multiStepWorkflow,
     'agent-task-singleshot': singleShotWorkflow,
   },
 })
 ```
+
+**Note:** If `@mastra/core` doesn't ship a `RedisStore`, implement a thin adapter that wraps the existing `ioredis` client from `redisStore.ts` and implements Mastra's storage interface (`get`, `set`, `delete`). This is a ~30 line file.
 
 - [ ] **Step 2: Verify build**
 
@@ -402,14 +421,28 @@ Read `src/index.ts` and find the `credential_provided` message handler. When `US
 ```ts
 case 'credential_provided': {
   if (USE_MASTRA_WORKFLOW && session.currentWorkflowRunId) {
-    // Resume Mastra workflow
-    const workflow = mastra.getWorkflow('agent-task-multistep')
-    const run = workflow.getRunById(session.currentWorkflowRunId)
-    if (run) {
+    // Resume Mastra workflow with guards
+    try {
+      const workflow = mastra.getWorkflow('agent-task-multistep')
+      const run = workflow.getRunById(session.currentWorkflowRunId)
+      if (!run) {
+        console.error('[MASTRA] Cannot resume: run not found', session.currentWorkflowRunId)
+        // Fallback: broadcast error to client
+        broadcast({ type: 'error', message: 'Workflow run not found — please retry the task' })
+        break
+      }
+      // Verify run is actually suspended (not completed/failed)
+      if (run.status !== 'suspended') {
+        console.error('[MASTRA] Cannot resume: run is not suspended, status=', run.status)
+        break
+      }
       await run.resume({
         step: agentCycleStep,
         resumeData: { credentialId: msg.credentialId },
       })
+    } catch (err) {
+      console.error('[MASTRA] Resume failed:', err)
+      broadcast({ type: 'error', message: 'Failed to resume workflow after credential — please retry' })
     }
   } else {
     // Existing path — resolve pending credential Promise
@@ -541,8 +574,41 @@ USE_MASTRA_WORKFLOW=true
 
 To switch back to the existing path: remove the env var or set it to `false`.
 
+## Iteration-Level Observability (Phase 2 add-on)
+
+After Task 2 (multi-step workflow), update `src/mastra/steps/agent-cycle.ts` to emit iteration metadata:
+
+```ts
+// At the start of agentCycleStep.execute:
+ctx.broadcast({
+  type: 'thought',
+  content: `Iteration ${inputData.budgetSnapshot.stepsUsed + 1}: ${getCurrentIntent(inputData.intents)?.description ?? 'no active intent'}`,
+})
+
+// At the end, include metadata in the return for Langfuse:
+return {
+  ...result,
+  _metadata: {
+    iteration: inputData.budgetSnapshot.stepsUsed + 1,
+    intentId: getCurrentIntent(inputData.intents)?.id,
+    decision,
+    urlChanged: urlAfter !== inputData.currentUrl,
+  },
+}
+```
+
+This makes loop iterations visible in both the chat UI (via broadcast) and Langfuse traces (via step metadata).
+
 ## What's Next (Phase 3-4)
 
-**Phase 3: Credential Suspension** — Replace `pendingCredentialRequests` Map with full `suspend()`/`resume()` flow. Requires testing with a real login page.
+**Phase 3: Production Hardening**
+- `run.startAsync()` — non-blocking workflow execution with runId tracking + WebSocket completion notification. Required for scale (current `run.start()` blocks the event loop for long tasks).
+- Shadow mode — run both Mastra and legacy paths, compare results silently, log divergences. Eliminates dual-path drift risk.
+- Step-level metrics — emit `step_latency_ms`, `iteration_count`, `failure_rate_per_step` to Langfuse/Prometheus.
+- Workflow cancellation API — kill stuck workflows from the UI.
 
-**Phase 4: Evals + Cleanup** — Add eval scorers, remove manual Langfuse traces, delete `agent-loop.ts` and old Mastra stubs after verification period.
+**Phase 4: Evals + Cleanup**
+- Add eval scorers to Mastra config (task completion, budget efficiency).
+- Remove manual Langfuse traces from `agent-loop.ts` (Mastra handles it).
+- Delete `agent-loop.ts` and old Mastra stubs after verification period.
+- Remove the `USE_MASTRA_WORKFLOW` feature flag — Mastra becomes the only path.
