@@ -436,13 +436,13 @@
 }
 
 /* Tab bar */
-.testing-tabs {
+.testing-inner-tabs {
   display: flex;
   border-bottom: 1px solid var(--border-primary);
   background: var(--bg-primary);
 }
 
-.testing-tab {
+.testing-inner-tab {
   padding: 8px 16px;
   font-size: 12px;
   color: var(--text-dim);
@@ -453,11 +453,11 @@
   font-family: inherit;
 }
 
-.testing-tab:hover {
+.testing-inner-tab:hover {
   color: var(--text-muted);
 }
 
-.testing-tab--active {
+.testing-inner-tab--active {
   color: var(--brand);
   border-bottom-color: var(--brand);
   font-weight: bold;

@@ -41,15 +41,15 @@ export default function TestingView() {
   return (
     <div className="testing-content">
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, minWidth: 0 }}>
-        <div className="testing-tabs">
+        <div className="testing-inner-tabs">
           <button
-            className={`testing-tab ${activeTab === 'chat' ? 'testing-tab--active' : ''}`}
+            className={`testing-inner-tab ${activeTab === 'chat' ? 'testing-inner-tab--active' : ''}`}
             onClick={() => setActiveTab('chat')}
           >
             Chat
           </button>
           <button
-            className={`testing-tab ${activeTab === 'map' ? 'testing-tab--active' : ''}`}
+            className={`testing-inner-tab ${activeTab === 'map' ? 'testing-inner-tab--active' : ''}`}
             onClick={() => setActiveTab('map')}
           >
             App Graph
