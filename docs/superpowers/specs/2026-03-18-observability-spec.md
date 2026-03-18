@@ -4,352 +4,384 @@
 **Status:** Active — updated as new signals are added
 **Last Updated:** 2026-03-18
 
-## Purpose
+---
 
-This document captures every observability signal in the QA Agent platform — what's collected, where it's stored, and how to use it for debugging and agent improvement. It serves as the single source of truth for anyone debugging a failed task, analyzing agent performance, or building new observability features.
+## Vision
+
+As a user, I should be able to:
+1. **See what the agent did** at every level — session, task, step, LLM call
+2. **Understand why** the agent made each decision
+3. **Debug failures** by inspecting the exact LLM request/response that caused them
+4. **Improve the agent** by identifying patterns in failures across tasks
 
 ---
 
-## Architecture
+## Observability Hierarchy
 
 ```
-Browser Agent → Server → Three observability layers:
-
-1. Langfuse (structured traces)     → debugging individual tasks
-2. Redis (live session state)        → monitoring active sessions
-3. Console logs (structured prefix)  → server-side debugging
-
-Client receives real-time signals via WebSocket.
-Historical data queryable via REST API + Langfuse UI.
-```
-
----
-
-## 1. Langfuse Traces (Primary Debugging Tool)
-
-**UI:** http://localhost:3100 (`admin@local.dev` / `admin123`)
-**API:** http://localhost:3001/api/agents/:id/traces
-
-### Trace Hierarchy
-
-Every task produces a trace tree:
-
-```
-TRACE user-task
-│ input: { task, strategy }
-│ output: { success, stepsCompleted, strategy, durationMs }
-│ tags: [agent:{agentId}]
+SESSION (browser lifecycle)
 │
-├── SPAN intent-{id}                    (multi_step only)
-│   │ input: { description, successCriteria }
-│   │ output: { passed, confidence, stepsInIntent } OR { passed: false, reason }
+├── TASK 1: "What is the page title?"
+│   ├── Strategy: single_shot
+│   ├── LLM CALL: agent.act(prompt)
+│   │   ├── Request: { model, system, messages, tools }
+│   │   ├── Response: { completion, tokens, finish_reason }
+│   │   └── Duration: 8.2s, Cost: $0.003
+│   ├── Actions: [extract]
+│   └── Result: success, 1 step, 11s
+│
+├── TASK 2: "Navigate to settings and update profile"
+│   ├── Strategy: multi_step
+│   ├── PLANNER
+│   │   ├── LLM CALL: plan intents
+│   │   │   ├── Request: { goal, worldContext, currentUrl }
+│   │   │   ├── Response: { intents: [...] }
+│   │   │   └── Duration: 3.1s
+│   │   └── Result: 3 intents planned
 │   │
-│   ├── SPAN perception-{N}
-│   │   input: { url, activeIntent }
-│   │   output: { elementCount, pageTitle, categories }
+│   ├── INTENT 1: "Navigate to settings page"
+│   │   ├── PERCEPTION: { url, elements: 42, title: "Dashboard" }
+│   │   ├── POLICY
+│   │   │   ├── LLM CALL: decide action
+│   │   │   │   ├── Request: { perception, history, progressContext }
+│   │   │   │   ├── Response: { type: "click", elementId: "el_7" }
+│   │   │   │   └── Duration: 2.4s
+│   │   │   └── Decision: click "Settings" nav item
+│   │   ├── EXECUTE: click el_7 → success, URL changed
+│   │   ├── VERIFY: intent passed (URL contains /settings)
+│   │   └── Result: completed, confidence: 0.8
 │   │
-│   ├── GENERATION policy-{N}
-│   │   input: { activeIntent }
-│   │   output: { action }
-│   │   metadata: { prompt, heuristicOverride, progressDelta }
+│   ├── INTENT 2: "Update profile information"
+│   │   ├── PERCEPTION → POLICY → EXECUTE → VERIFY (loop)
+│   │   └── Result: completed
 │   │
-│   └── SPAN execute-{N}
-│       input: { actionType, elementId, instruction }
-│       output: { success, error?, urlChanged }
-│       level: ERROR (on failure)
+│   └── Result: success, 8 steps, 45s, $0.024
 │
-├── SPAN agent-act                      (single_shot only)
-│   input: { prompt }
-│   output: { success, steps } OR { success: false, error, steps }
+├── TASK 3: ...
 │
-├── EVENT thought                       (throughout)
-│   input: { content }
-│
-└── EVENT action                        (throughout)
-    input: { action, target }
-    output: { step, completed }
-```
-
-### What Each Level Tells You
-
-| Level | Question It Answers |
-|-------|-------------------|
-| **TRACE** | Did the task succeed? How long? Which strategy? |
-| **SPAN intent** | Which intent failed? Where did the agent get stuck? |
-| **SPAN perception** | What did the agent see on the page? |
-| **GENERATION policy** | What did the LLM decide to do and why? |
-| **SPAN execute** | Did the action work? What error? |
-| **EVENT thought** | What was the agent reasoning? |
-| **EVENT action** | What browser action was performed? |
-
-### How to Debug a Failed Task
-
-1. **Find the trace** in Langfuse → filter by `agent:{agentId}` tag
-2. **Check trace output** → `success: false` + `error` message
-3. **Find the failed intent** → look for `intent-*` span with `passed: false`
-4. **Check the execution spans** → find `execute-*` with `level: ERROR`
-5. **Read the policy decision** → `policy-*` generation shows what the LLM chose
-6. **Check perception** → `perception-*` shows what UI elements were visible
-
-### Trace Creation Points
-
-| Path | Trace Name | Created In |
-|------|-----------|------------|
-| Single-shot task | `user-task` | `agent-dispatch.ts:dispatchTask` |
-| Multi-step task | `user-task` | `agent-dispatch.ts:dispatchTask` |
-| Explore | `explore` | `agent-dispatch.ts:dispatchExplore` |
-| Old explore path | `explore` | `agent.ts:executeExplore` |
-
----
-
-## 2. Execution Router Signals
-
-Every task is classified and logged:
-
-```
-[DISPATCH] Task completed: strategy=single_shot success=true steps=1 duration=18835ms
-```
-
-| Field | Meaning |
-|-------|---------|
-| `strategy` | `single_shot` (fast, 1 LLM call) or `multi_step` (planner loop) |
-| `success` | Task outcome |
-| `steps` | Number of agent steps taken |
-| `duration` | Wall-clock time in milliseconds |
-
-### Strategy Selection Rules
-
-| Goal Pattern | Strategy | Reason |
-|-------------|----------|--------|
-| Questions ("what", "how many", "describe") | `single_shot` | Extraction, no navigation needed |
-| Actions ("click", "navigate", "create", "login") | `multi_step` | Requires browser interaction |
-| Explore (any) | `multi_step` | Always needs navigation |
-| Default | `single_shot` | Prefer fast path |
-
----
-
-## 3. Session State (Redis)
-
-**Live monitoring:** `redis-cli hgetall session:{agentId}`
-
-### Fields
-
-| Field | Type | Debug Use |
-|-------|------|-----------|
-| `status` | idle/working/disconnected/crashed/interrupted/allocating | Current session state |
-| `owner` | string | Which server owns this session |
-| `browserPid` | number | Browser process to inspect/kill |
-| `cdpPort` | number | CDP endpoint for manual inspection |
-| `currentUrl` | string | Where the browser is right now |
-| `taskCount` | number | How many tasks executed (limit: 20) |
-| `navigationCount` | number | How many pages visited (limit: 50) |
-| `healthStatus` | healthy/degraded/unhealthy | Browser health |
-| `lastTask` | string | What was the last task sent |
-| `detachedAt` | number | When client disconnected (0 = connected) |
-| `createdAt` | number | Session start time |
-| `lastActivityAt` | number | Last action timestamp |
-
-### Distributed Locks
-
-| Key | Purpose | TTL |
-|-----|---------|-----|
-| `lock:session:{agentId}` | Session creation lock | 20s |
-| `session:lock:exec:{agentId}` | Task execution mutex | 20s (renewed every 7s) |
-| `session:replenish` | Warm pool replenish mutex | 10s |
-
-### Useful Redis Commands
-
-```bash
-# Check all active sessions
-redis-cli zrange session:expiry 0 -1
-
-# Check session state
-redis-cli hgetall session:{agentId}
-
-# Check port allocation
-redis-cli keys browser:port:*
-
-# Check warm pool
-redis-cli scard browser:warm:pids
-
-# Check execution lock
-redis-cli get session:lock:exec:{agentId}
+└── SESSION END: TTL expired, 3 tasks, 12 navigations
 ```
 
 ---
 
-## 4. WebSocket Messages (Real-Time Client Signals)
+## Level 1: Session
 
-### Task Lifecycle
+**What to track:**
 
-```
-status:working → thought → action → thought → action → taskComplete → status:idle
-```
+| Signal | Description | Current Status |
+|--------|-------------|---------------|
+| Session ID | Unique identifier | ✅ Redis + Supabase |
+| Agent ID | Which agent | ✅ Redis |
+| Owner (server) | Which server instance | ✅ Redis |
+| Start time | Session creation | ✅ Redis `createdAt` |
+| End time | Session destruction | ❌ Not tracked |
+| End reason | TTL / health / max_tasks / idle / user / evicted | ❌ Not tracked |
+| Total tasks | Count of tasks executed | ✅ Redis `taskCount` |
+| Total navigations | Page changes | ✅ Redis `navigationCount` |
+| Total LLM calls | Across all tasks | ❌ Not tracked |
+| Total tokens | Input + output across all calls | ❌ Not tracked |
+| Total cost | Dollar cost of all LLM calls | ❌ Not tracked |
+| Total duration | Wall clock session time | ❌ Derivable from createdAt but not stored |
+| Browser PID | Process identifier | ✅ Redis `browserPid` |
+| Health transitions | healthy → degraded → unhealthy | ❌ Only latest state stored |
+| Login events | How many times login was detected/handled | ❌ Not tracked |
+| Errors | Count and types of errors | ❌ Not aggregated |
 
-### Session Lifecycle
-
-```
-session_new → (tasks) → session_expiring → session_expired
-                                         → session_terminated
-                                         → session_evicted
-```
-
-### Key Messages for Debugging
-
-| Message | When | What to Check |
-|---------|------|--------------|
-| `thought` | Agent reasoning | Is the agent making correct decisions? |
-| `action` | Browser action | Is the action targeting the right element? |
-| `taskComplete` | Task done | `success`, `stepCount`, `durationMs` |
-| `error` | Something failed | Error message explains the failure |
-| `credential_needed` | Login detected | Does the vault have credentials for this domain? |
-| `session_expired` | TTL reached | Session ran for 30 minutes |
-| `metrics` | Agent startup | Which step was slow? (CDP, screencast, navigation) |
+**Langfuse representation:** No session-level trace exists today. Sessions should map to Langfuse's `sessionId` field so all tasks within a session are grouped.
 
 ---
 
-## 5. Console Log Prefixes (Server-Side)
+## Level 2: Task
 
-Filter server logs by prefix to isolate subsystems:
+**What to track:**
 
-| Prefix | Subsystem | When to Check |
-|--------|-----------|--------------|
-| `[DISPATCH]` | Execution router | Task timing, strategy selection |
-| `[PLANNER]` | Intent planning | What intents were created |
-| `[POLICY]` | Action decisions | What the LLM chose, heuristic overrides |
-| `[AGENT-LOOP]` | Execution loop | Action failures, navigation errors |
-| `[START]` | Session creation | Lock contention, reattach logic |
-| `[REAP]` | Session cleanup | Was cleanup complete? |
-| `[HEALTH]` | Browser liveness | Unhealthy browser detected |
-| `[LOGIN-DEBUG]` | Credential injection | Domain, strategy, selectors, vault lookup |
-| `[LOGIN-INTERCEPT]` | Login detection | Score, timing, mid-task detection |
-| `[LOGIN-STRATEGY]` | Form filling | Selector failures, fallback attempts |
-| `[NAV-DETECT]` | URL changes | SPA navigation detection |
-| `[EXPLORE]` | Exploration | Nav items found, sections explored |
-| `[METRICS]` | Startup timing | Breakdown of agent creation steps |
-| `[RECOVERY]` | Session recovery | After server restart |
-| `[DEDUP]` | Suggestion dedup | Duplicate feature/flow filtering |
-| `[MUSCLE-MEMORY]` | Pattern learning | Login patterns recorded/replayed |
-| `[JOBS]` | Background jobs | Cluster merging, pattern consolidation |
-| `[STARTUP]` / `[SHUTDOWN]` | Server lifecycle | Init order, graceful shutdown |
+| Signal | Description | Current Status |
+|--------|-------------|---------------|
+| Task ID | Unique identifier | ✅ Supabase `tasks` table |
+| Task content | User's input | ✅ Langfuse trace input |
+| Strategy | single_shot / multi_step | ✅ Langfuse trace metadata |
+| Start time | Task dispatch | ✅ Langfuse trace timestamp |
+| End time | Task completion | ✅ Derivable from duration |
+| Duration | Wall clock | ✅ Langfuse trace + `[DISPATCH]` log |
+| Success | Pass/fail | ✅ Langfuse trace output |
+| Error message | If failed | ✅ Langfuse trace output |
+| Step count | Agent actions taken | ✅ Langfuse trace output |
+| Intent count | Planner intents (multi_step) | ✅ Langfuse planner span |
+| Intents completed | How many passed | ❌ Not aggregated at task level |
+| Intents failed | How many didn't pass | ❌ Not aggregated at task level |
+| Replan count | How many times replanned | ❌ Not tracked in trace |
+| Total LLM calls | All calls within this task | ❌ Not counted |
+| Total tokens | Input + output | ❌ Not tracked |
+| Total cost | Dollar cost | ❌ Not tracked |
+| Pages visited | URLs navigated during task | ❌ Not in trace output |
+| Findings discovered | Bugs found during task | ❌ Not linked to trace |
+| Login occurred | Was login needed mid-task | ❌ Not in trace |
+| Pre-task checks | Health check result, sanity check result | ❌ Not in trace |
 
-### Debugging Recipes
+---
 
-**"Task is stuck":**
-```bash
-grep "\[POLICY\]\|\\[AGENT-LOOP\]" /tmp/server.log | tail -20
+## Level 3: Step (Within a Task)
+
+**What to track per step (perception → policy → execute cycle):**
+
+| Signal | Description | Current Status |
+|--------|-------------|---------------|
+| Step number | Sequential within task | ✅ Langfuse span names |
+| **Perception** | | |
+| → URL | Current page | ✅ Langfuse perception span |
+| → Page title | Document title | ✅ Langfuse perception span |
+| → UI elements | Count and categories | ✅ Langfuse perception span |
+| → DOM snapshot | Lightweight page structure | ❌ Not captured |
+| **Policy Decision** | | |
+| → Active intent | What the agent is trying to do | ✅ Langfuse policy generation |
+| → Full prompt | System + user messages sent to LLM | ⚠️ In metadata, not structured |
+| → LLM response | Raw response body | ⚠️ Parsed action only, not raw |
+| → Decision | Action type + target | ✅ Langfuse policy generation output |
+| → Heuristic override | Was policy overridden by stuck detector | ✅ Metadata flag |
+| → Progress context | pageAlreadyExtracted, progressDelta, etc. | ⚠️ Partial |
+| **Execution** | | |
+| → Action type | click / type / extract / navigate / etc. | ✅ Langfuse execute span |
+| → Element ID | Target element | ✅ Langfuse execute span |
+| → Success | Did the action work | ✅ Langfuse execute span |
+| → Error | Why it failed | ✅ Langfuse execute span (ERROR level) |
+| → URL before/after | Navigation detection | ❌ Not in span |
+| → Screenshot before/after | Visual state | ❌ Not captured |
+| **Verification** | | |
+| → Passed | Did the action produce expected outcome | ✅ Langfuse verify span |
+| → Confidence | How sure | ✅ Langfuse verify span |
+| → Stuck signals | repeatedAction, samePage, failedExecution counts | ❌ Not in trace |
+
+---
+
+## Level 4: LLM Call (The Missing Layer)
+
+**This is the primary gap.** Every LLM call should capture:
+
+| Signal | Description | Current Status |
+|--------|-------------|---------------|
+| **Request** | | |
+| → Model | claude-sonnet-4-20250514 etc. | ❌ Not tracked |
+| → System prompt | Full system message | ❌ Not tracked |
+| → Messages | Full conversation array | ❌ Not tracked |
+| → Tools/schemas | Zod schemas passed to extract | ❌ Not tracked |
+| → Temperature | Sampling parameter | ❌ Not tracked |
+| → Max tokens | Output limit | ❌ Not tracked |
+| **Response** | | |
+| → Completion | Full response text/object | ⚠️ Parsed output only |
+| → Tokens (input) | Prompt token count | ❌ Not tracked |
+| → Tokens (output) | Completion token count | ❌ Not tracked |
+| → Finish reason | stop / max_tokens / tool_use | ❌ Not tracked |
+| → Latency | Time from request to first token | ❌ Not tracked |
+| → Cache hit | Was prompt cache used | ❌ Not tracked |
+| **Metadata** | | |
+| → Caller | Which module initiated the call | ⚠️ Implicit from span name |
+| → Purpose | planner / policy / executor / extract | ⚠️ Implicit from span name |
+| → Retry count | Was this a retry | ❌ Not tracked |
+| → Cost | Computed from model + tokens | ❌ Not tracked |
+
+### LLM Call Sources
+
+| Source | Module | Method | Controllable |
+|--------|--------|--------|-------------|
+| Planner | `planner.ts` | `agent.extract(prompt, schema)` | ✅ Our code |
+| Policy | `policy.ts` | `agent.extract(prompt, schema)` | ✅ Our code |
+| Executor (extract) | `executor.ts` | `agent.extract(prompt, schema)` | ✅ Our code |
+| Executor (act) | `executor.ts` | `agent.act(instruction)` | ❌ magnitude-core internal |
+| Single-shot task | `agent.ts` | `session.agent.act(prompt)` | ❌ magnitude-core internal |
+| Single-shot explore | `agent.ts` | `session.agent.extract(prompt, schema)` | ❌ magnitude-core internal |
+| Login detection | `login-detector.ts` | `page.evaluate()` | N/A (no LLM) |
+
+**Controllable (our code):** 3 sources — can wrap with Langfuse generation spans immediately
+**Uncontrollable (magnitude-core):** 3 sources — need HTTP-level interception or magnitude hooks
+
+---
+
+## Level 5: Agent Orchestration Graph
+
+**What the user should see for any task:**
+
+```
+Task received
+  ↓
+[Strategy Selection] → single_shot / multi_step
+  ↓
+[Health Check] → pass / fail
+  ↓
+[Sanity Check] → pass / fail / soft_reset
+  ↓
+[Exec Lock] → acquired / busy
+  ↓
+[Login Check] → not_needed / detected → vault_lookup → inject → verify
+  ↓
+[Planner] → N intents (multi_step only)
+  ↓
+[Intent Loop]
+  ├── [Perceive] → UI elements, URL, title
+  ├── [Decide] → action (LLM or heuristic)
+  ├── [Execute] → success / failure
+  ├── [Verify Action] → passed / failed
+  ├── [Evaluate Progress] → continue / retry / replan / escalate
+  └── [Verify Intent] → completed / not_yet
+  ↓
+[Goal Confirmation] → achieved / incomplete
+  ↓
+[Exec Lock Release]
+  ↓
+Task complete
 ```
 
-**"Login failed":**
-```bash
-grep "\[LOGIN" /tmp/server.log | tail -20
+**Current tracking:** Partial. Individual steps are traced but the orchestration flow (which component called which, in what order, with what decision) is not captured as a connected graph.
+
+**Target:** Every box in the diagram above should be a Langfuse span or event with input/output, and the parent-child relationships should form the exact graph.
+
+---
+
+## Implementation Priorities
+
+### Phase 1: LLM Call Tracking (Our Code)
+
+Wrap planner, policy, and executor `agent.extract()` calls with Langfuse generations that capture:
+- Full prompt text
+- Full response object
+- Token counts (from magnitude-core's response if available)
+- Duration
+- Model name
+
+**Effort:** 1-2 days
+**Impact:** Covers 3/6 LLM call sources. Enables prompt debugging for planning and policy decisions.
+
+### Phase 2: Session-Level Aggregation
+
+Create a Langfuse session trace when the browser session starts. All task traces link to it via `sessionId`. Session trace updated on end with:
+- Total tasks, navigations, LLM calls, tokens, cost
+- End reason
+- Health transitions
+
+**Effort:** 1 day
+**Impact:** Groups all tasks under one session. Enables session-level cost analysis.
+
+### Phase 3: Magnitude-Core Interception
+
+Options (pick one):
+- **(a) HTTP proxy:** Intercept all outbound Anthropic API calls at the HTTP client level. Captures every LLM call regardless of source.
+- **(b) Magnitude event hooks:** If magnitude-core emits LLM call events, subscribe and log them.
+- **(c) Anthropic SDK instrumentation:** Langfuse has auto-instrumentation for the Anthropic SDK. If magnitude-core uses the standard SDK, this may work.
+
+**Effort:** 2-3 days (depends on approach)
+**Impact:** Covers remaining 3/6 LLM call sources. Full visibility into agent.act() internals.
+
+### Phase 4: Orchestration Graph
+
+Add spans for pre-task checks (health, sanity, login, exec lock) so the full orchestration flow is visible in Langfuse as a connected trace tree.
+
+**Effort:** 1 day
+**Impact:** Complete debugging visibility. Any failure traceable to exact orchestration step.
+
+---
+
+## Debugging Workflows
+
+### "Why did this task fail?"
+
+```
+1. Open Langfuse → find trace by task content or time
+2. Check trace output → success: false, error message
+3. Drill into intent spans → which intent failed
+4. Check execute spans → which action errored
+5. Check policy generation → what prompt was sent, what LLM returned
+6. [Phase 1+] Check full LLM request/response → was the prompt wrong or the model confused?
 ```
 
-**"Session won't start":**
-```bash
-grep "\[START\]" /tmp/server.log | tail -10
+### "Why is this task slow?"
+
+```
+1. Check [DISPATCH] log → strategy + duration
+2. If multi_step: check intent count → too many intents?
+3. Check step count → agent stuck in retry loop?
+4. [Phase 1+] Check per-LLM-call latency → which call is slow?
+5. Check startup metrics → browser launch slow?
 ```
 
-**"Browser crashed":**
-```bash
-grep "\[HEALTH\]\|\[REAP\]" /tmp/server.log | tail -10
+### "Why does the agent keep making wrong decisions?"
+
+```
+1. Query Langfuse for policy generations with heuristicOverride=true
+2. Compare perception input → is the agent seeing the right elements?
+3. Compare policy prompt → is the context sufficient?
+4. [Phase 1+] Check full prompt → is the system prompt causing bias?
+5. Check progress signals → is evaluateProgress triggering correctly?
+```
+
+### "How much does each agent cost?"
+
+```
+[Phase 2+]
+1. GET /api/observability/agents → per-agent cost
+2. Drill into session → per-session cost
+3. Drill into task → per-task cost
+4. Drill into LLM calls → which calls are expensive
 ```
 
 ---
 
-## 6. Startup Metrics
-
-Every agent session creation is timed:
-
-```json
-{
-  "total": 5010,
-  "steps": [
-    {"name": "load_memory", "duration": 328},
-    {"name": "load_patterns", "duration": 59},
-    {"name": "acquire_browser", "duration": 0},
-    {"name": "start_browser_agent", "duration": 2073},
-    {"name": "initial_screenshot", "duration": 2550}
-  ]
-}
-```
-
-**Normal ranges:**
-- `load_memory`: 100-500ms
-- `start_browser_agent`: 1-3s (includes magnitude-core CDP connection)
-- `initial_screenshot`: 500-3000ms (depends on page complexity)
-- **Total under 5s** is healthy
-
----
-
-## 7. REST API Observability Endpoints
-
-| Endpoint | Data |
-|----------|------|
-| `GET /health` | Server status, component health, active session count |
-| `GET /api/agents/:id/traces` | Langfuse trace list for agent |
-| `GET /api/agents/:id/traces/:traceId` | Trace detail with all observations |
-| `GET /api/observability/summary` | Total traces, cost, error rate, latency (p50/p95) |
-| `GET /api/observability/trends` | Cost and trace trends over time, per agent |
-| `GET /api/observability/agents` | Per-agent metrics table |
-| `GET /api/agents/:id/feedback/stats` | Feedback statistics |
-| `GET /openapi.json` | Full API spec |
-| `/api-docs` | Interactive Scalar API documentation |
-
----
-
-## 8. How to Use Observability for Agent Improvement
-
-### Identifying Poor Agent Decisions
-
-1. **Query Langfuse for failed traces:** filter by `output.success = false`
-2. **Check the policy generation:** what did the LLM decide? Was the input (perception) correct?
-3. **Look at stuck patterns:** `evaluateProgress` logs repeated actions, same-page counts
-4. **Compare single_shot vs multi_step:** check `[DISPATCH]` logs for strategy + duration
-
-### Identifying Slow Tasks
-
-1. **Filter Langfuse traces** by latency > 60s
-2. **Check strategy:** was it `multi_step` when `single_shot` would suffice?
-3. **Check step count:** many steps = planner over-planned or agent got stuck
-4. **Check startup metrics:** slow `start_browser_agent` = CDP connection issue
-
-### Improving Login Success Rate
-
-1. **Filter `[LOGIN-DEBUG]` logs** for `getCredentialForAgent result: null` = missing vault binding
-2. **Filter `[LOGIN-STRATEGY]`** for selector failures = DOM structure changed
-3. **Check muscle memory patterns:** are login patterns being recorded and replayed?
-
-### Monitoring Session Health
-
-1. **Redis `healthStatus` field:** `unhealthy` = browser needs restart
-2. **`taskCount` approaching 20:** session nearing limit, will auto-terminate
-3. **`detachedAt` > 0:** client disconnected, detach timer running
-
----
-
-## 9. Gaps (What's Not Yet Observed)
-
-| Gap | Impact | Priority |
-|-----|--------|----------|
-| No per-LLM-call token usage tracking | Can't optimize cost per task | Medium |
-| No screenshot capture in traces | Can't see what the agent saw | Medium |
-| No browser memory/CPU metrics | Can't detect resource leaks | Low |
-| No client-side performance metrics | Don't know UI render times | Low |
-| No A/B testing of strategies | Can't compare router effectiveness | Future |
-| No automated anomaly detection | Must manually check for regressions | Future |
-
----
-
-## 10. Signal Inventory Summary
+## Current Signal Inventory
 
 | Signal Type | Count | Storage | Retention |
 |-------------|-------|---------|-----------|
-| Langfuse traces | 5 root types | Langfuse DB (Postgres) | Configurable |
+| Langfuse traces | 5 root types | Langfuse DB | Configurable |
 | Langfuse spans | 10+ per task | Langfuse DB | Configurable |
-| Langfuse events | 2 types | Langfuse DB | Configurable |
+| Langfuse events | 2 types (thought, action) | Langfuse DB | Configurable |
+| Langfuse generations | 2 per step (policy, planner) | Langfuse DB | Configurable |
 | Redis session fields | 14 fields | Redis | Session TTL (35 min) |
-| Console log prefixes | 25+ prefixes | stdout/file | Server restart |
-| WebSocket messages | 28 types | Transient (Redis for persistence) | Session TTL |
-| Database tables | 13 tables | Supabase (Postgres) | Permanent |
-| Startup metrics | 6-8 timing events | Broadcast to client | Transient |
+| Console log prefixes | 25+ prefixes | stdout | Server restart |
+| WebSocket messages | 28 types | Transient | Session TTL |
+| Database tables | 13 tables | Supabase | Permanent |
+| Startup metrics | 6-8 timing events | Client broadcast | Transient |
+
+---
+
+## Redis Quick Reference
+
+```bash
+# All active sessions
+redis-cli zrange session:expiry 0 -1
+
+# Session state
+redis-cli hgetall session:{agentId}
+
+# Port allocation
+redis-cli keys browser:port:*
+
+# Warm pool size
+redis-cli scard browser:warm:pids
+
+# Execution lock holder
+redis-cli get session:lock:exec:{agentId}
+
+# Session creation lock
+redis-cli get lock:session:{agentId}
+```
+
+---
+
+## Console Log Quick Reference
+
+```bash
+# Task execution
+grep "\[DISPATCH\]" server.log
+
+# Agent decisions
+grep "\[POLICY\]\|\[PLANNER\]" server.log
+
+# Login flow
+grep "\[LOGIN" server.log
+
+# Session lifecycle
+grep "\[START\]\|\[REAP\]\|\[HEALTH\]" server.log
+
+# Browser issues
+grep "\[HEALTH\]\|\[NAV-DETECT\]" server.log
+
+# Server lifecycle
+grep "\[STARTUP\]\|\[SHUTDOWN\]" server.log
+```
