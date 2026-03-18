@@ -165,6 +165,13 @@ export async function executeAgentLoop(
     let lastExtractedItemCount = 0;
     let stepNum = 0;
 
+    // Track per-intent Langfuse spans
+    let intentSpan: any = null;
+    const activeIntentForSpan = findActiveIntent(taskMemory.intents);
+    if (activeIntentForSpan && trace) {
+      intentSpan = trace.span({ name: `intent-${activeIntentForSpan.id}`, input: { description: activeIntentForSpan.description, successCriteria: activeIntentForSpan.successCriteria } });
+    }
+
     while (!budget.exhausted()) {
       stepNum += 1;
       const currentPage = session.connector.getHarness().page;
@@ -416,6 +423,9 @@ export async function executeAgentLoop(
           );
 
           if (intentVerification.passed) {
+            // Close current intent span
+            intentSpan?.end({ output: { passed: true, confidence: intentVerification.confidence, stepsInIntent: stepNum } });
+
             broadcast({
               type: 'thought',
               content: `Intent "${activeIntent.description}" completed`,
@@ -439,9 +449,13 @@ export async function executeAgentLoop(
             };
 
             if (!next) {
+              intentSpan = null;
               broadcast({ type: 'thought', content: 'All intents completed' });
               break;
             }
+
+            // Open span for next intent
+            intentSpan = trace?.span({ name: `intent-${next.id}`, input: { description: next.description, successCriteria: next.successCriteria } }) ?? null;
 
             broadcast({
               type: 'thought',
@@ -513,6 +527,13 @@ export async function executeAgentLoop(
         });
         break;
       }
+    }
+
+    // Close any open intent span (loop ended without completing all intents)
+    if (intentSpan) {
+      const lastIntent = findActiveIntent(taskMemory.intents);
+      intentSpan.end({ output: { passed: false, reason: 'loop ended', intent: lastIntent?.description ?? 'unknown' } });
+      intentSpan = null;
     }
 
     // 7. Confirm goal completion

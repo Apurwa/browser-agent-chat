@@ -288,7 +288,7 @@ export async function createAgent(
     const actionLabel = target ? `${actionName}: ${target}` : actionName;
     lastAction = { label: actionLabel, rawTarget: target as string | undefined };
 
-    session.currentTrace?.event({ name: 'action', input: { action: actionName, target } });
+    session.currentTrace?.event({ name: 'action', input: { action: actionName, target }, output: { step: stepOrder, completed: true } });
 
     broadcast({ type: 'action', action: actionName, target: target as string | undefined });
     if (sessionId) {
@@ -961,14 +961,15 @@ export async function executeTask(
     }
   }
 
+  const span = trace?.span({ name: 'agent-act', input: { prompt } });
   try {
-    const span = trace?.span({ name: 'agent-act', input: { prompt } });
     await session.agent.act(prompt);
     span?.end({ output: { success: true, steps: session.stepsHistory.length } });
     trace?.update({ output: { success: true, stepsCount: session.stepsHistory.length } });
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    span?.end({ output: { success: false, error: message, steps: session.stepsHistory.length } });
     trace?.update({ output: { success: false, error: message } });
     broadcast({ type: 'error', message });
     broadcast({ type: 'taskComplete', success: false });
