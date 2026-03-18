@@ -10,7 +10,7 @@ export interface BudgetTracker {
   snapshot(): BudgetSnapshot;
 }
 
-interface BudgetSnapshot {
+export interface BudgetSnapshot {
   stepsUsed: number;
   stepsRemaining: number;
   replansUsed: number;
