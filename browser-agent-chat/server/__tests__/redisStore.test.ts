@@ -97,6 +97,10 @@ describe('redisStore — session CRUD', () => {
       navigationCount: 0,
       healthStatus: 'healthy',
       owner: '',
+      totalLlmCalls: 0,
+      totalTokensInput: 0,
+      totalTokensOutput: 0,
+      totalCostUsd: 0,
     });
   });
 

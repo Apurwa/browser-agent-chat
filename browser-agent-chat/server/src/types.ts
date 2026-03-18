@@ -180,6 +180,10 @@ export interface RedisSession {
   taskCount: number;
   navigationCount: number;
   healthStatus: 'healthy' | 'degraded' | 'unhealthy';
+  totalLlmCalls: number;
+  totalTokensInput: number;
+  totalTokensOutput: number;
+  totalCostUsd: number;
 }
 
 export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted' | 'allocating';

@@ -162,12 +162,14 @@ export async function executeAgentLoop(
       input: { goal, worldContext: worldContext || null, currentUrl: startUrl, maxIntents },
     });
 
+    const costAggregator = (session as any)._costAggregator ?? undefined;
     const { plan, prompt: plannerPrompt } = await planStrategy(
       session.agent,
       goal,
       worldContext,
       startUrl,
       maxIntents,
+      { traceSpan: trace, aggregator: costAggregator },
     );
 
     plannerGen?.end({
@@ -305,6 +307,7 @@ export async function executeAgentLoop(
           perception,
           taskMemory.actionsAttempted.slice(-5),
           progressContext,
+          { traceSpan: trace, aggregator: costAggregator },
         );
 
         policyGen?.end({
@@ -524,6 +527,8 @@ export async function executeAgentLoop(
               goal,
               worldContext,
               currentUrl,
+              undefined,
+              { traceSpan: trace, aggregator: costAggregator },
             );
 
             replanGen?.end({

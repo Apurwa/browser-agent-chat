@@ -38,6 +38,10 @@ export async function getSession(agentId: string): Promise<RedisSession | null> 
     navigationCount: parseInt(data.navigationCount, 10) || 0,
     healthStatus: (data.healthStatus as RedisSession['healthStatus']) || 'healthy',
     owner: data.owner || '',
+    totalLlmCalls: parseInt(data.totalLlmCalls || '0', 10),
+    totalTokensInput: parseInt(data.totalTokensInput || '0', 10),
+    totalTokensOutput: parseInt(data.totalTokensOutput || '0', 10),
+    totalCostUsd: parseFloat(data.totalCostUsd || '0'),
   };
 }
 

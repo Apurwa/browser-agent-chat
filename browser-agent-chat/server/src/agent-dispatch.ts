@@ -2,6 +2,8 @@ import { executeTask, executeExplore } from './agent.js';
 import { executeAgentLoop } from './agent-loop.js';
 import { getLangfuse } from './langfuse.js';
 import { mastra } from './mastra/index.js';
+import { TaskCostAggregator } from './observability.js';
+import * as redisStore from './redisStore.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage } from './types.js';
 
@@ -72,6 +74,11 @@ export async function dispatchTask(
   }) ?? null;
   session.currentTrace = trace;
 
+  // Cost aggregator — collects LLM call metrics across the task
+  const costAggregator = new TaskCostAggregator();
+  // Attach to session so planner/policy/executor can access it
+  (session as any)._costAggregator = costAggregator;
+
   let result: { success: boolean; stepsCompleted: number };
 
   if (USE_MASTRA_WORKFLOW) {
@@ -124,19 +131,32 @@ export async function dispatchTask(
   }
 
   const durationMs = Date.now() - startTime;
+  const costSummary = costAggregator.summarize();
+
   trace?.update({
     output: {
       success: result.success,
       stepsCompleted: result.stepsCompleted,
       strategy,
       durationMs,
+      cost: costSummary,
     },
   });
   session.currentTrace = null;
+  (session as any)._costAggregator = null;
   langfuse?.flushAsync().catch(() => {});
 
+  // Update session-level cost accumulation in Redis
+  if (session.agentId && costSummary.llmCalls > 0) {
+    const redis = redisStore.getRedis();
+    redis.hincrby(`session:${session.agentId}`, 'totalLlmCalls', costSummary.llmCalls).catch(() => {});
+    redis.hincrby(`session:${session.agentId}`, 'totalTokensInput', costSummary.tokensInput).catch(() => {});
+    redis.hincrby(`session:${session.agentId}`, 'totalTokensOutput', costSummary.tokensOutput).catch(() => {});
+    redis.hincrbyfloat(`session:${session.agentId}`, 'totalCostUsd', costSummary.totalCostUsd).catch(() => {});
+  }
+
   console.log(
-    `[DISPATCH] Task completed: strategy=${strategy} success=${result.success} steps=${result.stepsCompleted} duration=${durationMs}ms`,
+    `[DISPATCH] Task completed: strategy=${strategy} success=${result.success} steps=${result.stepsCompleted} duration=${durationMs}ms llmCalls=${costSummary.llmCalls} cost=$${costSummary.totalCostUsd.toFixed(4)}`,
   );
 }
 
@@ -187,6 +207,10 @@ export async function dispatchExplore(
     return;
   }
 
+  // Cost aggregator for explore
+  const exploreCostAggregator = new TaskCostAggregator();
+  (session as any)._costAggregator = exploreCostAggregator;
+
   broadcast({ type: 'status', status: 'working' });
   await session.loginDone;
 
@@ -203,21 +227,34 @@ export async function dispatchExplore(
   const result = await executeAgentLoop(session, goal, 'explore', broadcast);
 
   const durationMs = Date.now() - startTime;
+  const exploreCostSummary = exploreCostAggregator.summarize();
+
   trace?.update({
     output: {
       success: result.success,
       stepsCompleted: result.stepsCompleted,
       strategy,
       durationMs,
+      cost: exploreCostSummary,
     },
   });
   session.currentTrace = null;
+  (session as any)._costAggregator = null;
   langfuse?.flushAsync().catch(() => {});
+
+  // Update session-level cost in Redis
+  if (session.agentId && exploreCostSummary.llmCalls > 0) {
+    const redis = redisStore.getRedis();
+    redis.hincrby(`session:${session.agentId}`, 'totalLlmCalls', exploreCostSummary.llmCalls).catch(() => {});
+    redis.hincrby(`session:${session.agentId}`, 'totalTokensInput', exploreCostSummary.tokensInput).catch(() => {});
+    redis.hincrby(`session:${session.agentId}`, 'totalTokensOutput', exploreCostSummary.tokensOutput).catch(() => {});
+    redis.hincrbyfloat(`session:${session.agentId}`, 'totalCostUsd', exploreCostSummary.totalCostUsd).catch(() => {});
+  }
 
   broadcast({ type: 'taskComplete', success: result.success });
   broadcast({ type: 'status', status: 'idle' });
 
   console.log(
-    `[DISPATCH] Explore completed: strategy=${strategy} success=${result.success} steps=${result.stepsCompleted} duration=${durationMs}ms`,
+    `[DISPATCH] Explore completed: strategy=${strategy} success=${result.success} steps=${result.stepsCompleted} duration=${durationMs}ms llmCalls=${exploreCostSummary.llmCalls} cost=$${exploreCostSummary.totalCostUsd.toFixed(4)}`,
   );
 }
