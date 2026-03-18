@@ -9,7 +9,7 @@ export default function AppMapView() {
   if (!id) return null;
 
   return (
-    <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+    <div style={{ flex: 1, display: 'flex', minHeight: 0, width: '100%' }}>
       <AppMap agentId={id} onSendTask={ws.sendTask} onExplore={() => ws.explore(id)} />
     </div>
   );
