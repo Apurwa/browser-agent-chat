@@ -1,6 +1,6 @@
 import type { AgentSession } from './agent.js';
 import type { ServerMessage } from './types.js';
-import type { TaskMemory, Intent, AgentAction } from './agent-types.js';
+import type { TaskMemory, Intent, AgentAction, Perception, UIElement } from './agent-types.js';
 import { planStrategy } from './planner.js';
 import { perceive } from './perception.js';
 import { decideNextAction, categorizeElements } from './policy.js';
@@ -18,7 +18,89 @@ import { createTaskTrace, classifyError } from './trace-helpers.js';
 import { getLangfuse } from './langfuse.js';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Exported pure helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the current intent: first 'active', falling back to first 'pending'.
+ * Returns null if no active or pending intents exist.
+ */
+export function getCurrentIntent(intents: ReadonlyArray<Intent>): Intent | null {
+  const active = intents.find(i => i.status === 'active');
+  if (active) return active;
+  return intents.find(i => i.status === 'pending') ?? null;
+}
+
+/**
+ * Advance intents: mark the current active intent as 'completed' and
+ * activate the next pending intent. Returns a new array — does NOT mutate.
+ *
+ * If there is no active intent, the input array is returned unchanged.
+ */
+export function advanceIntent(intents: ReadonlyArray<Intent>): Intent[] {
+  const activeIdx = intents.findIndex(i => i.status === 'active');
+  if (activeIdx === -1) return [...intents];
+
+  const completed = intents.map((intent, idx) => {
+    if (idx === activeIdx) {
+      return {
+        ...intent,
+        status: 'completed' as const,
+        confidence: Math.max(intent.confidence, 0.7),
+      };
+    }
+    return intent;
+  });
+
+  // Find the first pending and activate it
+  const nextPendingIdx = completed.findIndex(i => i.status === 'pending');
+  if (nextPendingIdx === -1) return completed;
+
+  return completed.map((intent, idx) =>
+    idx === nextPendingIdx
+      ? { ...intent, status: 'active' as const }
+      : intent,
+  );
+}
+
+/**
+ * Heuristic override: when the agent has repeated the same action type 3+
+ * times in a row with no progress, force a click on the first unexplored
+ * navigation element.
+ *
+ * Returns an action override or null if no override is needed.
+ */
+export function checkHeuristicOverride(
+  taskMemory: Readonly<TaskMemory>,
+  perception: Readonly<Perception>,
+  clickedElementIds: ReadonlySet<string>,
+): { action: AgentAction } | null {
+  const last3 = taskMemory.actionsAttempted.slice(-3);
+  if (last3.length < 3) return null;
+
+  const allSameType = last3.every(a => a.type === last3[0].type);
+  const noProgress = taskMemory.stuckSignals.stepsSinceProgress >= 3;
+
+  if (!allSameType || !noProgress) return null;
+
+  const unexplored = categorizeElements(perception.uiElements, clickedElementIds as Set<string>);
+  const firstUnexploredNav = unexplored.navigation[0];
+  if (!firstUnexploredNav) return null;
+
+  const activeIntent = getCurrentIntent(taskMemory.intents);
+
+  return {
+    action: {
+      type: 'click',
+      elementId: firstUnexploredNav.id,
+      expectedOutcome: `Navigate to ${firstUnexploredNav.label} to discover new features`,
+      intentId: activeIntent?.id ?? 'unknown',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers (not exported)
 // ---------------------------------------------------------------------------
 
 /**
@@ -35,15 +117,6 @@ async function getPageUrl(page: any): Promise<string> {
 }
 
 /**
- * Find the first pending intent in the list, or the current active one.
- */
-function findActiveIntent(intents: Intent[]): Intent | null {
-  const active = intents.find(i => i.status === 'active');
-  if (active) return active;
-  return intents.find(i => i.status === 'pending') ?? null;
-}
-
-/**
  * Return a new intents array with the given intent set to 'active'.
  */
 function activateIntent(intents: Intent[], intentId: string): Intent[] {
@@ -52,30 +125,6 @@ function activateIntent(intents: Intent[], intentId: string): Intent[] {
       ? { ...intent, status: 'active' as const }
       : intent
   );
-}
-
-/**
- * Return a new intents array with the given intent marked completed.
- */
-function completeIntent(intents: Intent[], intentId: string): Intent[] {
-  return intents.map(intent =>
-    intent.id === intentId
-      ? { ...intent, status: 'completed' as const, confidence: Math.max(intent.confidence, 0.7) }
-      : intent
-  );
-}
-
-/**
- * Advance to the next pending intent, activating it. Returns updated intents
- * and the newly active intent (or null if all are done).
- */
-function advanceToNextIntent(intents: Intent[]): { intents: Intent[]; next: Intent | null } {
-  const nextPending = intents.find(i => i.status === 'pending');
-  if (!nextPending) {
-    return { intents, next: null };
-  }
-  const updated = activateIntent(intents, nextPending.id);
-  return { intents: updated, next: { ...nextPending, status: 'active' } };
 }
 
 // ---------------------------------------------------------------------------
@@ -167,7 +216,7 @@ export async function executeAgentLoop(
 
     // Track per-intent Langfuse spans
     let intentSpan: any = null;
-    const activeIntentForSpan = findActiveIntent(taskMemory.intents);
+    const activeIntentForSpan = getCurrentIntent(taskMemory.intents);
     if (activeIntentForSpan && trace) {
       intentSpan = trace.span({ name: `intent-${activeIntentForSpan.id}`, input: { description: activeIntentForSpan.description, successCriteria: activeIntentForSpan.successCriteria } });
     }
@@ -178,9 +227,7 @@ export async function executeAgentLoop(
       const urlBefore = await getPageUrl(currentPage);
 
       // a. Perceive current state
-      // Cast to `any` to bridge the Playwright Page overloads with the narrower
-      // structural types used by perception/executor modules.
-      const activeIntent = findActiveIntent(taskMemory.intents);
+      const activeIntent = getCurrentIntent(taskMemory.intents);
 
       const percSpan = trace?.span({
         name: `perception-${stepNum}`,
@@ -233,24 +280,17 @@ export async function executeAgentLoop(
         progressContext.urlChanged = prevUrl !== urlBefore;
       }
 
-      // c2. Heuristic override: 3 consecutive same-action with no progress → force click nav
-      const last3 = taskMemory.actionsAttempted.slice(-3);
-      const allSameType = last3.length === 3 && last3.every(a => a.type === last3[0].type);
-      const noProgress = taskMemory.stuckSignals.stepsSinceProgress >= 3;
-      const firstUnexploredNav = progressContext.unexplored.navigation[0];
+      // c2. Heuristic override via extracted pure function
+      const heuristicResult = checkHeuristicOverride(taskMemory, perception, clickedElementIds);
 
       let action: AgentAction;
       let heuristicOverride = false;
 
-      if (allSameType && noProgress && firstUnexploredNav) {
-        console.log(`[POLICY] Heuristic override: forcing click on "${firstUnexploredNav.label}" after 3 repeated ${last3[0].type} actions`);
-        broadcast({ type: 'thought', content: `Switching strategy: clicking "${firstUnexploredNav.label}"` });
-        action = {
-          type: 'click',
-          elementId: firstUnexploredNav.id,
-          expectedOutcome: `Navigate to ${firstUnexploredNav.label} to discover new features`,
-          intentId: activeIntent?.id ?? 'unknown',
-        };
+      if (heuristicResult) {
+        const last3 = taskMemory.actionsAttempted.slice(-3);
+        console.log(`[POLICY] Heuristic override: forcing click on "${heuristicResult.action.elementId}" after 3 repeated ${last3[0]?.type ?? 'unknown'} actions`);
+        broadcast({ type: 'thought', content: `Switching strategy: clicking "${heuristicResult.action.elementId}"` });
+        action = heuristicResult.action;
         heuristicOverride = true;
       } else {
         // d. Normal policy decision
@@ -434,15 +474,13 @@ export async function executeAgentLoop(
               content: `Intent "${activeIntent.description}" completed`,
             });
 
-            taskMemory = {
-              ...taskMemory,
-              intents: completeIntent(taskMemory.intents, activeIntent.id),
-            };
+            // Use advanceIntent to mark current as completed and activate next
+            const advancedIntents = advanceIntent(taskMemory.intents);
+            const nextActive = getCurrentIntent(advancedIntents);
 
-            const { intents: nextIntents, next } = advanceToNextIntent(taskMemory.intents);
             taskMemory = {
               ...taskMemory,
-              intents: nextIntents,
+              intents: advancedIntents,
               stuckSignals: {
                 repeatedActionCount: 0,
                 samePageCount: 0,
@@ -451,18 +489,18 @@ export async function executeAgentLoop(
               },
             };
 
-            if (!next) {
+            if (!nextActive || nextActive.status === 'completed') {
               intentSpan = null;
               broadcast({ type: 'thought', content: 'All intents completed' });
               break;
             }
 
             // Open span for next intent
-            intentSpan = trace?.span({ name: `intent-${next.id}`, input: { description: next.description, successCriteria: next.successCriteria } }) ?? null;
+            intentSpan = trace?.span({ name: `intent-${nextActive.id}`, input: { description: nextActive.description, successCriteria: nextActive.successCriteria } }) ?? null;
 
             broadcast({
               type: 'thought',
-              content: `Moving to next intent: "${next.description}"`,
+              content: `Moving to next intent: "${nextActive.description}"`,
             });
           }
         }
@@ -534,7 +572,7 @@ export async function executeAgentLoop(
 
     // Close any open intent span (loop ended without completing all intents)
     if (intentSpan) {
-      const lastIntent = findActiveIntent(taskMemory.intents);
+      const lastIntent = getCurrentIntent(taskMemory.intents);
       intentSpan.end({ output: { passed: false, reason: 'loop ended', intent: lastIntent?.description ?? 'unknown' } });
       intentSpan = null;
     }
