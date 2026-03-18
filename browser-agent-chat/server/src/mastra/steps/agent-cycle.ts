@@ -12,6 +12,7 @@ import { updateTaskMemory, evaluateProgress } from '../../evaluate-progress.js';
 import { planStrategy } from '../../planner.js';
 import { recordNavigation } from '../../nav-graph.js';
 import { detectLoginPage } from '../../login-detector.js';
+import { classifyFailure } from '../../observability.js';
 
 // ---------------------------------------------------------------------------
 // agentCycleStep — one iteration of the agent loop
@@ -59,6 +60,12 @@ export const agentCycleStep = createStep({
     } catch (err) {
       console.error('[AGENT-CYCLE] Browser/page is dead:', err);
       ctx.broadcast({ type: 'error', message: 'Browser session ended' });
+      const costAgg = (session as any)?._costAggregator;
+      costAgg?.recordFailure({
+        category: 'browser_crashed',
+        message: err instanceof Error ? err.message : 'Browser/page dead',
+        recoverable: false,
+      });
       return {
         ...inputData,
         taskComplete: false,
@@ -140,6 +147,18 @@ export const agentCycleStep = createStep({
 
     // 6. Get URL after action
     const urlAfter = await getPageUrl(page);
+
+    // 6b. Record action failure in cost aggregator
+    if (result.error) {
+      const costAgg = (session as any)?._costAggregator;
+      costAgg?.recordFailure({
+        category: classifyFailure(result.error),
+        message: result.error,
+        actionType: action.type,
+        intentId: getCurrentIntent(inputData.intents)?.id,
+        recoverable: true,
+      });
+    }
 
     // 7. Verify action
     const verification = verifyAction(action, result, urlBefore, urlAfter);
@@ -273,13 +292,20 @@ export const agentCycleStep = createStep({
         taskComplete = true;
         break;
 
-      case 'escalate_to_user':
+      case 'escalate_to_user': {
         ctx.broadcast({
           type: 'error',
           message: `Agent requires assistance: ${reason}`,
         });
+        const costAgg = (session as any)?._costAggregator;
+        costAgg?.recordFailure({
+          category: classifyFailure(reason),
+          message: reason,
+          recoverable: false,
+        });
         escalated = true;
         break;
+      }
     }
 
     // 12. Record navigation if URL changed

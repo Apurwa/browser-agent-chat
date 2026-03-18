@@ -370,6 +370,15 @@ export async function executeAgentLoop(
       if (result.error) {
         console.error(`[AGENT-LOOP] Action ${action.type} failed:`, result.error);
         broadcast({ type: 'thought', content: `Action failed: ${result.error}` });
+        // Record failure in cost aggregator for task-level reporting
+        costAggregator?.recordFailure({
+          category: classifyError(result.error),
+          message: result.error,
+          step: stepNum,
+          intentId: activeIntent?.id,
+          actionType: action.type,
+          recoverable: true, // action failures are retryable
+        });
       }
 
       // g. Track progress for next iteration's policy context
