@@ -1,8 +1,15 @@
 import { executeTask, executeExplore } from './agent.js';
 import { executeAgentLoop } from './agent-loop.js';
 import { getLangfuse } from './langfuse.js';
+import { mastra } from './mastra/index.js';
 import type { AgentSession } from './agent.js';
 import type { ServerMessage } from './types.js';
+
+// ---------------------------------------------------------------------------
+// Feature flag: opt-in Mastra workflow dispatch
+// ---------------------------------------------------------------------------
+
+export const USE_MASTRA_WORKFLOW = process.env.USE_MASTRA_WORKFLOW === 'true';
 
 // ---------------------------------------------------------------------------
 // Execution Strategy types
@@ -67,7 +74,38 @@ export async function dispatchTask(
 
   let result: { success: boolean; stepsCompleted: number };
 
-  if (strategy === 'single_shot') {
+  if (USE_MASTRA_WORKFLOW) {
+    // Mastra workflow path — delegates to registered workflows
+    const workflowKey = strategy === 'single_shot'
+      ? 'singleShotWorkflow' as const
+      : 'multiStepWorkflow' as const;
+    const workflow = mastra.getWorkflow(workflowKey);
+    const run = await workflow.createRun();
+
+    // Store runId on session for resume support (credential_provided)
+    (session as any).currentWorkflowRunId = run.runId;
+
+    try {
+      const wfResult = await run.start({
+        inputData: {
+          sessionId: session.agentId ?? '',
+          agentId: session.agentId ?? '',
+          goal: task,
+          taskType: 'task' as const,
+          mode: strategy,
+        },
+      });
+      result = {
+        success: wfResult.status === 'success',
+        stepsCompleted: 0,
+      };
+    } catch (err) {
+      console.error('[DISPATCH] Mastra workflow error:', err);
+      result = { success: false, stepsCompleted: 0 };
+    } finally {
+      (session as any).currentWorkflowRunId = null;
+    }
+  } else if (strategy === 'single_shot') {
     // Fast path: executeTask handles broadcast (taskComplete, idle) in its finally block.
     // We only wrap it to capture success/failure for the trace.
     try {
@@ -114,12 +152,43 @@ export async function dispatchExplore(
   const strategy: ExecutionStrategy = 'multi_step';
   const startTime = Date.now();
 
-  broadcast({ type: 'status', status: 'working' });
-  await session.loginDone;
-
   const goal = context
     ? `Explore this application and discover its features. Context: ${context}`
     : 'Explore this application and discover all features, pages, and flows.';
+
+  if (USE_MASTRA_WORKFLOW) {
+    // Mastra workflow path — explore always uses multi-step
+    const workflow = mastra.getWorkflow('multiStepWorkflow');
+    const run = await workflow.createRun();
+    (session as any).currentWorkflowRunId = run.runId;
+
+    try {
+      const wfResult = await run.start({
+        inputData: {
+          sessionId: session.agentId ?? '',
+          agentId: session.agentId ?? '',
+          goal,
+          taskType: 'explore' as const,
+          mode: 'multi_step' as const,
+        },
+      });
+
+      const durationMs = Date.now() - startTime;
+      console.log(
+        `[DISPATCH] Explore completed (Mastra): success=${wfResult.status === 'success'} duration=${durationMs}ms`,
+      );
+    } catch (err) {
+      console.error('[DISPATCH] Mastra explore workflow error:', err);
+      broadcast({ type: 'taskComplete', success: false });
+      broadcast({ type: 'status', status: 'idle' });
+    } finally {
+      (session as any).currentWorkflowRunId = null;
+    }
+    return;
+  }
+
+  broadcast({ type: 'status', status: 'working' });
+  await session.loginDone;
 
   const langfuse = getLangfuse();
   const trace = langfuse?.trace({
