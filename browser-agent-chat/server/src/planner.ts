@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StrategyPlanSchema, type StrategyPlan } from './agent-types.js';
+import { trackLLMCall, PROMPT_VERSIONS, type TaskCostAggregator } from './observability.js';
 
 const PlannerOutputSchema = z.object({
   goal: z.string(),
@@ -18,6 +19,7 @@ export async function planStrategy(
   worldContext: string,
   currentUrl: string,
   maxIntents?: number,
+  options?: { traceSpan?: any; aggregator?: TaskCostAggregator },
 ): Promise<{ plan: StrategyPlan; prompt: string }> {
   const contextParts: string[] = [
     `Goal: ${goal}`,
@@ -43,7 +45,16 @@ Rules:
 - Generate at most ${effectiveMax} high-level intents. Each intent takes approximately 3 actions to complete. Focus on the most important areas first.`;
 
   try {
-    const result = await agent.extract(prompt, PlannerOutputSchema);
+    const { result } = await trackLLMCall(
+      () => agent.extract(prompt, PlannerOutputSchema),
+      {
+        caller: 'planner',
+        promptVersion: PROMPT_VERSIONS.planner,
+        input: { goal, worldContext: worldContext.slice(0, 500), currentUrl, maxIntents: effectiveMax },
+        traceSpan: options?.traceSpan,
+        aggregator: options?.aggregator,
+      },
+    );
     console.log('[PLANNER] Raw LLM result:', JSON.stringify(result));
     const parsed = StrategyPlanSchema.parse(result);
     const plan: StrategyPlan = {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { AgentActionSchema, type AgentAction, type Perception, type UIElement } from './agent-types.js';
+import { trackLLMCall, PROMPT_VERSIONS, type TaskCostAggregator } from './observability.js';
 
 // Schema passed to agent.extract() — must be BAML-compatible (no nullable/transform)
 const LLMOutputSchema = z.object({
@@ -117,6 +118,7 @@ export async function decideNextAction(
   perception: Perception,
   stepHistory: AgentAction[],
   progress?: ProgressContext,
+  options?: { traceSpan?: any; aggregator?: TaskCostAggregator },
 ): Promise<{ action: AgentAction; prompt: string }> {
   const intentId = perception.activeIntent?.id ?? 'unknown';
 
@@ -132,14 +134,24 @@ export async function decideNextAction(
   const prompt = buildPrompt(perception, stepHistory, ctx);
 
   try {
-    const result = await agent.extract(prompt, LLMOutputSchema) as Record<string, unknown>;
-    console.log('[POLICY] Raw LLM result:', JSON.stringify(result));
+    const { result } = await trackLLMCall(
+      () => agent.extract(prompt, LLMOutputSchema),
+      {
+        caller: 'policy',
+        promptVersion: PROMPT_VERSIONS.policy,
+        input: { intent: perception.activeIntent?.description, url: perception.url, elementCount: perception.uiElements.length },
+        traceSpan: options?.traceSpan,
+        aggregator: options?.aggregator,
+      },
+    );
+    const raw = result as Record<string, unknown>;
+    console.log('[POLICY] Raw LLM result:', JSON.stringify(raw));
     const cleaned = {
-      type: result.type,
-      elementId: result.elementId ?? undefined,
-      value: result.value ?? undefined,
-      expectedOutcome: result.expectedOutcome,
-      intentId: result.intentId || intentId,
+      type: raw.type,
+      elementId: raw.elementId ?? undefined,
+      value: raw.value ?? undefined,
+      expectedOutcome: raw.expectedOutcome,
+      intentId: raw.intentId || intentId,
     };
     const action = AgentActionSchema.parse(cleaned);
     return { action, prompt };
