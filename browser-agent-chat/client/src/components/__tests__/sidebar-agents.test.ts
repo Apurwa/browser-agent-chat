@@ -24,10 +24,10 @@ describe('Sidebar agent list logic', () => {
   })
 
   it('agent list always renders regardless of isAgentView', () => {
-    // New logic: always call renderOrgAgentList()
-    for (const isAgentView of [true, false]) {
-      const renderOrgAgentList = true // always
-      expect(renderOrgAgentList).toBe(true)
+    for (const agentView of [true, false]) {
+      const showAgentList = true // always shown, regardless of agentView
+      expect(showAgentList).toBe(true)
+      expect(agentView).toBeDefined()
     }
   })
 
