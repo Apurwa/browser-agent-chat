@@ -12,8 +12,6 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
-    "@mastra/core": "^1.13.2",
-    "@mastra/langfuse": "^1.0.7",
     "@scalar/express-api-reference": "^0.9.3",
     "@supabase/supabase-js": "^2.47.0",
     "@types/node-cron": "^3.0.11",
