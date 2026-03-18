@@ -6,6 +6,8 @@ import { endSession as dbEndSession, getMessagesBySession, getAgent as dbGetAgen
 import type { AgentSession } from './agent.js';
 import type { ServerMessage, ChatMessage, RedisSession, ReapReason } from './types.js';
 import { WS_CLOSE_CODES } from './types.js';
+import { registerSession, removeSession } from './session-registry.js';
+import { createBudgetTracker } from './budget.js';
 
 // -- Configuration --
 
@@ -248,6 +250,14 @@ export async function createSession(
   });
 
   agents.set(agentId, agentSession);
+
+  // Register in Mastra session registry for workflow step access
+  registerSession(agentId, {
+    session: agentSession,
+    budget: createBudgetTracker(),
+    broadcast: broadcastFn as (msg: Record<string, unknown>) => void,
+  });
+
   startAbsoluteTimeout(agentId);
   return agentSession;
 }
@@ -311,7 +321,10 @@ export async function reap(agentId: string, reason: ReapReason = 'terminated'): 
   // 8. Release execution lock if held
   await redisStore.forceReleaseExecLock(agentId);
 
-  // 9. Clear local maps
+  // 9. Remove from Mastra session registry
+  removeSession(agentId);
+
+  // 10. Clear local maps
   agents.delete(agentId);
   wsClients.delete(agentId);
 
@@ -514,6 +527,14 @@ export async function recoverSession(agentId: string): Promise<boolean> {
           broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined, userId,
         );
         agents.set(agentId, agentSession);
+
+        // Register in Mastra session registry for workflow step access
+        registerSession(agentId, {
+          session: agentSession,
+          budget: createBudgetTracker(),
+          broadcast: broadcastFn as (msg: Record<string, unknown>) => void,
+        });
+
         startAbsoluteTimeout(agentId);
 
         // Update status based on what was happening before crash
