@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import { useAuth } from '../hooks/useAuth';
 import './ObservabilityPanel.css';
 
@@ -17,6 +16,8 @@ interface TraceSummary {
 }
 
 interface TraceObservation {
+  id: string;
+  type: 'GENERATION' | 'SPAN';
   name: string | null;
   startTime: string;
   endTime: string | null;
@@ -24,6 +25,11 @@ interface TraceObservation {
   model: string | null;
   tokenCount: number | null;
   level: string;
+  input: unknown;
+  output: unknown;
+  metadata: Record<string, unknown> | null;
+  statusMessage: string | null;
+  parentObservationId: string | null;
 }
 
 interface TraceDetail {
@@ -74,6 +80,30 @@ function getInputText(input: unknown): string {
   return String(input);
 }
 
+function summarizeData(data: unknown): string {
+  if (!data) return '';
+  if (typeof data === 'string') return data.length > 120 ? data.slice(0, 120) + '…' : data;
+  if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    const parts: string[] = [];
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === null || v === undefined) continue;
+      if (typeof v === 'string') {
+        parts.push(`${k}: ${v.length > 60 ? v.slice(0, 60) + '…' : v}`);
+      } else if (typeof v === 'boolean' || typeof v === 'number') {
+        parts.push(`${k}: ${v}`);
+      } else if (Array.isArray(v)) {
+        parts.push(`${k}: [${v.length} items]`);
+      } else {
+        parts.push(`${k}: {…}`);
+      }
+      if (parts.join(', ').length > 140) break;
+    }
+    return parts.join(', ');
+  }
+  return String(data);
+}
+
 function getOutputText(output: unknown): string {
   if (!output) return '';
   if (typeof output === 'string') return output;
@@ -96,6 +126,7 @@ export default function ObservabilityPanel() {
   const [traceDetail, setTraceDetail] = useState<TraceDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
 
   // Fetch trace list (reset detail state when agent changes)
   useEffect(() => {
@@ -156,9 +187,7 @@ export default function ObservabilityPanel() {
   const totalTraces = sessions.reduce((sum, s) => sum + s.traces.length, 0);
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="observability-content">
+    <div className="observability-content">
         {/* Left panel — trace list */}
         <div className="traces-list">
           <div className="traces-list-header">
@@ -279,32 +308,109 @@ export default function ObservabilityPanel() {
                       ...traceDetail.observations.map(o => o.duration ?? 0),
                       0.001
                     );
-                    return traceDetail.observations.map((obs, i) => {
+
+                    // Build tree: group children under parents
+                    const rootObs = traceDetail.observations.filter(o => !o.parentObservationId);
+                    const childMap = new Map<string, TraceObservation[]>();
+                    for (const obs of traceDetail.observations) {
+                      if (obs.parentObservationId) {
+                        const siblings = childMap.get(obs.parentObservationId) ?? [];
+                        siblings.push(obs);
+                        childMap.set(obs.parentObservationId, siblings);
+                      }
+                    }
+
+                    const renderObs = (obs: TraceObservation, idx: number, depth: number) => {
                       const level = obs.level === 'ERROR' ? 'error' : 'default';
                       const pct = obs.duration ? (obs.duration / maxDuration) * 100 : 0;
-                      const metaParts = [obs.model, obs.tokenCount ? `${obs.tokenCount.toLocaleString()} tokens` : null]
-                        .filter(Boolean).join(' \u00B7 ');
+                      const typeLabel = obs.type === 'GENERATION' ? 'LLM' : 'SPAN';
+                      const metaParts = [
+                        typeLabel,
+                        obs.model,
+                        obs.tokenCount ? `${obs.tokenCount.toLocaleString()} tokens` : null,
+                      ].filter(Boolean).join(' \u00B7 ');
+
+                      const children = childMap.get(obs.id) ?? [];
+                      const inputSummary = obs.input ? summarizeData(obs.input) : null;
+                      const outputSummary = obs.output ? summarizeData(obs.output) : null;
+
+                      const spanKey = obs.id ?? `${idx}-${depth}`;
+                      const isExpanded = expandedSpans.has(spanKey);
+                      const toggleExpand = () => {
+                        setExpandedSpans(prev => {
+                          const next = new Set(prev);
+                          if (next.has(spanKey)) next.delete(spanKey);
+                          else next.add(spanKey);
+                          return next;
+                        });
+                      };
 
                       return (
-                        <div key={i} className={`span-item level-${level}`}>
-                          <div className={`span-number level-${level}`}>{i + 1}</div>
-                          <div className="span-info">
-                            <div className="span-name">{obs.name ?? 'unnamed'}</div>
-                            {(metaParts || level === 'error') && <div className="span-meta">
-                              {metaParts}
-                              {level === 'error' && <>{metaParts ? ' \u00B7 ' : ''}<span style={{ color: 'var(--color-error)' }}>ERROR</span></>}
-                            </div>}
+                        <div key={spanKey}>
+                          <div
+                            className={`span-item level-${level}${isExpanded ? ' span-item-expanded' : ''}`}
+                            style={{ paddingLeft: `${12 + depth * 20}px`, cursor: 'pointer' }}
+                            onClick={toggleExpand}
+                          >
+                            <div className={`span-type-badge ${obs.type === 'GENERATION' ? 'span-type-llm' : 'span-type-span'}`}>
+                              {typeLabel}
+                            </div>
+                            <div className="span-info">
+                              <div className="span-name">{obs.name ?? 'unnamed'}</div>
+                              <div className="span-meta">
+                                {metaParts}
+                                {level === 'error' && <>{metaParts ? ' \u00B7 ' : ''}<span style={{ color: 'var(--color-error)' }}>ERROR</span></>}
+                                {obs.statusMessage && <span style={{ color: 'var(--color-error)' }}> — {obs.statusMessage}</span>}
+                              </div>
+                              {!isExpanded && inputSummary && (
+                                <div className="span-data-row">
+                                  <span className="span-data-label">in:</span>
+                                  <span className="span-data-value">{inputSummary}</span>
+                                </div>
+                              )}
+                              {!isExpanded && outputSummary && (
+                                <div className="span-data-row">
+                                  <span className="span-data-label">out:</span>
+                                  <span className="span-data-value">{outputSummary}</span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="span-duration-bar">
+                              <div
+                                className={`span-duration-fill level-${level}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <div className="span-duration-text">{formatLatency(obs.duration)}</div>
                           </div>
-                          <div className="span-duration-bar">
-                            <div
-                              className={`span-duration-fill level-${level}`}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <div className="span-duration-text">{formatLatency(obs.duration)}</div>
+                          {isExpanded && (
+                            <div className="span-expanded-detail" style={{ marginLeft: `${32 + depth * 20}px` }}>
+                              {obs.input != null && (
+                                <div className="span-detail-section">
+                                  <div className="span-detail-label">Input</div>
+                                  <pre className="span-detail-json">{JSON.stringify(obs.input, null, 2)}</pre>
+                                </div>
+                              )}
+                              {obs.output != null && (
+                                <div className="span-detail-section">
+                                  <div className="span-detail-label">Output</div>
+                                  <pre className="span-detail-json">{JSON.stringify(obs.output, null, 2)}</pre>
+                                </div>
+                              )}
+                              {obs.metadata != null && Object.keys(obs.metadata).length > 0 && (
+                                <div className="span-detail-section">
+                                  <div className="span-detail-label">Metadata</div>
+                                  <pre className="span-detail-json">{JSON.stringify(obs.metadata, null, 2)}</pre>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {children.map((child, ci) => renderObs(child, ci, depth + 1))}
                         </div>
                       );
-                    });
+                    };
+
+                    return rootObs.map((obs, i) => renderObs(obs, i, 0));
                   })()}
                 </div>
               </>
@@ -322,6 +428,5 @@ export default function ObservabilityPanel() {
           </div>
         )}
       </div>
-    </div>
   );
 }

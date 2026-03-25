@@ -10,17 +10,62 @@ import {
   bindToAgent,
   unbindFromAgent,
   getAgentCredentials,
+  toggleCredential,
+  getAuditLog,
+  getResolution,
 } from '../vault.js';
 import { getAgent } from '../db.js';
 
 const router = Router();
 
+router.put('/:id/toggle', requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthenticatedRequest).userId;
+    const id = req.params.id as string;
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled must be a boolean' });
+      return;
+    }
+    const result = await toggleCredential(id, userId, enabled);
+    if (!result) { res.status(404).json({ error: 'Credential not found' }); return; }
+    res.json(result);
+  } catch (err) {
+    console.error('[VAULT] Toggle error:', err);
+    res.status(500).json({ error: 'Failed to toggle credential' });
+  }
+});
+
+router.get('/:id/audit', requireAuth, async (req, res) => {
+  try {
+    const id = req.params.id as string;
+    const log = await getAuditLog(id);
+    res.json({ entries: log });
+  } catch (err) {
+    console.error('[VAULT] Audit error:', err);
+    res.status(500).json({ error: 'Failed to fetch audit log' });
+  }
+});
+
+router.get('/:id/resolution', requireAuth, async (req, res) => {
+  try {
+    const userId = (req as AuthenticatedRequest).userId;
+    const id = req.params.id as string;
+    const result = await getResolution(id, userId);
+    res.json(result);
+  } catch (err) {
+    console.error('[VAULT] Resolution error:', err);
+    res.status(500).json({ error: 'Failed to compute resolution' });
+  }
+});
+
 // List all credentials for the authenticated user
 router.get('/', requireAuth, async (req, res) => {
   try {
     const { userId } = req as AuthenticatedRequest;
-    const credentials = await listCredentials(userId);
-    res.json(credentials);
+    const result = await listCredentials(userId);
+
+    res.json(result);
   } catch (err) {
     console.error('GET /vault error:', err);
     res.status(500).json({ error: 'Internal server error' });

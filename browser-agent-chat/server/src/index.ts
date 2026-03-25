@@ -14,8 +14,9 @@ import tracesRouter from './routes/traces.js';
 import observabilityRouter from './routes/observability.js';
 import vaultRouter, { agentCredentialsRouter } from './routes/vault.js';
 import { executeTask, executeExplore, handleLoginDetection } from './agent.js';
+import { dispatchTask, dispatchExplore } from './agent-dispatch.js';
 import { pendingCredentialRequests } from './vault.js';
-import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask } from './db.js';
+import { getAgent, createSession, createTask, updateTask, getTaskClusterByTask, getNavNodeById } from './db.js';
 import { isSupabaseEnabled } from './supabase.js';
 import * as sessionManager from './sessionManager.js';
 import * as redisStore from './redisStore.js';
@@ -23,10 +24,13 @@ import * as browserManager from './browserManager.js';
 import { createHeyGenToken, isHeyGenEnabled } from './heygen.js';
 import { initLangfuse, shutdownLangfuse, isLangfuseEnabled } from './langfuse.js';
 import type { ClientMessage, ServerMessage, ChatMessage } from './types.js';
+import { WS_CLOSE_CODES } from './types.js';
 import feedbackRouter from './routes/feedback.js';
 import { processFeedback } from './learning/pipeline.js';
 import { MIN_CLUSTER_RUNS } from './learning/extraction.js';
 import { initLearningJobs } from './learning/jobs.js';
+import { apiReference } from '@scalar/express-api-reference';
+import openapiSpec from './openapi.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -34,7 +38,32 @@ const server = http.createServer(app);
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
-// Health check
+// API documentation (Scalar UI)
+app.get('/openapi.json', (_req, res) => res.json(openapiSpec));
+app.use('/api-docs', apiReference({ sources: [{ content: openapiSpec as Record<string, unknown> }] } as any));
+
+/**
+ * @openapi
+ * /health:
+ *   get:
+ *     tags: [Health]
+ *     summary: Server health check
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Server status
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 status: { type: string, example: ok }
+ *                 supabase: { type: boolean }
+ *                 heygenEnabled: { type: boolean }
+ *                 langfuseEnabled: { type: boolean }
+ *                 redis: { type: boolean }
+ *                 activeSessions: { type: integer }
+ */
 app.get('/health', async (_req, res) => {
   const sessions = await sessionManager.listActiveSessions();
   const redisOk = redisStore.getRedis()?.status === 'ready';
@@ -126,6 +155,9 @@ function makeChatMessage(type: ChatMessage['type'], content: string): ChatMessag
   return { id: crypto.randomUUID(), type, content, timestamp: Date.now() };
 }
 
+// Server instance ID — used as distributed lock owner for session creation
+const SERVER_ID = `srv-${crypto.randomUUID().slice(0, 8)}-${process.pid}`;
+
 wss.on('connection', (ws: WebSocket) => {
   console.log('Client connected');
 
@@ -159,9 +191,12 @@ wss.on('connection', (ws: WebSocket) => {
         clientAgents.delete(ws);
       }
 
-      // Fast path: reattach to existing session
-      const hasExisting = await sessionManager.hasSession(msg.agentId);
-      if (hasExisting && sessionManager.getAgent(msg.agentId)) {
+      // ── Idempotent start: check Redis session state first ──
+
+      const existingSession = await redisStore.getSession(msg.agentId);
+
+      // Path 1: Session active + agent alive locally → reattach
+      if (existingSession && existingSession.status !== 'allocating' && sessionManager.getAgent(msg.agentId)) {
         console.log('[START] Reattaching to existing session');
         sessionManager.addClient(msg.agentId, ws);
         clientAgents.set(ws, msg.agentId);
@@ -169,40 +204,77 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
-      // Clean up stale Redis data if agent is dead
-      if (hasExisting) {
+      // Path 2: Session allocating → another creator is working, poll until ready
+      if (existingSession && existingSession.status === 'allocating') {
+        console.log('[START] Session allocating, waiting for creator...');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        const readySession = await redisStore.waitForSessionReady(msg.agentId);
+        if (readySession && sessionManager.getAgent(msg.agentId)) {
+          sessionManager.addClient(msg.agentId, ws);
+          clientAgents.set(ws, msg.agentId);
+          await sessionManager.sendSnapshot(msg.agentId, ws);
+        } else {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session creation timed out' } as ServerMessage));
+          ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+        }
+        return;
+      }
+
+      // Path 3: Stale session in Redis but agent dead locally → clean up first
+      if (existingSession) {
         await sessionManager.destroySession(msg.agentId);
       }
 
-      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+      // Path 4: No session → acquire distributed lock and create
 
-      // Register client→agent mapping early so viewport messages
-      // arriving during async agent creation can find the agent.
+      const lockAcquired = await redisStore.acquireSessionLock(msg.agentId, SERVER_ID);
+      if (!lockAcquired) {
+        // Another server is creating — poll for ready
+        console.log('[START] Lock held by another creator, waiting...');
+        ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
+        const readySession = await redisStore.waitForSessionReady(msg.agentId);
+        if (readySession && sessionManager.getAgent(msg.agentId)) {
+          sessionManager.addClient(msg.agentId, ws);
+          clientAgents.set(ws, msg.agentId);
+          await sessionManager.sendSnapshot(msg.agentId, ws);
+        } else {
+          ws.send(JSON.stringify({ type: 'error', message: 'Session creation by another server timed out' } as ServerMessage));
+        }
+        return;
+      }
+
+      // Lock acquired — create session
+      ws.send(JSON.stringify({ type: 'status', status: 'working' } as ServerMessage));
       clientAgents.set(ws, msg.agentId);
+
+      // Refresh lock periodically during creation
+      const lockRefresh = setInterval(() => {
+        redisStore.extendSessionLock(msg.agentId, SERVER_ID).catch(() => {});
+      }, 7000);
 
       try {
         const agent = await getAgent(msg.agentId);
         if (!agent) {
           clientAgents.delete(ws);
+          ws.send(JSON.stringify({ type: 'agent_not_found', agentId: msg.agentId } as ServerMessage));
           ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
           ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+          ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
           return;
         }
 
         clientUserIds.set(ws, agent.user_id);
 
-        // Ensure capacity before creating new browser
         await sessionManager.ensureCapacity();
 
         const dbSessionId = await createSession(agent.id);
 
         const agentSession = await sessionManager.createSession(
-          msg.agentId, msg.resumeUrl || agent.url, dbSessionId
+          msg.agentId, msg.resumeUrl || agent.url, dbSessionId, agent.user_id
         );
 
         sessionManager.addClient(msg.agentId, ws);
 
-        // Signal new session to client
         ws.send(JSON.stringify({ type: 'session_new', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'idle' } as ServerMessage));
 
@@ -210,8 +282,11 @@ wss.on('connection', (ws: WebSocket) => {
         {
           const loginBroadcast = sessionManager.makeBroadcast(msg.agentId);
           const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginInProgress = true;
           agentSession.loginDone = handleLoginDetection(loginPage, msg.agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
+          }).finally(() => {
+            agentSession.loginInProgress = false;
           });
         }
       } catch (err) {
@@ -220,6 +295,9 @@ wss.on('connection', (ws: WebSocket) => {
         const message = err instanceof Error ? err.message : 'Failed to start agent';
         ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
         ws.send(JSON.stringify({ type: 'status', status: 'disconnected' } as ServerMessage));
+      } finally {
+        clearInterval(lockRefresh);
+        await redisStore.releaseSessionLock(msg.agentId, SERVER_ID);
       }
 
     } else if (msg.type === 'task') {
@@ -234,6 +312,48 @@ wss.on('connection', (ws: WebSocket) => {
         ws.send(JSON.stringify({ type: 'error', message: 'Session expired. Please restart the agent.' } as ServerMessage));
         return;
       }
+
+      // Check session lifecycle limits before dispatching
+      const limits = await sessionManager.checkSessionLimits(agentId);
+      if (limits.exceeded) {
+        broadcastToAgent(agentId, { type: 'error', message: limits.reason || 'Session limits exceeded' });
+        sessionManager.reap(agentId, 'expired').catch(err =>
+          console.error('[TASK] Reap after limit exceeded failed:', err)
+        );
+        return;
+      }
+
+      // Pre-task health check
+      const healthy = await sessionManager.healthCheck(agentId);
+      if (!healthy) {
+        const hBroadcast = sessionManager.makeBroadcast(agentId);
+        hBroadcast({ type: 'thought', content: 'Browser crashed. Restarting session...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser crashed. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Pre-task sanity check
+      const sane = await sessionManager.ensureSessionIsSane(agentId);
+      if (!sane) {
+        const sBroadcast = sessionManager.makeBroadcast(agentId);
+        sBroadcast({ type: 'thought', content: 'Browser unrecoverable. Restarting...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser unrecoverable. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Acquire execution lock (prevents concurrent tasks)
+      const execTaskId = crypto.randomUUID();
+      const locked = await redisStore.acquireExecLock(agentId, execTaskId);
+      if (!locked) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent is busy. Wait for current task to complete.' } as ServerMessage));
+        return;
+      }
+
+      const execLockRenew = setInterval(() => {
+        redisStore.extendExecLock(agentId, execTaskId).catch(() => {});
+      }, 7000);
 
       const userMsg = makeChatMessage('user', msg.content);
       redisStore.pushMessage(agentId, userMsg).catch(() => {});
@@ -253,7 +373,6 @@ wss.on('connection', (ws: WebSocket) => {
 
       const baseBroadcast = sessionManager.makeBroadcast(agentId);
       const taskBroadcast = (broadcastMsg: ServerMessage) => {
-        // Intercept taskComplete to update task record and enrich with metadata
         if (broadcastMsg.type === 'taskComplete') {
           const activeTask = activeTasks.get(agentId);
           if (activeTask) {
@@ -270,14 +389,21 @@ wss.on('connection', (ws: WebSocket) => {
               success,
               completed_at: new Date().toISOString(),
             }).catch(err => console.error('[TASK] Failed to update task:', err));
-            // Don't delete from activeTasks yet — need it for feedback
             baseBroadcast(enriched);
+
+            redisStore.incrementTaskCount(agentId).catch(() => {});
             return;
           }
         }
         baseBroadcast(broadcastMsg);
       };
-      executeTask(agentSession, msg.content, taskBroadcast);
+
+      try {
+        await dispatchTask(agentSession, msg.content, taskBroadcast);
+      } finally {
+        clearInterval(execLockRenew);
+        await redisStore.releaseExecLock(agentId, execTaskId);
+      }
 
     } else if (msg.type === 'restart') {
       const agentId = msg.agentId;
@@ -292,7 +418,9 @@ wss.on('connection', (ws: WebSocket) => {
       try {
         const agent = await getAgent(agentId);
         if (!agent) {
+          ws.send(JSON.stringify({ type: 'agent_not_found', agentId } as ServerMessage));
           ws.send(JSON.stringify({ type: 'error', message: 'Agent not found' } as ServerMessage));
+          ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
           return;
         }
 
@@ -300,7 +428,7 @@ wss.on('connection', (ws: WebSocket) => {
         clientAgents.set(ws, agentId);
 
         const dbSessionId = await createSession(agent.id);
-        const agentSession = await sessionManager.createSession(agentId, agent.url, dbSessionId);
+        const agentSession = await sessionManager.createSession(agentId, agent.url, dbSessionId, agent.user_id);
         sessionManager.addClient(agentId, ws);
 
         ws.send(JSON.stringify({ type: 'session_new', agentId } as ServerMessage));
@@ -310,8 +438,11 @@ wss.on('connection', (ws: WebSocket) => {
         {
           const loginBroadcast = sessionManager.makeBroadcast(agentId);
           const loginPage = agentSession.connector.getHarness().page;
+          agentSession.loginInProgress = true;
           agentSession.loginDone = handleLoginDetection(loginPage, agentId, agent.user_id, loginBroadcast).catch((err: unknown) => {
             console.error('[LOGIN] Background login error:', err);
+          }).finally(() => {
+            agentSession.loginInProgress = false;
           });
         }
       } catch (err) {
@@ -337,9 +468,55 @@ wss.on('connection', (ws: WebSocket) => {
         return;
       }
 
+      // Check session lifecycle limits before dispatching
+      const exploreLimits = await sessionManager.checkSessionLimits(agentId);
+      if (exploreLimits.exceeded) {
+        broadcastToAgent(agentId, { type: 'error', message: exploreLimits.reason || 'Session limits exceeded' });
+        sessionManager.reap(agentId, 'expired').catch(err =>
+          console.error('[EXPLORE] Reap after limit exceeded failed:', err)
+        );
+        return;
+      }
+
+      // Pre-explore health check
+      const exploreHealthy = await sessionManager.healthCheck(agentId);
+      if (!exploreHealthy) {
+        const hb = sessionManager.makeBroadcast(agentId);
+        hb({ type: 'thought', content: 'Browser crashed. Restarting session...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser crashed. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Pre-explore sanity check
+      const exploreSane = await sessionManager.ensureSessionIsSane(agentId);
+      if (!exploreSane) {
+        const sb = sessionManager.makeBroadcast(agentId);
+        sb({ type: 'thought', content: 'Browser unrecoverable. Restarting...' });
+        await sessionManager.reap(agentId, 'terminated');
+        ws.send(JSON.stringify({ type: 'error', message: 'Browser unrecoverable. Please reconnect.' } as ServerMessage));
+        return;
+      }
+
+      // Acquire execution lock
+      const exploreExecId = crypto.randomUUID();
+      const exploreLocked = await redisStore.acquireExecLock(agentId, exploreExecId);
+      if (!exploreLocked) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Agent is busy. Wait for current task to complete.' } as ServerMessage));
+        return;
+      }
+
+      const exploreLockRenew = setInterval(() => {
+        redisStore.extendExecLock(agentId, exploreExecId).catch(() => {});
+      }, 7000);
+
       const agent = await getAgent(msg.agentId);
       if (!agent) {
+        clearInterval(exploreLockRenew);
+        await redisStore.releaseExecLock(agentId, exploreExecId);
+        ws.send(JSON.stringify({ type: 'agent_not_found', agentId: msg.agentId } as ServerMessage));
         ws.send(JSON.stringify({ type: 'error', message: 'Agent not found.' } as ServerMessage));
+        ws.close(WS_CLOSE_CODES.AGENT_NOT_FOUND, 'AGENT_NOT_FOUND');
         return;
       }
 
@@ -349,7 +526,12 @@ wss.on('connection', (ws: WebSocket) => {
       redisStore.pushMessage(agentId, exploreMsg).catch(() => {});
 
       const exploreBroadcast = sessionManager.makeBroadcast(agentId);
-      executeExplore(agentSession, agent?.context || null, exploreBroadcast);
+      dispatchExplore(agentSession, agent?.context || null, exploreBroadcast).then(() => {
+        redisStore.incrementTaskCount(agentId).catch(() => {});
+      }).catch(() => {}).finally(() => {
+        clearInterval(exploreLockRenew);
+        redisStore.releaseExecLock(agentId, exploreExecId).catch(() => {});
+      });
 
     } else if (msg.type === 'taskFeedback') {
       const agentId = clientAgents.get(ws);
@@ -402,9 +584,75 @@ wss.on('connection', (ws: WebSocket) => {
         activeTasks.delete(agentId);
       }
 
+    } else if (msg.type === 'explore_node') {
+      const agentId = clientAgents.get(ws);
+      if (!agentId) {
+        ws.send(JSON.stringify({ type: 'error', message: 'No active session.' } as ServerMessage));
+        return;
+      }
+
+      const agentSession = sessionManager.getAgent(agentId);
+      if (!agentSession) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Session expired.' } as ServerMessage));
+        return;
+      }
+
+      try {
+        const navNode = await getNavNodeById(msg.nodeId);
+        if (!navNode) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Node not found.' } as ServerMessage));
+          return;
+        }
+
+        const taskContent = `Navigate to ${navNode.url_pattern} and explore the page. Identify interactive elements, forms, and available features.`;
+        broadcastToAgent(agentId, { type: 'status', status: 'working' });
+
+        const userMsg = makeChatMessage('system', `Exploring: ${navNode.page_title || navNode.url_pattern}`);
+        redisStore.pushMessage(agentId, userMsg).catch(() => {});
+
+        if (agentSession.sessionId) {
+          try {
+            const taskId = await createTask(agentSession.sessionId, agentId, taskContent);
+            activeTasks.set(agentId, { taskId, stepCount: 0, startedAt: Date.now(), prompt: taskContent });
+            broadcastToAgent(agentId, { type: 'taskStarted', taskId });
+          } catch (err) {
+            console.error('[EXPLORE_NODE] Failed to create task:', err);
+          }
+        }
+
+        const baseBroadcast = sessionManager.makeBroadcast(agentId);
+        const taskBroadcast = (broadcastMsg: ServerMessage) => {
+          if (broadcastMsg.type === 'taskComplete') {
+            const activeTask = activeTasks.get(agentId);
+            if (activeTask) {
+              const enriched: ServerMessage = {
+                ...broadcastMsg,
+                taskId: activeTask.taskId,
+                stepCount: activeTask.stepCount,
+                durationMs: Date.now() - activeTask.startedAt,
+              };
+              updateTask(activeTask.taskId, {
+                status: broadcastMsg.success ? 'completed' : 'failed',
+                success: broadcastMsg.success,
+                completed_at: new Date().toISOString(),
+              }).catch(err => console.error('[EXPLORE_NODE] Failed to update task:', err));
+              baseBroadcast(enriched);
+              return;
+            }
+          }
+          baseBroadcast(broadcastMsg);
+        };
+        executeTask(agentSession, taskContent, taskBroadcast);
+      } catch (err) {
+        console.error('[EXPLORE_NODE] Error:', err);
+        const message = err instanceof Error ? err.message : 'Failed to explore node';
+        ws.send(JSON.stringify({ type: 'error', message } as ServerMessage));
+      }
+
     } else if (msg.type === 'credential_provided') {
       const agentId = clientAgents.get(ws);
       if (!agentId) return;
+
       const pending = pendingCredentialRequests.get(agentId);
       if (pending) {
         pending.resolve(msg.credentialId);
@@ -466,7 +714,7 @@ async function startup(): Promise<void> {
   redisStore.pollExpiredSessions(sessionManager.handleExpiry);
 
   console.log('[STARTUP] Warming browser pool...');
-  browserManager.warmUp().catch(err =>
+  browserManager.replenish().catch(err =>
     console.error('[STARTUP] Warm-up error:', err)
   );
 

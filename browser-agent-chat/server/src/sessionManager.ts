@@ -2,15 +2,23 @@ import { WebSocket } from 'ws';
 import * as redisStore from './redisStore.js';
 import * as browserManager from './browserManager.js';
 import { createAgent } from './agent.js';
-import { endSession as dbEndSession, getMessagesBySession } from './db.js';
+import { endSession as dbEndSession, getMessagesBySession, getAgent as dbGetAgent } from './db.js';
 import type { AgentSession } from './agent.js';
-import type { ServerMessage, ChatMessage, RedisSession } from './types.js';
+import type { ServerMessage, ChatMessage, RedisSession, ReapReason } from './types.js';
+import { WS_CLOSE_CODES } from './types.js';
+import { registerSession, removeSession } from './session-registry.js';
+import { createBudgetTracker } from './budget.js';
 
 // -- Configuration --
 
 const MAX_CONCURRENT_BROWSERS = parseInt(process.env.MAX_CONCURRENT_BROWSERS || '3', 10);
 const DETACHED_TIMEOUT_SECONDS = parseInt(process.env.DETACHED_TIMEOUT_SECONDS || '120', 10);
 const ABSOLUTE_TIMEOUT_SECONDS = parseInt(process.env.ABSOLUTE_TIMEOUT_SECONDS || '1800', 10);
+
+// -- Session lifecycle limits --
+
+const MAX_TASKS = () => parseInt(process.env.MAX_TASKS_PER_SESSION || '20', 10);
+const MAX_NAVIGATIONS = () => parseInt(process.env.MAX_NAVIGATIONS_PER_SESSION || '50', 10);
 
 // -- Local state (thin cache, NOT source of truth — Redis is) --
 
@@ -51,12 +59,12 @@ export function _resetLocalState(): void {
 
 function startDetachedTimer(agentId: string): void {
   // Store detachedAt in Redis for crash recovery
-  redisStore.setSession(agentId, { detachedAt: Date.now() } as Partial<RedisSession>).catch(() => {});
+  redisStore.setSession(agentId, { detachedAt: Date.now(), status: 'disconnected' } as Partial<RedisSession>).catch(() => {});
 
   const timer = setTimeout(async () => {
     detachedTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await destroySession(agentId);
+    await reap(agentId, 'terminated');
   }, DETACHED_TIMEOUT_SECONDS * 1000);
 
   detachedTimers.set(agentId, timer);
@@ -81,7 +89,7 @@ function startAbsoluteTimeout(agentId: string): void {
     absoluteTimers.delete(agentId);
     warningTimers.delete(agentId);
     if (onBeforeEvict) await onBeforeEvict(agentId);
-    await destroySession(agentId);
+    await reap(agentId, 'expired');
   }, ABSOLUTE_TIMEOUT_SECONDS * 1000);
 
   absoluteTimers.set(agentId, absTimer);
@@ -178,6 +186,7 @@ export function makeBroadcast(agentId: string): (msg: ServerMessage) => void {
       redisStore.setScreenshot(agentId, msg.data).catch(() => {});
     } else if (msg.type === 'nav') {
       redisStore.setSession(agentId, { currentUrl: msg.url }).catch(() => {});
+      redisStore.incrementNavCount(agentId).catch(() => {});
     } else if (msg.type === 'status') {
       const statusMap: Record<string, RedisSession['status']> = {
         idle: 'idle', working: 'working', error: 'idle', disconnected: 'disconnected',
@@ -204,8 +213,11 @@ export async function createSession(
   agentId: string,
   url: string,
   dbSessionId: string | null,
+  userId: string | null = null,
 ): Promise<AgentSession> {
-  // Claim warm browser or launch new
+  // Claim warm browser or launch new.
+  // With kill-and-replace, warm browsers always start on about:blank,
+  // so no pre-navigation CDP hack is needed.
   let browser = await browserManager.claimWarm(agentId);
   if (!browser) {
     browser = await browserManager.launchBrowser(agentId);
@@ -215,7 +227,7 @@ export async function createSession(
 
   // Create agent via CDP
   const agentSession = await createAgent(
-    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url
+    broadcastFn, browser.cdpEndpoint, dbSessionId, agentId, url, userId,
   );
 
   // Write session to Redis
@@ -227,21 +239,33 @@ export async function createSession(
     currentUrl: url,
     memoryContext: agentSession.memoryContext,
     browserPid: browser.pid,
+    owner: process.env.SERVER_ID || `srv-${process.pid}`,
     lastTask: '',
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     detachedAt: 0,
+    taskCount: 0,
+    navigationCount: 0,
+    healthStatus: 'healthy',
   });
 
   agents.set(agentId, agentSession);
+
+  // Register in Mastra session registry for workflow step access
+  registerSession(agentId, {
+    session: agentSession,
+    budget: createBudgetTracker(),
+    broadcast: broadcastFn as (msg: Record<string, unknown>) => void,
+  });
+
   startAbsoluteTimeout(agentId);
   return agentSession;
 }
 
-// -- Destroy session --
+// -- Unified cleanup (single exit path for all teardown) --
 
-export async function destroySession(agentId: string): Promise<void> {
-  // Clean up timers
+export async function reap(agentId: string, reason: ReapReason = 'terminated'): Promise<void> {
+  // 1. Clear all local timers
   const detTimer = detachedTimers.get(agentId);
   if (detTimer) { clearTimeout(detTimer); detachedTimers.delete(agentId); }
   const absTimer = absoluteTimers.get(agentId);
@@ -249,31 +273,167 @@ export async function destroySession(agentId: string): Promise<void> {
   const warnTimer = warningTimers.get(agentId);
   if (warnTimer) { clearTimeout(warnTimer); warningTimers.delete(agentId); }
 
+  // 2. Read session from Redis (before we delete it)
   const session = await redisStore.getSession(agentId);
 
-  // Remove from local maps
+  // 3. Close agent session (drops event listeners, does NOT close browser context)
   const agentSession = agents.get(agentId);
-  agents.delete(agentId);
-
-  // Notify connected clients
-  broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
-  wsClients.delete(agentId);
-
-  // Close agent (drops event listeners only, does NOT close browser context)
   if (agentSession) {
     await agentSession.close().catch(err =>
-      console.error(`[SessionManager] Error closing agent for ${agentId}:`, err)
+      console.error(`[REAP] Error closing agent for ${agentId}:`, err)
     );
   }
 
+  // 4. Kill browser process
   if (session) {
-    // Kill browser process
     await browserManager.killBrowser(session.browserPid, session.cdpPort);
-    // End DB session
-    if (session.dbSessionId) await dbEndSession(session.dbSessionId);
-    // Remove from Redis
-    await redisStore.deleteSession(agentId);
   }
+
+  // 5. Send lifecycle message + close WS connections with semantic codes
+  const lifecycleType: ServerMessage['type'] = reason === 'expired' ? 'session_expired' : 'session_terminated';
+  const closeCode = reason === 'expired'
+    ? WS_CLOSE_CODES.SESSION_EXPIRED
+    : WS_CLOSE_CODES.SESSION_TERMINATED;
+  const closeReason = reason === 'expired' ? 'SESSION_EXPIRED' : 'SESSION_TERMINATED';
+
+  broadcastToClients(agentId, { type: lifecycleType, agentId } as ServerMessage);
+  broadcastToClients(agentId, { type: 'status', status: 'disconnected' });
+
+  // Close all WS connections for this agent with the semantic code
+  const clients = wsClients.get(agentId);
+  if (clients) {
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.close(closeCode, closeReason);
+      }
+    }
+  }
+
+  // 6. End DB session
+  if (session?.dbSessionId) {
+    await dbEndSession(session.dbSessionId);
+  }
+
+  // 7. Delete all Redis keys (session, screenshot, messages, expiry)
+  //    deleteSession handles all of these in one call
+  await redisStore.deleteSession(agentId);
+
+  // 8. Release execution lock if held
+  await redisStore.forceReleaseExecLock(agentId);
+
+  // 9. Remove from Mastra session registry
+  removeSession(agentId);
+
+  // 10. Clear local maps
+  agents.delete(agentId);
+  wsClients.delete(agentId);
+
+  // 10. Replenish warm pool (fire-and-forget)
+  browserManager.replenish().catch(err =>
+    console.error(`[REAP] Replenish after reap failed:`, err)
+  );
+}
+
+// -- Session lifecycle checks --
+
+export async function checkSessionLimits(agentId: string): Promise<{ exceeded: boolean; reason?: string }> {
+  const session = await redisStore.getSession(agentId);
+  if (!session) return { exceeded: false };
+
+  const maxTasks = MAX_TASKS();
+  const maxNavs = MAX_NAVIGATIONS();
+
+  if (session.taskCount >= maxTasks) {
+    return { exceeded: true, reason: `Session task limit reached (${session.taskCount}/${maxTasks})` };
+  }
+  if (session.navigationCount >= maxNavs) {
+    return { exceeded: true, reason: `Session navigation limit reached (${session.navigationCount}/${maxNavs})` };
+  }
+  return { exceeded: false };
+}
+
+// -- Health check (pre-task) --
+
+export async function healthCheck(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  try {
+    const page = session.connector.getHarness().page;
+    const result = await Promise.race([
+      page.evaluate('true'),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 3000)),
+    ]);
+    return result === 'true' || result === true;
+  } catch {
+    console.error(`[HEALTH] Browser unhealthy for ${agentId}`);
+    await redisStore.setSession(agentId, { healthStatus: 'unhealthy' }).catch(() => {});
+    return false;
+  }
+}
+
+// -- Pre-task sanity check --
+
+export async function ensureSessionIsSane(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  const page = session.connector.getHarness().page;
+
+  try {
+    // 1. Page alive (3s timeout)
+    await Promise.race([
+      page.evaluate('true'),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('hung')), 3000)),
+    ]);
+
+    // 2. Wait for in-flight navigation
+    await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+
+    // 3. Dismiss blocking overlays (cookie banners, modals, toasts)
+    await page.evaluate(`(() => {
+      var sels = ['[role="dialog"] button[aria-label="Close"]','[role="dialog"] button[aria-label="Dismiss"]','.modal-close','.toast-close'];
+      for (var i = 0; i < sels.length; i++) {
+        var el = document.querySelector(sels[i]);
+        if (el && el.offsetParent !== null) el.click();
+      }
+    })()`).catch(() => {});
+
+    // 4. Document ready
+    const readyState = await page.evaluate('document.readyState');
+    if (readyState !== 'complete') {
+      await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+    }
+
+    return true;
+  } catch {
+    return await softReset(agentId);
+  }
+}
+
+export async function softReset(agentId: string): Promise<boolean> {
+  const session = agents.get(agentId);
+  if (!session) return false;
+
+  const redisSession = await redisStore.getSession(agentId);
+  const baseUrl = redisSession?.currentUrl || '';
+  if (!baseUrl) return false;
+
+  try {
+    const page = session.connector.getHarness().page;
+    const url = new URL(baseUrl);
+    await page.goto(url.origin, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    console.log(`[SESSION] Soft reset to ${url.origin} for ${agentId}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// -- Destroy session (delegates to reap) --
+
+export async function destroySession(agentId: string): Promise<void> {
+  await reap(agentId, 'terminated');
 }
 
 // -- LRU Eviction --
@@ -314,7 +474,7 @@ export async function evictLRUSession(): Promise<string | null> {
     await onBeforeEvict(target.agentId);
   }
 
-  await destroySession(target.agentId);
+  await reap(target.agentId, 'evicted');
   return target.agentId;
 }
 
@@ -358,11 +518,23 @@ export async function recoverSession(agentId: string): Promise<boolean> {
       try {
         const broadcastFn = makeBroadcast(agentId);
 
+        // Fetch agent record for userId (needed for vault-based login interception)
+        const agentRecord = await dbGetAgent(agentId);
+        const userId = agentRecord?.user_id ?? null;
+
         // Connect agent to existing browser — NO url (keep current page)
         const agentSession = await createAgent(
-          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined
+          broadcastFn, session.cdpEndpoint, session.dbSessionId, agentId, undefined, userId,
         );
         agents.set(agentId, agentSession);
+
+        // Register in Mastra session registry for workflow step access
+        registerSession(agentId, {
+          session: agentSession,
+          budget: createBudgetTracker(),
+          broadcast: broadcastFn as (msg: Record<string, unknown>) => void,
+        });
+
         startAbsoluteTimeout(agentId);
 
         // Update status based on what was happening before crash
@@ -420,8 +592,9 @@ export async function sendSnapshot(agentId: string, ws: WebSocket): Promise<void
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
   };
 
-  // Status
-  send({ type: 'status', status: session.status });
+  // Status — map Redis-only statuses to client-facing AgentStatus
+  const clientStatus = session.status === 'allocating' ? 'working' : session.status;
+  send({ type: 'status', status: clientStatus });
 
   // Current URL
   if (session.currentUrl) {
@@ -468,8 +641,8 @@ export async function listActiveSessions(): Promise<string[]> {
 // -- Handle expiry (called by polling loop) --
 
 export async function handleExpiry(agentId: string): Promise<void> {
-  console.log(`[SessionManager] Session ${agentId} expired, destroying...`);
-  await destroySession(agentId);
+  console.log(`[SessionManager] Session ${agentId} expired, reaping...`);
+  await reap(agentId, 'expired');
 }
 
 // -- Graceful shutdown --

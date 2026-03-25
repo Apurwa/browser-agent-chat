@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useWS } from '../../contexts/WebSocketContext';
 import { apiAuthFetch } from '../../lib/api';
+import { buildCanonicalGraph } from './CanonicalGraph';
+import { projectNavigation, projectCapabilities } from './GraphProjectionLayer';
+import { useGraphStore } from './GraphStore';
 
 export interface MapFlowStep {
   order: number;
@@ -72,6 +75,7 @@ interface AppMapData {
 export function useAppMap(agentId: string): AppMapData {
   const { getAccessToken } = useAuth();
   const ws = useWS();
+  const mode = useGraphStore(state => state.mode);
   const [nodes, setNodes] = useState<MapNode[]>([]);
   const [edges, setEdges] = useState<MapEdge[]>([]);
   const [unlinkedSuggestions, setUnlinkedSuggestions] = useState<MapNode['pendingSuggestions']>([]);
@@ -83,8 +87,8 @@ export function useAppMap(agentId: string): AppMapData {
   const fetchMap = useCallback(async () => {
     try {
       const token = await getAccessToken();
-      const res = await apiAuthFetch(`/api/agents/${agentId}/map`, token);
-      if (!res.ok) throw new Error('Failed to load map');
+      const res = await apiAuthFetch(`/api/agents/${agentId}/map?mode=${mode}`, token);
+      if (!res.ok) throw new Error(`Failed to load map: ${res.status}`);
       const data = await res.json();
 
       const prevIds = prevNodeIdsRef.current;
@@ -96,6 +100,23 @@ export function useAppMap(agentId: string): AppMapData {
       prevNodeIdsRef.current = new Set(newNodes.map((n: MapNode) => n.id));
       setNodes(newNodes);
       setEdges(data.edges);
+
+      // Feed the graph pipeline into the zustand store based on mode
+      if (mode === 'capabilities' && data.capabilityClusters) {
+        const projected = projectCapabilities(data.capabilityClusters);
+        useGraphStore.getState().setGraph(projected.nodes, projected.edges);
+      } else {
+        const canonical = buildCanonicalGraph(data);
+        const projected = projectNavigation(canonical);
+        // Set graph and auto-expand root in a single store update
+        const rootNode = projected.nodes.find(n => n.type === 'root');
+        useGraphStore.setState(state => {
+          const expanded = new Set(state.expandedNodeIds);
+          if (rootNode) expanded.add(rootNode.id);
+          return { nodes: projected.nodes, edges: projected.edges, expandedNodeIds: expanded };
+        });
+      }
+
       setUnlinkedSuggestions(data.unlinkedSuggestions || []);
       setError(null);
     } catch (err) {
@@ -103,7 +124,7 @@ export function useAppMap(agentId: string): AppMapData {
     } finally {
       setLoading(false);
     }
-  }, [agentId, getAccessToken]);
+  }, [agentId, getAccessToken, mode]);
 
   // Initial fetch
   useEffect(() => {

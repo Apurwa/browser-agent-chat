@@ -4,7 +4,6 @@ import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useVault } from '../../hooks/useVault';
 import * as vaultApi from '../../lib/vaultApi';
-import Sidebar from '../Sidebar';
 import VaultForm from './VaultForm';
 import './Vault.css';
 
@@ -99,22 +98,14 @@ export default function VaultPage() {
   };
 
   if (loading) return (
-    <div className="app-layout">
-      <Sidebar disabled />
-      <div className="vault-page"><div className="vault-empty">Loading credentials...</div></div>
-    </div>
+    <div className="vault-page"><div className="vault-empty">Loading credentials...</div></div>
   );
   if (error) return (
-    <div className="app-layout">
-      <Sidebar disabled />
-      <div className="vault-page"><div className="vault-empty">Error: {error}</div></div>
-    </div>
+    <div className="vault-page"><div className="vault-empty">Error: {error}</div></div>
   );
 
   return (
-    <div className="app-layout">
-      <Sidebar disabled />
-      <div className="vault-page">
+    <div className="vault-page">
         <div className="vault-header">
           <div className="vault-header-left">
             <button className="vault-back-btn" onClick={() => navigate('/')} title="Back to Home">
@@ -196,6 +187,5 @@ export default function VaultPage() {
         </div>
       )}
       </div>
-    </div>
   );
 }

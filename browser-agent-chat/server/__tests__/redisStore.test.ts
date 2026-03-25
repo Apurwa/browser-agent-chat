@@ -93,6 +93,14 @@ describe('redisStore — session CRUD', () => {
       createdAt: 1710000000000,
       lastActivityAt: 1710000000000,
       detachedAt: 0,
+      taskCount: 0,
+      navigationCount: 0,
+      healthStatus: 'healthy',
+      owner: '',
+      totalLlmCalls: 0,
+      totalTokensInput: 0,
+      totalTokensOutput: 0,
+      totalCostUsd: 0,
     });
   });
 

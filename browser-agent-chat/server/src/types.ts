@@ -44,6 +44,7 @@ export interface VaultEntry {
   created_by_agent: string | null;
   created_at: string;
   updated_at: string;
+  enabled: boolean;
 }
 
 export interface BoundCredential extends VaultEntry {
@@ -166,6 +167,7 @@ export type AgentStatus = 'idle' | 'working' | 'error' | 'disconnected' | 'crash
 export interface RedisSession {
   dbSessionId: string;
   status: RedisSessionStatus;
+  owner: string;  // server instance ID — for distributed ownership tracking
   cdpPort: number;
   cdpEndpoint: string;
   currentUrl: string;
@@ -175,9 +177,16 @@ export interface RedisSession {
   createdAt: number;
   lastActivityAt: number;
   detachedAt: number;  // 0 = not detached, Date.now() = detach timestamp
+  taskCount: number;
+  navigationCount: number;
+  healthStatus: 'healthy' | 'degraded' | 'unhealthy';
+  totalLlmCalls: number;
+  totalTokensInput: number;
+  totalTokensOutput: number;
+  totalCostUsd: number;
 }
 
-export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted';
+export type RedisSessionStatus = 'idle' | 'working' | 'disconnected' | 'crashed' | 'interrupted' | 'allocating';
 
 // === Navigation Graph ===
 
@@ -333,6 +342,16 @@ export interface BehaviorSuggestionData {
   behavior: string;
 }
 
+// === WebSocket Close Codes ===
+
+export const WS_CLOSE_CODES = {
+  SESSION_EXPIRED: 4001,
+  AGENT_NOT_FOUND: 4002,
+  SESSION_TERMINATED: 4003,
+} as const;
+
+export type ReapReason = 'expired' | 'terminated' | 'evicted';
+
 // === WebSocket Messages ===
 
 export type ClientMessage =
@@ -340,6 +359,7 @@ export type ClientMessage =
   | { type: 'restart'; agentId: string }
   | { type: 'task'; content: string }
   | { type: 'explore'; agentId: string }
+  | { type: 'explore_node'; nodeId: string }
   | { type: 'ping' }
   | { type: 'taskFeedback'; task_id: string; rating: FeedbackRating; correction?: string }
   | { type: 'credential_provided'; credentialId: string };
@@ -368,7 +388,10 @@ export type ServerMessage =
   | { type: 'credential_needed'; agentId: string; domain: string; strategy: string }
   | { type: 'session_evicted'; agentId: string; reason: 'capacity' }
   | { type: 'session_expiring'; remainingSeconds: number }
-  | { type: 'session_new'; agentId: string };
+  | { type: 'session_new'; agentId: string }
+  | { type: 'session_expired'; agentId: string }
+  | { type: 'session_terminated'; agentId: string }
+  | { type: 'agent_not_found'; agentId: string };
 
 // === API Request/Response ===
 

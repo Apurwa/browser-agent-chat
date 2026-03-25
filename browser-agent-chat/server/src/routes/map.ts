@@ -111,8 +111,23 @@ export async function buildAppMapResponse(agentId: string): Promise<AppMapRespon
 router.get('/', requireAuth, async (req, res) => {
   try {
     const agentId = req.params.id as string;
+    const mode = (req.query.mode as string) || 'navigation';
     const result = await buildAppMapResponse(agentId);
-    res.json(result);
+
+    const explorationStatus = {
+      explored: result.nodes.filter(n => n.features.length > 0).length,
+      unexplored: result.nodes.filter(n => n.features.length === 0).length,
+      exploring: 0,
+      total: result.nodes.length,
+    };
+
+    if (mode === 'capabilities') {
+      const { buildCapabilityClusters } = await import('../capability-graph.js');
+      const clusters = buildCapabilityClusters(result.nodes, result.edges);
+      res.json({ ...result, capabilityClusters: clusters, explorationStatus });
+    } else {
+      res.json({ ...result, explorationStatus });
+    }
   } catch (err) {
     console.error('[MAP] Error:', err);
     res.status(500).json({ error: 'Failed to load app map' });

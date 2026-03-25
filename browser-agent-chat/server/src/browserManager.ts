@@ -125,36 +125,104 @@ export async function claimWarm(agentId: string): Promise<{ pid: number; port: n
   return null;
 }
 
-export async function warmUp(count?: number): Promise<void> {
-  const target = count ?? parseInt(process.env.WARM_BROWSERS || '1', 10);
-  const redis = redisStore.getRedis();
-  const currentWarm = await redis.scard('browser:warm:pids');
+const MAX_CONCURRENT_BROWSERS = () => parseInt(process.env.MAX_CONCURRENT_BROWSERS || '3', 10);
 
-  for (let i = currentWarm; i < target; i++) {
-    try {
-      const warmId = `__warm_${Date.now()}_${i}`;
-      const port = await redisStore.allocatePort(warmId);
-      const chromePath = getChromiumPath();
+async function navigateToBlank(port: number): Promise<void> {
+  try {
+    const cdpRes = await fetch(`http://localhost:${port}/json/list`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    const targets = await cdpRes.json() as Array<{ url: string; webSocketDebuggerUrl: string }>;
+    const pageTarget = targets.find(t => !t.url.startsWith('devtools://'));
+    if (!pageTarget || pageTarget.url === 'about:blank') return;
 
-      const child = spawn(chromePath, buildArgs(port), {
-        detached: true,
-        stdio: 'ignore',
+    const ws = await import('ws');
+    const cdpWs = new ws.default(pageTarget.webSocketDebuggerUrl);
+    await new Promise<void>((resolve) => {
+      cdpWs.on('open', () => {
+        cdpWs.send(JSON.stringify({ id: 1, method: 'Page.navigate', params: { url: 'about:blank' } }));
       });
-      child.unref();
-
-      if (!child.pid) {
-        await redisStore.freePort(port);
-        throw new Error('Failed to spawn warm Chromium — no PID');
-      }
-
-      await waitForCDP(port, 10_000);
-      await redis.sadd('browser:warm:pids', `${child.pid}:${port}`);
-      console.log(`[BrowserManager] Warm browser ready pid=${child.pid} port=${port}`);
-    } catch (err) {
-      console.error('[BrowserManager] Failed to warm browser:', err);
-    }
+      cdpWs.on('message', (data: Buffer) => {
+        const msg = JSON.parse(data.toString());
+        if (msg.id === 1) { cdpWs.close(); resolve(); }
+      });
+      cdpWs.on('error', () => { cdpWs.close(); resolve(); });
+      setTimeout(() => { cdpWs.close(); resolve(); }, 5000);
+    });
+  } catch {
+    // Non-fatal — browser will still work, just won't be on about:blank
   }
 }
+
+async function countAllocatedPorts(): Promise<number> {
+  const redis = redisStore.getRedis();
+  const portStart = parseInt(process.env.CDP_PORT_START || '19300', 10);
+  const portRange = parseInt(process.env.CDP_PORT_RANGE || '100', 10);
+  let count = 0;
+  for (let offset = 0; offset < portRange; offset++) {
+    const exists = await redis.exists(`browser:port:${portStart + offset}`);
+    if (exists) count++;
+  }
+  return count;
+}
+
+export async function replenish(count?: number): Promise<void> {
+  const target = count ?? parseInt(process.env.WARM_BROWSERS || '1', 10);
+  const redis = redisStore.getRedis();
+
+  // Acquire replenish mutex — prevents concurrent replenish calls
+  const acquired = await redis.set('session:replenish', '1', 'EX', 10, 'NX');
+  if (!acquired) {
+    console.log('[BrowserManager] Replenish already in progress, skipping');
+    return;
+  }
+
+  try {
+    const currentWarm = await redis.scard('browser:warm:pids');
+    const maxBrowsers = MAX_CONCURRENT_BROWSERS();
+
+    for (let i = currentWarm; i < target; i++) {
+      // Capacity check: don't over-provision beyond MAX_CONCURRENT_BROWSERS + 1
+      const totalBrowsers = await countAllocatedPorts();
+      if (totalBrowsers >= maxBrowsers + 1) {
+        console.log(`[BrowserManager] At capacity (${totalBrowsers}/${maxBrowsers + 1}), skipping warm browser`);
+        break;
+      }
+
+      try {
+        const warmId = `__warm_${Date.now()}_${i}`;
+        const port = await redisStore.allocatePort(warmId);
+        const chromePath = getChromiumPath();
+
+        const child = spawn(chromePath, buildArgs(port), {
+          detached: true,
+          stdio: 'ignore',
+        });
+        child.unref();
+
+        if (!child.pid) {
+          await redisStore.freePort(port);
+          throw new Error('Failed to spawn warm Chromium — no PID');
+        }
+
+        await waitForCDP(port, 10_000);
+
+        // Navigate to about:blank to guarantee clean state
+        await navigateToBlank(port);
+
+        await redis.sadd('browser:warm:pids', `${child.pid}:${port}`);
+        console.log(`[BrowserManager] Warm browser ready pid=${child.pid} port=${port}`);
+      } catch (err) {
+        console.error('[BrowserManager] Failed to warm browser:', err);
+      }
+    }
+  } finally {
+    await redis.del('session:replenish');
+  }
+}
+
+/** @deprecated Use replenish() instead */
+export const warmUp = replenish;
 
 export async function cleanupOrphanedWarm(): Promise<void> {
   const redis = redisStore.getRedis();

@@ -18,10 +18,94 @@ function normalizeUrl(url: string): string {
   return trimmed;
 }
 
-// List user's agents
+/**
+ * @openapi
+ * /api/agents:
+ *   get:
+ *     tags: [Agents]
+ *     summary: List all agents for the authenticated user
+ *     responses:
+ *       200:
+ *         description: Agent list with stats
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 agents:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id: { type: string, format: uuid }
+ *                       name: { type: string }
+ *                       url: { type: string, format: uri }
+ *                       findings_count: { type: integer }
+ *                       last_session_at: { type: string, format: date-time, nullable: true }
+ *   post:
+ *     tags: [Agents]
+ *     summary: Create a new agent
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, url]
+ *             properties:
+ *               name: { type: string }
+ *               url: { type: string, format: uri }
+ *               context: { type: string, nullable: true }
+ *     responses:
+ *       200:
+ *         description: Created agent
+ * /api/agents/{id}:
+ *   get:
+ *     tags: [Agents]
+ *     summary: Get agent by ID
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Agent details }
+ *       404: { description: Agent not found }
+ *   put:
+ *     tags: [Agents]
+ *     summary: Update agent
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               url: { type: string }
+ *               context: { type: string }
+ *     responses:
+ *       200: { description: Updated agent }
+ *   delete:
+ *     tags: [Agents]
+ *     summary: Delete agent
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string, format: uuid }
+ *     responses:
+ *       200: { description: Deleted }
+ */
 router.get('/', requireAuth, async (req, res) => {
   const { userId } = req as AuthenticatedRequest;
+  console.log('[AGENTS] Listing agents for userId:', userId);
   const agents = await listAgents(userId);
+  console.log('[AGENTS] Found:', agents.length, 'agents');
 
   const agentIds = agents.map(p => p.id);
   const stats = await getAgentListStats(agentIds);
@@ -40,6 +124,7 @@ router.get('/', requireAuth, async (req, res) => {
       last_session_at: s?.lastSessionAt ?? null,
     };
   });
+  res.set('Cache-Control', 'no-store');
   res.json({ agents: items });
 });
 

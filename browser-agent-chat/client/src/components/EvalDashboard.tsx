@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import Sidebar from './Sidebar';
 import EvalRunDetail from './EvalRunDetail';
 import EvalCaseEditor from './EvalCaseEditor';
 import { useAuth } from '../hooks/useAuth';
@@ -110,15 +109,12 @@ export default function EvalDashboard() {
   // If a run is selected, show its detail view
   if (selectedRun) {
     return (
-      <div className="app-layout">
-        <Sidebar />
-        <div className="eval-content">
-          <EvalRunDetail
-            run={selectedRun}
-            agentId={id!}
-            onBack={() => setSelectedRun(null)}
-          />
-        </div>
+      <div className="eval-content">
+        <EvalRunDetail
+          run={selectedRun}
+          agentId={id!}
+          onBack={() => setSelectedRun(null)}
+        />
       </div>
     );
   }
@@ -126,24 +122,19 @@ export default function EvalDashboard() {
   // If creating a new case, show the editor
   if (showCaseEditor) {
     return (
-      <div className="app-layout">
-        <Sidebar />
-        <div className="eval-content">
-          <EvalCaseEditor
-            agentId={id!}
-            onSaved={handleCaseSaved}
-            onCancel={() => setShowCaseEditor(false)}
-          />
-        </div>
+      <div className="eval-content">
+        <EvalCaseEditor
+          agentId={id!}
+          onSaved={handleCaseSaved}
+          onCancel={() => setShowCaseEditor(false)}
+        />
       </div>
     );
   }
 
   return (
-    <div className="app-layout">
-      <Sidebar />
-      <div className="eval-content">
-        {/* Header */}
+    <div className="eval-content">
+      {/* Header */}
         <div className="eval-header">
           <div className="eval-header-left">
             <ClipboardList size={18} />
@@ -293,6 +284,5 @@ export default function EvalDashboard() {
           </div>
         )}
       </div>
-    </div>
   );
 }

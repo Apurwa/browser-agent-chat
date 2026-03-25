@@ -20,11 +20,14 @@ export interface AgentSession {
   connector: BrowserConnector;
   sessionId: string | null;
   agentId: string | null;
+  userId: string | null;
   memoryContext: string;
   patterns: LearnedPattern[];
   stepsHistory: Array<{ order: number; action: string; target?: string }>;
   /** Resolves when background login finishes (or immediately if no login). */
   loginDone: Promise<void>;
+  /** True while handleLoginDetection is running — prevents re-entrant calls. */
+  loginInProgress: boolean;
   /** Last action performed — consumed by nav listener for edge labels. */
   lastAction: { label: string; selector?: string; rawTarget?: string } | null;
   /** Current page URL — updated on every nav event. */
@@ -63,17 +66,42 @@ async function getLivePageUrl(page: { evaluate: (fn: () => string) => Promise<st
   }
 }
 
-export async function createAgent(
-  broadcast: (msg: ServerMessage) => void,
-  cdpEndpoint: string,
-  sessionId: string | null = null,
-  agentId: string | null = null,
-  url?: string,
-): Promise<AgentSession> {
+// ---------------------------------------------------------------------------
+// Shared agent setup helpers
+// ---------------------------------------------------------------------------
+
+/** Parameters shared by both createAgent and createNewAgent. */
+interface AgentSetupParams {
+  broadcast: (msg: ServerMessage) => void;
+  cdpEndpoint: string;
+  sessionId: string | null;
+  agentId: string | null;
+  url?: string;
+  userId: string | null;
+}
+
+/** Result of the shared browser-setup phase (before event listeners). */
+interface AgentSetupResult {
+  agent: import('magnitude-core').BrowserAgent;
+  connector: import('magnitude-core').BrowserConnector;
+  cdpSession: any | null;
+  memoryContext: string;
+  patterns: LearnedPattern[];
+  currentPageUrl: string;
+  timer: StepTimer;
+}
+
+/**
+ * Boot the Magnitude agent, attach CDP, set viewport, navigate to URL, and
+ * capture the initial page URL.  This is the shared setup phase used by both
+ * createAgent() (legacy) and createNewAgent() (new single-owner path).
+ */
+async function setupAgent(params: AgentSetupParams): Promise<AgentSetupResult> {
+  const { broadcast, cdpEndpoint, agentId, url } = params;
+
   broadcast({ type: 'status', status: 'working' });
   const timer = new StepTimer();
 
-  // Load memory context for prompt injection
   const memoryContext = agentId ? await loadMemoryContext(agentId) : '';
   timer.step('load_memory');
 
@@ -89,8 +117,8 @@ export async function createAgent(
     llm: {
       provider: 'claude-code',
       options: {
-        model: 'claude-sonnet-4-20250514'
-      }
+        model: 'claude-sonnet-4-20250514',
+      },
     },
     browser: {
       cdp: cdpEndpoint,
@@ -100,10 +128,11 @@ export async function createAgent(
   timer.step('start_browser_agent');
   const connector = agent.require(BrowserConnector);
 
-  // Create CDP session for CSP bypass and screencast
+  // CDP session for CSP bypass and screencast
   let cdpSession: any = null;
   try {
     const page = connector.getHarness().page;
+    console.log('[PAGE_ACCESS]', { source: 'setupAgent:cdp' });
     cdpSession = await page.context().newCDPSession(page);
     await cdpSession.send('Page.setBypassCSP', { enabled: true });
     console.log('[AGENT] CSP bypass enabled via CDP');
@@ -111,12 +140,11 @@ export async function createAgent(
     console.warn('[AGENT] Failed to create CDP session:', err);
   }
 
-  // Start CDP screencast — streams frames on every screen change
+  // CDP screencast — read-only, uses CDP protocol not page API
   if (cdpSession) {
     try {
       cdpSession.on('Page.screencastFrame', (params: { data: string; sessionId: number; metadata: unknown }) => {
         broadcast({ type: 'screenshot', data: params.data });
-        // Acknowledge frame so CDP sends the next one
         cdpSession.send('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
       });
       await cdpSession.send('Page.startScreencast', {
@@ -130,19 +158,19 @@ export async function createAgent(
     }
   }
 
-  // Set a sensible default viewport before any page interaction.
-  // The client overrides this with actual panel dimensions via the 'viewport' message.
+  // Default viewport — overridden by client via 'viewport' message
   try {
+    console.log('[PAGE_ACCESS]', { source: 'setupAgent:setViewport' });
     await connector.getHarness().page.setViewportSize({ width: 1440, height: 900 });
     console.log('[AGENT] Default viewport set to 1440x900');
   } catch (err) {
     console.warn('[AGENT] Failed to set default viewport:', err);
   }
 
-  // When reusing a warm-pool browser via CDP, magnitude may not navigate to the
-  // target URL. Force navigation if the current page doesn't match.
+  // Navigate warm browser to target URL if needed
   if (url) {
     const page = connector.getHarness().page;
+    console.log('[PAGE_ACCESS]', { source: 'setupAgent:warmNav' });
     const current = page.url();
     if (current !== url && !current.startsWith(url)) {
       console.log(`[AGENT] Warm browser on ${current}, navigating to ${url}`);
@@ -154,17 +182,33 @@ export async function createAgent(
     }
   }
 
+  // Get initial page URL for graph tracking
+  console.log('[PAGE_ACCESS]', { source: 'setupAgent:initialUrl' });
+  const currentPageUrl = await getLivePageUrl(connector.getHarness().page);
+
+  return { agent, connector, cdpSession, memoryContext, patterns, currentPageUrl, timer };
+}
+
+// ---------------------------------------------------------------------------
+// createAgent — legacy path (includes thought/actionDone/nav handlers)
+// ---------------------------------------------------------------------------
+
+export async function createAgent(
+  broadcast: (msg: ServerMessage) => void,
+  cdpEndpoint: string,
+  sessionId: string | null = null,
+  agentId: string | null = null,
+  url?: string,
+  userId: string | null = null,
+): Promise<AgentSession> {
+  const setup = await setupAgent({ broadcast, cdpEndpoint, sessionId, agentId, url, userId });
+  const { agent, connector, cdpSession, memoryContext, patterns, currentPageUrl, timer } = setup;
+
   const stepsHistory: AgentSession['stepsHistory'] = [];
   let stepOrder = 0;
-
-  // Session-scoped state for nav graph writes
   let lastAction: { label: string; selector?: string; rawTarget?: string } | null = null;
-
-  // Get initial page URL for graph tracking
-  const currentPageUrl = await getLivePageUrl(connector.getHarness().page);
   let previousUrl: string | null = currentPageUrl;
 
-  // Helper to get screenshot as base64
   const getScreenshotBase64 = async (): Promise<string | null> => {
     try {
       const screenshot = await connector.getLastScreenshot();
@@ -179,22 +223,23 @@ export async function createAgent(
     connector,
     sessionId,
     agentId,
+    userId,
     memoryContext,
     patterns,
     stepsHistory,
     loginDone: Promise.resolve(),
+    loginInProgress: false,
     lastAction: null,
     currentUrl: currentPageUrl,
     currentTrace: null,
     cdpSession,
     close: async () => {
-      // Stop screencast before closing
       if (cdpSession) {
         await cdpSession.send('Page.stopScreencast').catch(() => {});
       }
       agent.events.removeAllListeners();
       agent.browserAgentEvents.removeAllListeners();
-    }
+    },
   };
 
   // Listen for agent thoughts — parse for findings and memory updates
@@ -202,10 +247,8 @@ export async function createAgent(
     broadcast({ type: 'thought', content: thought });
     if (sessionId) await saveMessage(sessionId, 'thought', thought);
 
-    // Log to Langfuse trace
     session.currentTrace?.event({ name: 'thought', input: { content: thought } });
 
-    // Check for findings in thought text
     if (agentId && sessionId) {
       const rawFindings = parseFindingsFromText(thought);
       for (const raw of rawFindings) {
@@ -217,10 +260,8 @@ export async function createAgent(
         }
       }
 
-      // Parse MEMORY_JSON → create suggestions (not direct features)
       const memUpdates = parseMemoryUpdates(thought);
       for (const update of memUpdates) {
-        // Attach current URL so accepted suggestions link to nav nodes on the App Map
         if ((update.type === 'feature' || update.type === 'flow')) {
           const data = update.data as { discovered_at_url?: string };
           if (!data.discovered_at_url) {
@@ -244,12 +285,10 @@ export async function createAgent(
     stepOrder++;
     stepsHistory.push({ order: stepOrder, action: actionName, target: target as string | undefined });
 
-    // Update lastAction buffer for nav graph edge labels
     const actionLabel = target ? `${actionName}: ${target}` : actionName;
     lastAction = { label: actionLabel, rawTarget: target as string | undefined };
 
-    // Log to Langfuse trace
-    session.currentTrace?.event({ name: 'action', input: { action: actionName, target } });
+    session.currentTrace?.event({ name: 'action', input: { action: actionName, target }, output: { step: stepOrder, completed: true } });
 
     broadcast({ type: 'action', action: actionName, target: target as string | undefined });
     if (sessionId) {
@@ -257,12 +296,8 @@ export async function createAgent(
       await saveMessage(sessionId, 'action', actionContent);
     }
 
-    // Screenshots now handled by CDP screencast — no manual capture needed
-
     // Detect URL changes after each action (click may navigate)
-    // magnitude-core's 'nav' event only fires for agent.nav(), not click-based navigation
     try {
-      // Small delay to let SPA routing settle after a click
       await new Promise(r => setTimeout(r, 500));
       const currentUrl = await getLivePageUrl(connector.getHarness().page);
       console.log(`[NAV-DETECT] actionDone: prev=${previousUrl} curr=${currentUrl} action=${actionName}`);
@@ -291,20 +326,40 @@ export async function createAgent(
     } catch (err) {
       console.error('[NAV-DETECT] URL check failed:', err);
     }
+
+    // Runtime login interception (legacy path only — no guard needed here)
+    if (agentId && session.userId && !session.loginInProgress) {
+      try {
+        const loginDetection = await detectLoginPage(connector.getHarness().page);
+        if (loginDetection.isLoginPage) {
+          const pageUrl = await getLivePageUrl(connector.getHarness().page);
+          console.log(`[LOGIN-INTERCEPT] Login page detected after action at ${pageUrl} (score: ${loginDetection.score})`);
+          session.loginInProgress = true;
+          const loginBroadcast = (msg: ServerMessage) => broadcast(msg);
+          session.loginDone = handleLoginDetection(
+            connector.getHarness().page, agentId, session.userId!, loginBroadcast
+          ).catch((err: unknown) => {
+            console.error('[LOGIN-INTERCEPT] Mid-task login error:', err);
+          }).finally(() => {
+            session.loginInProgress = false;
+          });
+        }
+      } catch (loginErr) {
+        console.error('[LOGIN-INTERCEPT] Detection failed:', loginErr);
+      }
+    }
   });
 
   // Listen for navigation events — update graph + broadcast
   agent.browserAgentEvents.on('nav', async (navUrl: string) => {
     broadcast({ type: 'nav', url: navUrl });
 
-    // Fire-and-forget graph update
     if (agentId) {
       const action = lastAction?.label;
       const selector = lastAction?.selector;
       const rawTarget = lastAction?.rawTarget;
-      lastAction = null; // Consume the action
+      lastAction = null;
 
-      // Get page title for nav node
       let title = '';
       try {
         title = await connector.getHarness().page.title();
@@ -314,6 +369,28 @@ export async function createAgent(
     }
     previousUrl = navUrl;
     session.currentUrl = navUrl;
+
+    // Login interception on navigation (legacy path only — no guard needed here)
+    if (agentId && session.userId && !session.loginInProgress) {
+      try {
+        await new Promise(r => setTimeout(r, 1000));
+        const loginDetection = await detectLoginPage(connector.getHarness().page);
+        if (loginDetection.isLoginPage) {
+          console.log(`[LOGIN-INTERCEPT] Login page detected on nav to ${navUrl} (score: ${loginDetection.score})`);
+          session.loginInProgress = true;
+          const loginBroadcast = (msg: ServerMessage) => broadcast(msg);
+          session.loginDone = handleLoginDetection(
+            connector.getHarness().page, agentId, session.userId!, loginBroadcast
+          ).catch((err: unknown) => {
+            console.error('[LOGIN-INTERCEPT] Nav-triggered login error:', err);
+          }).finally(() => {
+            session.loginInProgress = false;
+          });
+        }
+      } catch (loginErr) {
+        console.error('[LOGIN-INTERCEPT] Nav detection failed:', loginErr);
+      }
+    }
   });
 
   // Send initial screenshot
@@ -328,7 +405,6 @@ export async function createAgent(
   }
   timer.step('initial_screenshot');
 
-  // Emit startup metrics
   const metrics = { total: timer.total, steps: timer.steps };
   console.log('[METRICS] Agent startup:', JSON.stringify(metrics));
   broadcast({ type: 'metrics', metrics });
@@ -336,13 +412,101 @@ export async function createAgent(
   broadcast({ type: 'status', status: 'idle' });
   broadcast({ type: 'nav', url: currentPageUrl });
 
-  // Record the initial page as a nav node so App Map always has at least one node
+  // Record the initial page as a nav node
   if (agentId && currentPageUrl && !currentPageUrl.startsWith('about:')) {
     let initialTitle = '';
     try {
       initialTitle = await connector.getHarness().page.title();
     } catch {}
     console.log(`[NAV-DETECT] Recording initial page: ${currentPageUrl} title="${initialTitle}"`);
+    recordNavigation(agentId, null, currentPageUrl, undefined, undefined, initialTitle).catch((err) => {
+      console.error('[NAV-DETECT] Initial page recording failed:', err);
+    });
+  }
+
+  return session;
+}
+
+// ---------------------------------------------------------------------------
+// createNewAgent — new path (single page owner — NO legacy event handlers)
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates an AgentSession without registering the legacy thought/actionDone/nav
+ * event handlers.  In the new agent path (USE_NEW_AGENT=true) the agent-loop,
+ * perception, and executor modules are the sole owners of the Playwright page.
+ * Registering the legacy handlers alongside the loop causes two actors to call
+ * page.evaluate() concurrently, which produces "Target page closed" errors.
+ */
+export async function createNewAgent(
+  broadcast: (msg: ServerMessage) => void,
+  cdpEndpoint: string,
+  sessionId: string | null = null,
+  agentId: string | null = null,
+  url?: string,
+  userId: string | null = null,
+): Promise<AgentSession> {
+  const setup = await setupAgent({ broadcast, cdpEndpoint, sessionId, agentId, url, userId });
+  const { agent, connector, cdpSession, memoryContext, patterns, currentPageUrl, timer } = setup;
+
+  const stepsHistory: AgentSession['stepsHistory'] = [];
+
+  const session: AgentSession = {
+    agent,
+    connector,
+    sessionId,
+    agentId,
+    userId,
+    memoryContext,
+    patterns,
+    stepsHistory,
+    loginDone: Promise.resolve(),
+    loginInProgress: false,
+    lastAction: null,
+    currentUrl: currentPageUrl,
+    currentTrace: null,
+    cdpSession,
+    close: async () => {
+      if (cdpSession) {
+        await cdpSession.send('Page.stopScreencast').catch(() => {});
+      }
+      agent.events.removeAllListeners();
+      agent.browserAgentEvents.removeAllListeners();
+    },
+  };
+
+  // NOTE: No thought/actionDone/nav handlers registered here.
+  // The agent-loop module (agent-loop.ts → perception.ts, executor.ts) is the
+  // sole owner of the page in this path.  Adding handlers here would cause
+  // concurrent page.evaluate() calls and "Target page closed" errors.
+
+  // Send initial screenshot
+  try {
+    const screenshot = await connector.getLastScreenshot();
+    if (screenshot) {
+      const base64 = await screenshot.toBase64();
+      broadcast({ type: 'screenshot', data: base64 });
+    }
+  } catch (err) {
+    console.error('[NEW-AGENT] Failed to capture initial screenshot:', err);
+  }
+  timer.step('initial_screenshot');
+
+  const metrics = { total: timer.total, steps: timer.steps };
+  console.log('[METRICS] Agent startup (new):', JSON.stringify(metrics));
+  broadcast({ type: 'metrics', metrics });
+
+  broadcast({ type: 'status', status: 'idle' });
+  broadcast({ type: 'nav', url: currentPageUrl });
+
+  // Record the initial page as a nav node
+  if (agentId && currentPageUrl && !currentPageUrl.startsWith('about:')) {
+    let initialTitle = '';
+    try {
+      console.log('[PAGE_ACCESS]', { source: 'createNewAgent:initialTitle' });
+      initialTitle = await connector.getHarness().page.title();
+    } catch {}
+    console.log(`[NAV-DETECT] Recording initial page (new): ${currentPageUrl} title="${initialTitle}"`);
     recordNavigation(agentId, null, currentPageUrl, undefined, undefined, initialTitle).catch((err) => {
       console.error('[NAV-DETECT] Initial page recording failed:', err);
     });
@@ -367,17 +531,21 @@ export async function handleLoginDetection(
   if (!detection.isLoginPage) return;
 
   broadcast({ type: 'thought', content: `Login page detected (confidence: ${detection.score}). Looking up credentials...` });
+  console.log(`[LOGIN-DEBUG] domain=${detection.domain} strategy=${detection.strategy} selectors=${JSON.stringify(detection.selectors)}`);
 
   // Guard: only standard_form is supported in MVP
   if (detection.strategy !== 'standard_form' && detection.strategy !== 'unknown') {
+    console.log(`[LOGIN-DEBUG] Unsupported strategy: ${detection.strategy}`);
     broadcast({ type: 'thought', content: `Detected ${detection.strategy} login flow (not yet supported). Skipping automatic login.` });
     return;
   }
 
   const loginUrl = await getLivePageUrl(page);
+  console.log(`[LOGIN-DEBUG] loginUrl=${loginUrl}`);
 
   // 1. Check muscle memory for this domain first
   const patterns = await getLearnedPatterns(agentId, detection.domain);
+  console.log(`[LOGIN-DEBUG] muscle memory patterns: ${patterns.length}`);
   const loginPattern = patterns.find(p => p.pattern_type === 'login' && p.pattern_state === 'active');
 
   if (loginPattern?.credential_id) {
@@ -411,6 +579,7 @@ export async function handleLoginDetection(
 
   // 2. Try to find credential via agent bindings + domain
   const credential = await getCredentialForAgent(agentId, detection.domain);
+  console.log(`[LOGIN-DEBUG] getCredentialForAgent result: ${credential ? credential.label : 'null'}`);
 
   if (credential) {
     // Domain verification (exfiltration prevention)
@@ -548,8 +717,9 @@ export async function executeExplore(
 
   session.stepsHistory.length = 0;
 
+  // Reuse caller's trace if one exists, otherwise create a new one
   const langfuse = getLangfuse();
-  const trace = langfuse?.trace({
+  const trace = session.currentTrace ?? langfuse?.trace({
     name: 'explore',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
@@ -616,6 +786,7 @@ export async function executeExplore(
     broadcast({ type: 'taskComplete', success: false });
   } finally {
     session.currentTrace = null;
+    getLangfuse()?.flushAsync().catch(() => {});
     broadcast({ type: 'status', status: 'idle' });
   }
 }
@@ -704,9 +875,9 @@ export async function executeTask(
   // Reset step counter for this task
   session.stepsHistory.length = 0;
 
-  // Create Langfuse trace for this task
+  // Reuse caller's trace (e.g. from dispatchTask) or create a new one
   const langfuse = getLangfuse();
-  const trace = langfuse?.trace({
+  const trace = session.currentTrace ?? langfuse?.trace({
     name: 'user-task',
     sessionId: session.sessionId ?? undefined,
     metadata: { agentId: session.agentId },
@@ -767,14 +938,39 @@ export async function executeTask(
     }
   }
 
+  // Pre-task login check: if current page is a login form, handle it
+  // before giving control to the LLM. Catches nav-shortcut → login redirects
+  // and any case where the agent lands on a login page before act() runs.
+  if (session.agentId && session.userId && !session.loginInProgress) {
+    try {
+      const page = session.connector.getHarness().page;
+      const loginCheck = await detectLoginPage(page);
+      if (loginCheck.isLoginPage) {
+        console.log(`[LOGIN-INTERCEPT] Login page detected pre-task (score: ${loginCheck.score})`);
+        session.loginInProgress = true;
+        session.loginDone = handleLoginDetection(
+          page, session.agentId, session.userId, broadcast
+        ).catch((err: unknown) => {
+          console.error('[LOGIN-INTERCEPT] Pre-task login error:', err);
+        }).finally(() => {
+          session.loginInProgress = false;
+        });
+        await session.loginDone;
+      }
+    } catch (loginErr) {
+      console.error('[LOGIN-INTERCEPT] Pre-task detection failed:', loginErr);
+    }
+  }
+
+  const span = trace?.span({ name: 'agent-act', input: { prompt } });
   try {
-    const span = trace?.span({ name: 'agent-act', input: { prompt } });
     await session.agent.act(prompt);
     span?.end({ output: { success: true, steps: session.stepsHistory.length } });
     trace?.update({ output: { success: true, stepsCount: session.stepsHistory.length } });
     broadcast({ type: 'taskComplete', success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
+    span?.end({ output: { success: false, error: message, steps: session.stepsHistory.length } });
     trace?.update({ output: { success: false, error: message } });
     broadcast({ type: 'error', message });
     broadcast({ type: 'taskComplete', success: false });
@@ -783,6 +979,7 @@ export async function executeTask(
     }
   } finally {
     session.currentTrace = null;
+    getLangfuse()?.flushAsync().catch(() => {});
     broadcast({ type: 'status', status: 'idle' });
   }
 }

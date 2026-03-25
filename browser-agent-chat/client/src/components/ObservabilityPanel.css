@@ -295,26 +295,46 @@
   border: 1px solid var(--color-error);
 }
 
-.span-number {
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
+.span-type-badge {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
   flex-shrink: 0;
+  text-align: center;
+  min-width: 32px;
 }
 
-.span-number.level-default {
+.span-type-llm {
+  background: var(--badge-indigo-bg, rgba(99, 102, 241, 0.15));
+  color: var(--badge-indigo-text, #818cf8);
+}
+
+.span-type-span {
   background: var(--badge-blue-bg);
   color: var(--badge-blue-text);
 }
 
-.span-number.level-error {
-  background: var(--badge-red-bg);
-  color: var(--badge-red-text);
+.span-data-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.span-data-label {
+  color: var(--text-dim);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.span-data-value {
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .span-info {
@@ -366,6 +386,51 @@
   min-width: 40px;
   text-align: right;
   flex-shrink: 0;
+}
+
+/* Expanded span detail */
+.span-item-expanded {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-secondary);
+}
+
+.span-expanded-detail {
+  padding: 8px 12px 12px;
+  margin-bottom: 4px;
+  border-left: 2px solid var(--border-secondary);
+}
+
+.span-detail-section {
+  margin-bottom: 8px;
+}
+
+.span-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.span-detail-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.span-detail-json {
+  font-size: 11px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-body);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  line-height: 1.5;
 }
 
 /* Error output */

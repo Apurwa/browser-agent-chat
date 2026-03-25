@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './hooks/useAuth';
 import { HealthProvider } from './contexts/HealthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import SidebarLayout from './components/SidebarLayout';
 import LoginPage from './components/LoginPage';
 import Home from './components/Home';
 import TestingView from './components/TestingView';
@@ -9,9 +10,11 @@ import FindingsDashboard from './components/FindingsDashboard';
 import MemoryViewer from './components/MemoryViewer';
 import AgentSettings from './components/AgentSettings';
 import EvalDashboard from './components/EvalDashboard';
+import AppMapView from './components/AppMapView';
 import ObservabilityPanel from './components/ObservabilityPanel';
 import ObservabilityDashboard from './components/ObservabilityDashboard';
 import VaultPage from './components/Vault/VaultPage';
+import AgentDetailLayout from './components/AgentDetailLayout';
 import { useHealth } from './contexts/HealthContext';
 
 function TracesGuard() {
@@ -39,15 +42,21 @@ export default function App() {
     <HealthProvider>
       <Routes>
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <LoginPage />} />
-        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-        <Route path="/agents/:id/testing" element={<ProtectedRoute><TestingView /></ProtectedRoute>} />
-        <Route path="/agents/:id/findings" element={<ProtectedRoute><FindingsDashboard /></ProtectedRoute>} />
-        <Route path="/agents/:id/memory" element={<ProtectedRoute><MemoryViewer /></ProtectedRoute>} />
-        <Route path="/agents/:id/settings" element={<ProtectedRoute><AgentSettings /></ProtectedRoute>} />
-        <Route path="/agents/:id/evals" element={<ProtectedRoute><EvalDashboard /></ProtectedRoute>} />
-        <Route path="/agents/:id/traces" element={<ProtectedRoute><TracesGuard /></ProtectedRoute>} />
-        <Route path="/vault" element={<ProtectedRoute><VaultPage /></ProtectedRoute>} />
-        <Route path="/observability" element={<ProtectedRoute><DashboardGuard /></ProtectedRoute>} />
+        <Route element={<ProtectedRoute><SidebarLayout /></ProtectedRoute>}>
+          <Route index element={<Home />} />
+          <Route path="/agents/:id" element={<AgentDetailLayout />}>
+            <Route path="testing" element={<TestingView />} />
+            <Route path="map" element={<AppMapView />} />
+            <Route path="findings" element={<FindingsDashboard />} />
+            <Route path="memory" element={<MemoryViewer />} />
+            <Route path="settings" element={<AgentSettings />} />
+            <Route path="evals" element={<EvalDashboard />} />
+            <Route path="traces" element={<TracesGuard />} />
+            <Route index element={<Navigate to="testing" replace />} />
+          </Route>
+          <Route path="/vault" element={<VaultPage />} />
+          <Route path="/observability" element={<DashboardGuard />} />
+        </Route>
         <Route path="/projects/*" element={<Navigate to={window.location.pathname.replace('/projects/', '/agents/')} replace />} />
         <Route path="*" element={<Navigate to={user ? '/' : '/login'} replace />} />
       </Routes>

@@ -44,6 +44,8 @@ export interface VaultEntry {
   created_by_agent: string | null;
   created_at: string;
   updated_at: string;
+  enabled: boolean;
+  bindings?: Array<{ agentId: string; agentName: string }>
 }
 
 export interface BoundCredential extends VaultEntry {

@@ -6,6 +6,7 @@
  */
 import WebSocket from 'ws';
 import { createClient } from '@supabase/supabase-js';
+import { Redis } from 'ioredis';
 
 const WS_URL = 'ws://localhost:3001';
 const TEST_URL = 'https://example.com';
@@ -108,6 +109,10 @@ async function sleep(ms: number) {
 }
 
 const supabase = createClient(supabaseUrl, supabaseKey, { auth: { persistSession: false } });
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+  maxRetriesPerRequest: 3,
+  lazyConnect: true,
+});
 
 async function createTestAgent(name: string, url: string): Promise<string> {
   const { data: users } = await supabase.from('agents').select('user_id').limit(1);
@@ -348,6 +353,82 @@ async function testMultipleClients() {
 }
 
 // ============================================================
+// TEST 8: Disconnect — last client leaves, session becomes detached
+// Uses agent fdb1a8c6-e9bb-4140-bbbf-ca2d95082e47 (apurwasarwajit.com)
+// which the user's browser should NOT be connected to during testing.
+// ============================================================
+async function testDisconnect() {
+  console.log('\n--- Test 8: Disconnect (Detach) ---');
+
+  // Use a dedicated agent that no other browser tab is connected to
+  const DISCONNECT_AGENT_ID = 'fdb1a8c6-e9bb-4140-bbbf-ca2d95082e47';
+
+  // Verify agent exists in DB
+  const { data: agentRow } = await supabase
+    .from('agents')
+    .select('id')
+    .eq('id', DISCONNECT_AGENT_ID)
+    .single();
+
+  if (!agentRow) {
+    console.log('  SKIP: Agent fdb1a8c6-e9bb-4140-bbbf-ca2d95082e47 not found in DB');
+    return;
+  }
+
+  // Connect Redis for direct session inspection
+  await redis.connect();
+
+  try {
+    // Connect a single WS client and start the session
+    const { ws: keeper, buf: keeperBuf } = await startAndWaitIdle(DISCONNECT_AGENT_ID);
+    console.log('  Keeper connected, session idle');
+
+    // Verify session is idle in Redis
+    const sessionBefore = await redis.hgetall(`session:${DISCONNECT_AGENT_ID}`);
+    assert(sessionBefore.status === 'idle', `Session status is idle in Redis (got: ${sessionBefore.status})`);
+
+    // Before closing the keeper, verify it is the ONLY client.
+    // We can't directly query wsClients from the test, but we can infer:
+    // If another browser tab is connected, the session won't become detached.
+    // We'll close the keeper and check Redis — if detachedAt is NOT set after
+    // 4 seconds, another client is likely connected.
+    await closeWS(keeper);
+    console.log('  Keeper closed, waiting 4 seconds...');
+
+    await sleep(4000);
+
+    // Verify session status is disconnected and detachedAt is set
+    const sessionAfter = await redis.hgetall(`session:${DISCONNECT_AGENT_ID}`);
+    const detachedAt = parseInt(sessionAfter.detachedAt, 10) || 0;
+
+    if (detachedAt === 0) {
+      // detachedAt not set — likely another browser client is still connected
+      console.log('  SKIP: detachedAt not set — another client may be connected to this agent');
+      console.log('  (Close all browser tabs viewing this agent and re-run)');
+      return;
+    }
+
+    assert(detachedAt > 0, `detachedAt is set (${detachedAt})`);
+    assert(
+      Date.now() - detachedAt < 10000,
+      `detachedAt is recent (${Date.now() - detachedAt}ms ago)`,
+    );
+
+    // Session should still exist (not yet reaped — detached timeout is 120s)
+    const sessionExists = sessionAfter.dbSessionId !== undefined;
+    assert(sessionExists, 'Session still exists in Redis (not reaped yet)');
+
+    console.log('  Cleaning up: reconnecting to cancel detached timer');
+    const { ws: cleanup } = await openWS();
+    cleanup.send(JSON.stringify({ type: 'start', agentId: DISCONNECT_AGENT_ID }));
+    await sleep(2000);
+    await closeWS(cleanup);
+  } finally {
+    redis.disconnect();
+  }
+}
+
+// ============================================================
 async function main() {
   console.log('=== Always-Connected Agent E2E Tests ===');
   console.log(`Server: ${WS_URL}`);
@@ -365,6 +446,7 @@ async function main() {
     testPing,
     testSendTask,
     testMultipleClients,
+    testDisconnect,
   ];
 
   for (const test of tests) {

@@ -182,6 +182,7 @@ export async function getCredentialForAgent(agentId: string, domain: string): Pr
   for (const row of data as any[]) {
     const cred = row.credentials_vault;
     if (cred.deleted_at) continue;
+    // enabled column removed — all non-deleted credentials are active
     if (cred.domains.includes(normalizedDomain)) {
       return cred as VaultEntry;
     }
@@ -225,8 +226,107 @@ export async function decryptForInjection(
     agent_uuid: agentId ?? null,
   });
 
+  await insertAuditLog(id, 'decrypt', agentId);
+
   // Decrypt — caller MUST use immediately and discard
   return decryptSecret(data.encrypted_secret as EncryptedCredentials);
+}
+
+// --- Audit Log ---
+
+export async function insertAuditLog(
+  credentialId: string,
+  action: string,
+  agentId?: string,
+  sessionId?: string,
+): Promise<void> {
+  if (!isSupabaseEnabled()) return;
+  const { error } = await supabase!
+    .from('credential_audit_log')
+    .insert({
+      credential_id: credentialId,
+      agent_id: agentId ?? null,
+      session_id: sessionId ?? null,
+      action,
+    });
+  if (error) console.error('[VAULT] Audit log insert error:', error);
+}
+
+export async function getAuditLog(
+  credentialId: string,
+  limit = 10,
+): Promise<Array<{ id: string; action: string; agent_id: string | null; session_id: string | null; created_at: string }>> {
+  if (!isSupabaseEnabled()) return [];
+  const { data, error } = await supabase!
+    .from('credential_audit_log')
+    .select('id, action, agent_id, session_id, created_at')
+    .eq('credential_id', credentialId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) { console.error('[VAULT] Audit log fetch error:', error); return []; }
+  return data ?? [];
+}
+
+export async function toggleCredential(
+  id: string,
+  userId: string,
+  enabled: boolean,
+): Promise<VaultEntry | null> {
+  if (!isSupabaseEnabled()) return null;
+  const { data, error } = await supabase!
+    .from('credentials_vault')
+    .update({ enabled })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .is('deleted_at', null)
+    .select(VAULT_METADATA_COLS)
+    .single();
+  if (error) { console.error('[VAULT] Toggle error:', error); return null; }
+  await insertAuditLog(id, enabled ? 'enable' : 'disable');
+  return data as VaultEntry;
+}
+
+export async function getResolution(
+  credentialId: string,
+  userId: string,
+): Promise<{ resolved: string[]; unresolved: string[] }> {
+  if (!isSupabaseEnabled()) return { resolved: [], unresolved: [] };
+
+  const cred = await getCredential(credentialId, userId);
+  if (!cred) return { resolved: [], unresolved: [] };
+  const credDomains = new Set(cred.domains);
+
+  const { data: agents } = await supabase!
+    .from('agents')
+    .select('id')
+    .eq('user_id', userId);
+  if (!agents || agents.length === 0) return { resolved: [], unresolved: [] };
+
+  const agentIds = agents.map((a: any) => a.id);
+  const { data: nodes } = await supabase!
+    .from('nav_nodes')
+    .select('url_pattern')
+    .in('agent_id', agentIds);
+  if (!nodes) return { resolved: [], unresolved: [] };
+
+  const knownDomains = new Set<string>();
+  for (const node of nodes as any[]) {
+    const pattern = node.url_pattern as string;
+    const hostname = normalizeDomain(pattern);
+    if (hostname && hostname !== '/') knownDomains.add(hostname);
+  }
+
+  const resolved: string[] = [];
+  const unresolved: string[] = [];
+  for (const domain of knownDomains) {
+    if (credDomains.has(domain)) {
+      resolved.push(domain);
+    } else {
+      unresolved.push(domain);
+    }
+  }
+
+  return { resolved, unresolved };
 }
 
 // --- Helpers ---
